@@ -11,9 +11,9 @@ fn create_test_app() -> App {
     app.init_state::<GameState>();
     app.insert_resource(ButtonInput::<KeyCode>::default());
     app.insert_resource(AccumulatedMouseMotion::default());
-    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-        Duration::from_millis(16),
-    ));
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        16,
+    )));
     app.insert_resource(Assets::<Mesh>::default());
     app.insert_resource(Assets::<StandardMaterial>::default());
     app.add_systems(Startup, setup_player);
@@ -48,9 +48,7 @@ fn mouse_motion_rotates_yaw() {
         .single(app.world())
         .unwrap();
 
-    app.world_mut()
-        .resource_mut::<AccumulatedMouseMotion>()
-        .delta = Vec2::new(100.0, 0.0);
+    app.world_mut().resource_mut::<AccumulatedMouseMotion>().delta = Vec2::new(100.0, 0.0);
 
     app.update();
 
@@ -69,9 +67,7 @@ fn mouse_motion_rotates_pitch() {
         .single(app.world())
         .unwrap();
 
-    app.world_mut()
-        .resource_mut::<AccumulatedMouseMotion>()
-        .delta = Vec2::new(0.0, 50.0);
+    app.world_mut().resource_mut::<AccumulatedMouseMotion>().delta = Vec2::new(0.0, 50.0);
 
     app.update();
 
@@ -91,9 +87,7 @@ fn pitch_is_clamped() {
         .unwrap();
 
     for _ in 0..100 {
-        app.world_mut()
-            .resource_mut::<AccumulatedMouseMotion>()
-            .delta = Vec2::new(0.0, 1000.0);
+        app.world_mut().resource_mut::<AccumulatedMouseMotion>().delta = Vec2::new(0.0, 1000.0);
         app.update();
     }
 

@@ -30,10 +30,7 @@ pub struct CameraState {
 
 impl Default for CameraState {
     fn default() -> Self {
-        Self {
-            yaw: 0.0,
-            pitch: 0.0,
-        }
+        Self { yaw: 0.0, pitch: 0.0 }
     }
 }
 
@@ -77,11 +74,10 @@ pub fn mouse_look(
     }
 
     camera_state.yaw -= mouse_delta.x * MOUSE_SENSITIVITY;
-    camera_state.pitch = (camera_state.pitch - mouse_delta.y * MOUSE_SENSITIVITY)
-        .clamp(-CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT);
+    camera_state.pitch =
+        (camera_state.pitch - mouse_delta.y * MOUSE_SENSITIVITY).clamp(-CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT);
 
-    transform.rotation =
-        Quat::from_euler(EulerRot::YXZ, camera_state.yaw, camera_state.pitch, 0.0);
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, camera_state.yaw, camera_state.pitch, 0.0);
 }
 
 pub fn move_player(
@@ -111,7 +107,6 @@ pub fn move_player(
     }
 
     if movement_direction != Vec3::ZERO {
-        transform.translation +=
-            movement_direction.normalize() * PLAYER_MOVE_SPEED * time.delta_secs();
+        transform.translation += movement_direction.normalize() * PLAYER_MOVE_SPEED * time.delta_secs();
     }
 }

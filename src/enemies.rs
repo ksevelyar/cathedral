@@ -8,15 +8,10 @@ pub struct EnemiesPlugin;
 
 impl Plugin for EnemiesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, spawn_enemies)
-            .add_systems(
-                Update,
-                (
-                    move_enemies_and_check_reach,
-                    play_death_animation,
-                )
-                    .run_if(in_state(GameState::Playing)),
-            );
+        app.add_systems(Startup, spawn_enemies).add_systems(
+            Update,
+            (move_enemies_and_check_reach, play_death_animation).run_if(in_state(GameState::Playing)),
+        );
     }
 }
 
@@ -50,14 +45,14 @@ pub fn spawn_enemies(
     asset_server: Res<AssetServer>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
 ) {
-    let (sprint_graph, sprint_index) = AnimationGraph::from_clip(asset_server.load(
-        GltfAssetLabel::Animation(SPRINT_ANIMATION_INDEX).from_asset(ENEMY_MODEL_PATH),
-    ));
+    let (sprint_graph, sprint_index) = AnimationGraph::from_clip(
+        asset_server.load(GltfAssetLabel::Animation(SPRINT_ANIMATION_INDEX).from_asset(ENEMY_MODEL_PATH)),
+    );
     let sprint_handle = graphs.add(sprint_graph);
 
-    let (death_graph, death_index) = AnimationGraph::from_clip(asset_server.load(
-        GltfAssetLabel::Animation(DEATH_ANIMATION_INDEX).from_asset(ENEMY_MODEL_PATH),
-    ));
+    let (death_graph, death_index) = AnimationGraph::from_clip(
+        asset_server.load(GltfAssetLabel::Animation(DEATH_ANIMATION_INDEX).from_asset(ENEMY_MODEL_PATH)),
+    );
     let death_handle = graphs.add(death_graph);
 
     commands.insert_resource(DeathAnimationGraph {
@@ -75,9 +70,7 @@ pub fn spawn_enemies(
         commands
             .spawn((
                 Enemy,
-                WorldAssetRoot(
-                    asset_server.load(GltfAssetLabel::Scene(0).from_asset(ENEMY_MODEL_PATH)),
-                ),
+                WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(ENEMY_MODEL_PATH))),
                 AnimationToPlay {
                     graph_handle: sprint_handle.clone(),
                     index: sprint_index,
@@ -134,10 +127,12 @@ pub fn despawn_enemies(mut commands: Commands, enemy_query: Query<Entity, With<E
     }
 }
 
+type AliveEnemy = (With<Enemy>, Without<Player>, Without<Dying>);
+
 pub fn move_enemies_and_check_reach(
     time: Res<Time>,
     player_query: Query<&Transform, (With<Player>, Without<Enemy>)>,
-    mut enemy_query: Query<&mut Transform, (With<Enemy>, Without<Player>, Without<Dying>)>,
+    mut enemy_query: Query<&mut Transform, AliveEnemy>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     let Ok(player_transform) = player_query.single() else {

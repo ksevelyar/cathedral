@@ -1,20 +1,16 @@
 use bevy::prelude::*;
 
 use crate::enemies::{self, Enemy};
-use crate::player::{CameraState, Player, PLAYER_START_POSITION};
+use crate::player::{CameraState, PLAYER_START_POSITION, Player};
 
 pub struct GameStatePlugin;
 
 impl Plugin for GameStatePlugin {
     fn build(&self, app: &mut App) {
-        app.init_state::<GameState>()
-            .add_systems(
-                Update,
-                (
-                    toggle_pause,
-                    restart_game.run_if(in_state(GameState::GameOver)),
-                ),
-            );
+        app.init_state::<GameState>().add_systems(
+            Update,
+            (toggle_pause, restart_game.run_if(in_state(GameState::GameOver))),
+        );
     }
 }
 

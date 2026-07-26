@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::enemies::{self, Dying, Enemy, ENEMY_APPROX_RADIUS};
+use crate::enemies::{self, Dying, ENEMY_APPROX_RADIUS, Enemy};
 use crate::player::Player;
 use crate::state::GameState;
 
@@ -12,8 +12,7 @@ impl Plugin for ShootingPlugin {
             .add_systems(Startup, (setup_gun, setup_crosshair))
             .add_systems(
                 Update,
-                (position_gun, shoot, play_gunshot)
-                    .run_if(in_state(GameState::Playing)),
+                (position_gun, shoot, play_gunshot).run_if(in_state(GameState::Playing)),
             );
     }
 }
@@ -87,14 +86,17 @@ pub fn setup_crosshair(mut commands: Commands) {
 }
 
 const GUN_OFFSET: Vec3 = Vec3::new(0.2, -0.2, -0.4);
-const GUN_BASE_ROTATION: Quat = Quat::from_xyzw(0.0, 0.7071068, 0.0, 0.7071068);
+const GUN_BASE_ROTATION: Quat = Quat::from_xyzw(
+    0.0,
+    std::f32::consts::FRAC_1_SQRT_2,
+    0.0,
+    std::f32::consts::FRAC_1_SQRT_2,
+);
 
 pub fn setup_gun(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         Gun,
-        WorldAssetRoot(
-            asset_server.load(GltfAssetLabel::Scene(0).from_asset("guns/pistol.glb")),
-        ),
+        WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("guns/pistol.glb"))),
         Transform {
             scale: Vec3::splat(0.15),
             rotation: GUN_BASE_ROTATION,
@@ -107,17 +109,22 @@ fn position_gun(
     camera_query: Query<&Transform, (With<Player>, Without<Gun>)>,
     mut gun_query: Query<&mut Transform, (With<Gun>, Without<Player>)>,
 ) {
-    let Ok(camera_transform) = camera_query.single() else { return };
-    let Ok(mut gun_transform) = gun_query.single_mut() else { return };
-    gun_transform.translation =
-        camera_transform.translation + camera_transform.rotation * GUN_OFFSET;
+    let Ok(camera_transform) = camera_query.single() else {
+        return;
+    };
+    let Ok(mut gun_transform) = gun_query.single_mut() else {
+        return;
+    };
+    gun_transform.translation = camera_transform.translation + camera_transform.rotation * GUN_OFFSET;
     gun_transform.rotation = camera_transform.rotation * GUN_BASE_ROTATION;
 }
+
+type AliveEnemy = (With<Enemy>, Without<Dying>);
 
 pub fn shoot(
     mouse_button: Res<ButtonInput<MouseButton>>,
     camera_query: Query<&Transform, With<Player>>,
-    enemy_query: Query<(Entity, &Transform), (With<Enemy>, Without<Dying>)>,
+    enemy_query: Query<(Entity, &Transform), AliveEnemy>,
     mut commands: Commands,
 ) {
     if !mouse_button.just_pressed(MouseButton::Left) {
@@ -135,8 +142,7 @@ pub fn shoot(
         let origin_to_center = camera_position - enemy_transform.translation;
         let projection = origin_to_center.dot(camera_forward);
         let radius_squared = ENEMY_APPROX_RADIUS * ENEMY_APPROX_RADIUS;
-        let discriminant = projection * projection
-            - (origin_to_center.dot(origin_to_center) - radius_squared);
+        let discriminant = projection * projection - (origin_to_center.dot(origin_to_center) - radius_squared);
 
         if discriminant >= 0.0 {
             enemies::kill_enemy(&mut commands, enemy_entity);
