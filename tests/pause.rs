@@ -1,9 +1,9 @@
-use bevy::input::keyboard::{KeyboardInput, Key, NativeKey};
 use bevy::input::ButtonState;
+use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
-use cathedral::ui::setup_pause_menu;
 use cathedral::player::setup_player;
 use cathedral::state::{GameState, toggle_pause};
+use cathedral::ui::setup_pause_menu;
 use std::time::Duration;
 
 fn create_test_app() -> App {
@@ -12,9 +12,9 @@ fn create_test_app() -> App {
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.add_plugins(bevy::input::InputPlugin);
     app.init_state::<GameState>();
-    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-        Duration::from_millis(16),
-    ));
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        16,
+    )));
     app.insert_resource(Assets::<Mesh>::default());
     app.insert_resource(Assets::<StandardMaterial>::default());
     app.add_systems(Startup, setup_player);

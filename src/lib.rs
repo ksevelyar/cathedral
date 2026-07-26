@@ -19,13 +19,6 @@ impl Plugin for GamePlugin {
             shooting::ShootingPlugin,
             ui::UiPlugin,
         ))
-        .add_systems(
-            Startup,
-            (
-                player::setup_player,
-                map::setup_map,
-            )
-                .chain(),
-        );
+        .add_systems(Startup, (player::setup_player, map::setup_map).chain());
     }
 }

@@ -39,10 +39,8 @@ pub fn setup_map(
     let wall_transforms = [
         Transform::from_xyz(0.0, 1.5, -15.0),
         Transform::from_xyz(0.0, 1.5, 15.0),
-        Transform::from_xyz(-15.0, 1.5, 0.0)
-            .with_rotation(Quat::from_rotation_y(90.0_f32.to_radians())),
-        Transform::from_xyz(15.0, 1.5, 0.0)
-            .with_rotation(Quat::from_rotation_y(90.0_f32.to_radians())),
+        Transform::from_xyz(-15.0, 1.5, 0.0).with_rotation(Quat::from_rotation_y(90.0_f32.to_radians())),
+        Transform::from_xyz(15.0, 1.5, 0.0).with_rotation(Quat::from_rotation_y(90.0_f32.to_radians())),
     ];
 
     for wall_transform in wall_transforms {

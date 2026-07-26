@@ -1,8 +1,8 @@
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
-use cathedral::enemies::{Dying, Enemy, move_enemies_and_check_reach, ENEMY_KILL_DISTANCE};
-use cathedral::player::{CameraState, Player, PLAYER_START_POSITION};
+use cathedral::enemies::{Dying, ENEMY_KILL_DISTANCE, Enemy, move_enemies_and_check_reach};
+use cathedral::player::{CameraState, PLAYER_START_POSITION, Player};
 use cathedral::shooting::shoot;
 use cathedral::state::GameState;
 use std::time::Duration;
@@ -13,9 +13,9 @@ fn create_enemy_test_app() -> App {
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.add_plugins(bevy::input::InputPlugin);
     app.init_state::<GameState>();
-    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-        Duration::from_millis(16),
-    ));
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        16,
+    )));
     app.insert_resource(Assets::<Mesh>::default());
     app.insert_resource(Assets::<StandardMaterial>::default());
     app.add_systems(
@@ -31,15 +31,12 @@ fn create_shooting_test_app() -> App {
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.add_plugins(bevy::input::InputPlugin);
     app.init_state::<GameState>();
-    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(
-        Duration::from_millis(16),
-    ));
+    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        16,
+    )));
     app.insert_resource(Assets::<Mesh>::default());
     app.insert_resource(Assets::<StandardMaterial>::default());
-    app.add_systems(
-        Update,
-        shoot.run_if(in_state(GameState::Playing)),
-    );
+    app.add_systems(Update, shoot.run_if(in_state(GameState::Playing)));
     app
 }
 
@@ -62,17 +59,13 @@ fn enemy_reaching_player_triggers_game_over() {
     let mut app = create_enemy_test_app();
     app.update();
 
-    app.world_mut().spawn((
-        Transform::from_translation(PLAYER_START_POSITION),
-        Player,
-    ));
+    app.world_mut()
+        .spawn((Transform::from_translation(PLAYER_START_POSITION), Player));
 
     let enemy_position = PLAYER_START_POSITION + Vec3::new(0.0, 0.0, ENEMY_KILL_DISTANCE * 0.5);
 
-    app.world_mut().spawn((
-        Enemy,
-        Transform::from_translation(enemy_position),
-    ));
+    app.world_mut()
+        .spawn((Enemy, Transform::from_translation(enemy_position)));
 
     app.update();
     app.update();
@@ -95,13 +88,7 @@ fn shooting_enemy_marks_it_dying() {
         ))
         .id();
 
-    let enemy_entity = app
-        .world_mut()
-        .spawn((
-            Enemy,
-            Transform::from_xyz(0.0, 1.5, 3.0),
-        ))
-        .id();
+    let enemy_entity = app.world_mut().spawn((Enemy, Transform::from_xyz(0.0, 1.5, 3.0))).id();
 
     send_mouse_click(&mut app);
     app.update();
