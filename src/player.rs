@@ -41,12 +41,12 @@ const MOUSE_SENSITIVITY: f32 = 0.003;
 const PLAYER_MOVE_SPEED: f32 = 5.0;
 const CAMERA_PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 
-pub const PLAYER_START_POSITION: Vec3 = Vec3::new(0.0, 1.5, 5.0);
+pub const PLAYER_START_POSITION: Vec3 = Vec3::new(0.0, 1.5, 12.0);
 
 pub fn setup_player(mut commands: Commands) {
     commands.spawn((
         Camera3d::default(),
-        Transform::from_xyz(0.0, 1.5, 5.0),
+        Transform::from_xyz(0.0, 1.5, 12.0),
         CameraState::default(),
         Player,
     ));

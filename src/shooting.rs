@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::enemies::{Enemy, ENEMY_RADIUS};
+use crate::enemies::{self, Dying, Enemy, ENEMY_APPROX_RADIUS};
 use crate::player::Player;
 use crate::state::GameState;
 
@@ -9,9 +9,11 @@ pub struct ShootingPlugin;
 impl Plugin for ShootingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GunshotSound>()
+            .add_systems(Startup, (setup_gun, setup_crosshair))
             .add_systems(
                 Update,
-                (shoot, play_gunshot).run_if(in_state(GameState::Playing)),
+                (position_gun, shoot, play_gunshot)
+                    .run_if(in_state(GameState::Playing)),
             );
     }
 }
@@ -21,9 +23,6 @@ pub struct Crosshair;
 
 #[derive(Component)]
 pub struct Gun;
-
-const GUN_BARREL_RADIUS: f32 = 0.03;
-const GUN_BARREL_HEIGHT: f32 = 0.25;
 
 #[derive(Resource)]
 pub struct GunshotSound {
@@ -87,37 +86,38 @@ pub fn setup_crosshair(mut commands: Commands) {
     ));
 }
 
-pub fn setup_gun(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    player_query: Query<Entity, With<Player>>,
+const GUN_OFFSET: Vec3 = Vec3::new(0.2, -0.2, -0.4);
+const GUN_BASE_ROTATION: Quat = Quat::from_xyzw(0.0, 0.7071068, 0.0, 0.7071068);
+
+pub fn setup_gun(mut commands: Commands, asset_server: Res<AssetServer>) {
+    commands.spawn((
+        Gun,
+        WorldAssetRoot(
+            asset_server.load(GltfAssetLabel::Scene(0).from_asset("guns/pistol.glb")),
+        ),
+        Transform {
+            scale: Vec3::splat(0.15),
+            rotation: GUN_BASE_ROTATION,
+            ..default()
+        },
+    ));
+}
+
+fn position_gun(
+    camera_query: Query<&Transform, (With<Player>, Without<Gun>)>,
+    mut gun_query: Query<&mut Transform, (With<Gun>, Without<Player>)>,
 ) {
-    let Ok(player_entity) = player_query.single() else {
-        return;
-    };
-
-    let gun_barrel_mesh = meshes.add(Cylinder::new(GUN_BARREL_RADIUS, GUN_BARREL_HEIGHT));
-    let gun_barrel_material = materials.add(StandardMaterial {
-        base_color: Color::srgb(0.3, 0.3, 0.3),
-        ..default()
-    });
-
-    commands.entity(player_entity).with_children(|parent| {
-        parent.spawn((
-            Gun,
-            Mesh3d(gun_barrel_mesh),
-            MeshMaterial3d(gun_barrel_material),
-            Transform::from_xyz(0.2, -0.2, -0.4)
-                .with_rotation(Quat::from_rotation_x(-90.0_f32.to_radians())),
-        ));
-    });
+    let Ok(camera_transform) = camera_query.single() else { return };
+    let Ok(mut gun_transform) = gun_query.single_mut() else { return };
+    gun_transform.translation =
+        camera_transform.translation + camera_transform.rotation * GUN_OFFSET;
+    gun_transform.rotation = camera_transform.rotation * GUN_BASE_ROTATION;
 }
 
 pub fn shoot(
     mouse_button: Res<ButtonInput<MouseButton>>,
     camera_query: Query<&Transform, With<Player>>,
-    enemy_query: Query<(Entity, &Transform), With<Enemy>>,
+    enemy_query: Query<(Entity, &Transform), (With<Enemy>, Without<Dying>)>,
     mut commands: Commands,
 ) {
     if !mouse_button.just_pressed(MouseButton::Left) {
@@ -132,13 +132,14 @@ pub fn shoot(
     let camera_forward = camera_transform.forward().as_vec3();
 
     for (enemy_entity, enemy_transform) in enemy_query.iter() {
-        let direction_to_enemy = enemy_transform.translation - camera_position;
-        let distance_to_enemy = direction_to_enemy.length();
-        let enemy_angular_radius = (ENEMY_RADIUS / distance_to_enemy).asin();
-        let angle_to_enemy = camera_forward.dot(direction_to_enemy.normalize()).acos();
+        let origin_to_center = camera_position - enemy_transform.translation;
+        let projection = origin_to_center.dot(camera_forward);
+        let radius_squared = ENEMY_APPROX_RADIUS * ENEMY_APPROX_RADIUS;
+        let discriminant = projection * projection
+            - (origin_to_center.dot(origin_to_center) - radius_squared);
 
-        if angle_to_enemy < enemy_angular_radius {
-            commands.entity(enemy_entity).despawn();
+        if discriminant >= 0.0 {
+            enemies::kill_enemy(&mut commands, enemy_entity);
             return;
         }
     }

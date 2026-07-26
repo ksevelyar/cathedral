@@ -38,6 +38,8 @@
               pkg-config
               cargo-watch
               rust-analyzer
+
+              blender
               (
                 rust-bin.nightly.latest.default.override {
                   extensions = ["rust-src"];

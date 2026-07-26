@@ -1,7 +1,7 @@
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
-use cathedral::enemies::{Enemy, move_enemies_and_check_reach, ENEMY_KILL_DISTANCE};
+use cathedral::enemies::{Dying, Enemy, move_enemies_and_check_reach, ENEMY_KILL_DISTANCE};
 use cathedral::player::{CameraState, Player, PLAYER_START_POSITION};
 use cathedral::shooting::shoot;
 use cathedral::state::GameState;
@@ -81,7 +81,7 @@ fn enemy_reaching_player_triggers_game_over() {
 }
 
 #[test]
-fn shooting_enemy_removes_it() {
+fn shooting_enemy_marks_it_dying() {
     let mut app = create_shooting_test_app();
     app.update();
 
@@ -107,7 +107,7 @@ fn shooting_enemy_removes_it() {
     app.update();
 
     assert!(
-        app.world().get_entity(enemy_entity).is_err(),
-        "enemy should be despawned after shooting"
+        app.world().entity(enemy_entity).get::<Dying>().is_some(),
+        "enemy should have Dying component after shooting"
     );
 }

@@ -46,8 +46,8 @@ pub fn restart_game(
     mut commands: Commands,
     enemy_query: Query<Entity, With<Enemy>>,
     mut player_query: Query<(&mut Transform, &mut CameraState), With<Player>>,
-    meshes: ResMut<Assets<Mesh>>,
-    materials: ResMut<Assets<StandardMaterial>>,
+    asset_server: Res<AssetServer>,
+    graphs: ResMut<Assets<AnimationGraph>>,
 ) {
     if !keyboard.just_pressed(KeyCode::Space) {
         return;
@@ -64,6 +64,6 @@ pub fn restart_game(
         transform.rotation = Quat::IDENTITY;
     }
 
-    enemies::spawn_enemies(commands, meshes, materials);
+    enemies::spawn_enemies(commands, asset_server, graphs);
     next_state.set(GameState::Playing);
 }

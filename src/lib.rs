@@ -24,8 +24,6 @@ impl Plugin for GamePlugin {
             (
                 player::setup_player,
                 map::setup_map,
-                shooting::setup_gun,
-                shooting::setup_crosshair,
             )
                 .chain(),
         );
