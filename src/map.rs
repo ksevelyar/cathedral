@@ -1,24 +1,30 @@
+use avian3d::prelude::*;
 use bevy::prelude::*;
+
+use crate::enemies::{EnemyKind, EnemyLifeState, EnemySpawn, spawn_enemy};
 
 pub struct MapPlugin;
 
 impl Plugin for MapPlugin {
-    fn build(&self, _app: &mut App) {}
+    fn build(&self, app: &mut App) {
+        app.add_systems(Startup, setup_map);
+    }
 }
 
 pub fn setup_map(
     mut commands: Commands,
+    asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     commands.spawn((
         PointLight {
-            intensity: 1_000_000.0,
+            intensity: 2_000_000.0,
             color: Color::srgb(1.0, 0.85, 0.6),
             shadow_maps_enabled: true,
             ..default()
         },
-        Transform::from_xyz(0.0, 2.8, 0.0),
+        Transform::from_xyz(4.8, 4.8, 1.0),
     ));
 
     commands.spawn((
@@ -27,6 +33,8 @@ pub fn setup_map(
             base_color: Color::srgb(0.4, 0.4, 0.4),
             ..default()
         })),
+        RigidBody::Static,
+        Collider::cuboid(30.0, 0.1, 30.0),
         Transform::from_xyz(0.0, 0.0, 0.0),
     ));
 
@@ -49,5 +57,25 @@ pub fn setup_map(
             MeshMaterial3d(wall_material.clone()),
             wall_transform,
         ));
+    }
+
+    spawn_map_enemies(&mut commands, &asset_server);
+}
+
+pub fn spawn_map_enemies(commands: &mut Commands, asset_server: &AssetServer) {
+    for translation in [
+        Vec3::new(-8.0, 0.0, -8.0),
+        Vec3::new(8.0, 0.0, -8.0),
+        Vec3::new(0.0, 0.0, -10.0),
+    ] {
+        spawn_enemy(
+            commands,
+            asset_server,
+            EnemySpawn {
+                kind: EnemyKind::Standard,
+                transform: Transform::from_translation(translation),
+                life_state: EnemyLifeState::Alive,
+            },
+        );
     }
 }

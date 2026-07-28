@@ -1,7 +1,9 @@
+use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use crate::enemies::{self, Dying, ENEMY_APPROX_RADIUS, Enemy};
+use crate::enemies::{Dying, Enemy};
 use crate::player::Player;
+use crate::ragdoll::{OwnedByEnemy, PendingRagdollImpact, RagdollBodyPart};
 use crate::state::GameState;
 
 pub struct ShootingPlugin;
@@ -12,7 +14,9 @@ impl Plugin for ShootingPlugin {
             .add_systems(Startup, (setup_gun, setup_crosshair))
             .add_systems(
                 Update,
-                (position_gun, shoot, play_gunshot).run_if(in_state(GameState::Playing)),
+                (position_gun, shoot, play_gunshot)
+                    .run_if(in_state(GameState::Playing))
+                    .after(crate::player::mouse_look),
             );
     }
 }
@@ -121,10 +125,16 @@ fn position_gun(
 
 type AliveEnemy = (With<Enemy>, Without<Dying>);
 
+const SHOT_DISTANCE: f32 = 100.0;
+const SHOT_IMPULSE: f32 = 100.0;
+
 pub fn shoot(
     mouse_button: Res<ButtonInput<MouseButton>>,
     camera_query: Query<&Transform, With<Player>>,
-    enemy_query: Query<(Entity, &Transform), AliveEnemy>,
+    spatial_query: SpatialQuery,
+    owners: Query<&OwnedByEnemy>,
+    alive_enemies: Query<(), AliveEnemy>,
+    ragdoll_bodies: Query<(Entity, &OwnedByEnemy), With<RagdollBodyPart>>,
     mut commands: Commands,
 ) {
     if !mouse_button.just_pressed(MouseButton::Left) {
@@ -135,20 +145,33 @@ pub fn shoot(
         return;
     };
 
-    let camera_position = camera_transform.translation;
-    let camera_forward = camera_transform.forward().as_vec3();
-
-    for (enemy_entity, enemy_transform) in enemy_query.iter() {
-        let origin_to_center = camera_position - enemy_transform.translation;
-        let projection = origin_to_center.dot(camera_forward);
-        let radius_squared = ENEMY_APPROX_RADIUS * ENEMY_APPROX_RADIUS;
-        let discriminant = projection * projection - (origin_to_center.dot(origin_to_center) - radius_squared);
-
-        if discriminant >= 0.0 {
-            enemies::kill_enemy(&mut commands, enemy_entity);
-            return;
+    let origin = camera_transform.translation;
+    let direction = camera_transform.forward();
+    let Some(hit) = spatial_query.cast_ray(
+        origin,
+        direction,
+        SHOT_DISTANCE,
+        true,
+        &SpatialQueryFilter::from_mask(0b10),
+    ) else {
+        return;
+    };
+    let Ok(owner) = owners.get(hit.entity) else {
+        return;
+    };
+    if alive_enemies.get(owner.0).is_err() {
+        return;
+    }
+    for (body, body_owner) in &ragdoll_bodies {
+        if body_owner.0 == owner.0 {
+            commands.entity(body).remove::<RigidBodyDisabled>();
         }
     }
+    commands.entity(owner.0).insert(Dying);
+    commands.entity(hit.entity).insert(PendingRagdollImpact {
+        impulse: direction.as_vec3() * SHOT_IMPULSE,
+        point: origin + direction.as_vec3() * hit.distance,
+    });
 }
 
 pub fn play_gunshot(

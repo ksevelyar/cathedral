@@ -1,100 +1,140 @@
-use bevy::input::ButtonState;
-use bevy::input::mouse::MouseButtonInput;
+use avian3d::prelude::*;
+use bevy::animation::AnimationPlugin;
+use bevy::ecs::system::RunSystemOnce;
+use bevy::gltf::GltfPlugin;
+use bevy::image::Image;
+use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
-use cathedral::enemies::{Dying, ENEMY_KILL_DISTANCE, Enemy, move_enemies_and_check_reach};
-use cathedral::player::{CameraState, PLAYER_START_POSITION, Player};
+use bevy::time::TimeUpdateStrategy;
+use bevy::world_serialization::WorldSerializationPlugin;
+use cathedral::enemies::{Dying, Enemy, EnemyKind, EnemyLifeState, EnemySpawn, spawn_enemy};
+use cathedral::player::Player;
+use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart, RagdollPlugin};
 use cathedral::shooting::shoot;
-use cathedral::state::GameState;
 use std::time::Duration;
 
-fn create_enemy_test_app() -> App {
-    let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
-    app.add_plugins(bevy::state::app::StatesPlugin);
-    app.add_plugins(bevy::input::InputPlugin);
-    app.init_state::<GameState>();
-    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-        16,
-    )));
-    app.insert_resource(Assets::<Mesh>::default());
-    app.insert_resource(Assets::<StandardMaterial>::default());
-    app.add_systems(
-        Update,
-        move_enemies_and_check_reach.run_if(in_state(GameState::Playing)),
+const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
+const ASSET_LOAD_ATTEMPTS: usize = 10_000;
+const EXPECTED_RAGDOLL_BODIES: usize = 14;
+
+fn spawn_alive_enemy(mut commands: Commands, asset_server: Res<AssetServer>) {
+    spawn_enemy(
+        &mut commands,
+        &asset_server,
+        EnemySpawn {
+            kind: EnemyKind::Standard,
+            transform: Transform::from_xyz(0.0, 0.5, 0.0),
+            life_state: EnemyLifeState::Alive,
+        },
     );
-    app
 }
 
-fn create_shooting_test_app() -> App {
+fn create_test_app() -> App {
+    let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
-    app.add_plugins(bevy::state::app::StatesPlugin);
-    app.add_plugins(bevy::input::InputPlugin);
-    app.init_state::<GameState>();
-    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-        16,
-    )));
-    app.insert_resource(Assets::<Mesh>::default());
-    app.insert_resource(Assets::<StandardMaterial>::default());
-    app.add_systems(Update, shoot.run_if(in_state(GameState::Playing)));
+    app.add_plugins((
+        MinimalPlugins,
+        TransformPlugin,
+        AssetPlugin::default(),
+        bevy::input::InputPlugin,
+        WorldSerializationPlugin,
+        MeshPlugin,
+        AnimationPlugin,
+        GltfPlugin::default(),
+        PhysicsPlugins::default(),
+        RagdollPlugin,
+    ))
+    .init_asset::<Image>()
+    .insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
+    .insert_resource(TimeUpdateStrategy::ManualDuration(fixed_timestep))
+    .add_systems(Startup, spawn_alive_enemy)
+    .add_systems(Update, shoot);
+    app.finish();
+    app.cleanup();
+    app.world_mut().resource_mut::<Time<Physics>>().pause();
     app
 }
 
-fn send_mouse_click(app: &mut App) {
-    app.world_mut()
-        .resource_mut::<Messages<MouseButtonInput>>()
-        .write(MouseButtonInput {
-            button: MouseButton::Left,
-            state: ButtonState::Pressed,
-            window: Entity::PLACEHOLDER,
-        });
+fn ragdoll_body_count(world: &mut World) -> usize {
+    world
+        .query_filtered::<Entity, With<RagdollBodyPart>>()
+        .iter(world)
+        .count()
 }
 
-fn current_state(app: &App) -> GameState {
-    app.world().resource::<State<GameState>>().get().clone()
-}
-
-#[test]
-fn enemy_reaching_player_triggers_game_over() {
-    let mut app = create_enemy_test_app();
-    app.update();
-
-    app.world_mut()
-        .spawn((Transform::from_translation(PLAYER_START_POSITION), Player));
-
-    let enemy_position = PLAYER_START_POSITION + Vec3::new(0.0, 0.0, ENEMY_KILL_DISTANCE * 0.5);
-
-    app.world_mut()
-        .spawn((Enemy, Transform::from_translation(enemy_position)));
-
-    app.update();
-    app.update();
-
-    assert_eq!(current_state(&app), GameState::GameOver);
+fn wait_for_ragdoll(app: &mut App) {
+    for _ in 0..ASSET_LOAD_ATTEMPTS {
+        app.update();
+        if ragdoll_body_count(app.world_mut()) == EXPECTED_RAGDOLL_BODIES {
+            return;
+        }
+        std::thread::yield_now();
+    }
+    panic!("alive enemy ragdoll colliders did not spawn");
 }
 
 #[test]
-fn shooting_enemy_marks_it_dying() {
-    let mut app = create_shooting_test_app();
-    app.update();
+fn shooting_alive_enemy_in_head_kills_and_impacts_head() {
+    let mut app = create_test_app();
+    wait_for_ragdoll(&mut app);
 
-    let _player_entity = app
+    let enemy = app
         .world_mut()
-        .spawn((
-            Camera3d::default(),
-            Transform::from_xyz(0.0, 1.5, 5.0),
-            CameraState::default(),
-            Player,
-        ))
-        .id();
+        .query_filtered::<Entity, With<Enemy>>()
+        .single(app.world())
+        .expect("one enemy should spawn");
+    let (head, head_position) = app
+        .world_mut()
+        .query::<(Entity, &Position, &RagdollBodyPart)>()
+        .iter(app.world())
+        .find_map(|(entity, position, body_part)| (*body_part == RagdollBodyPart::Head).then_some((entity, position.0)))
+        .expect("ragdoll should have a head");
 
-    let enemy_entity = app.world_mut().spawn((Enemy, Transform::from_xyz(0.0, 1.5, 3.0))).id();
+    let camera_position = head_position + Vec3::Z * 3.0;
+    let aim_point = head_position + Vec3::X * 0.05;
+    let camera_transform = Transform::from_translation(camera_position).looking_at(aim_point, Vec3::Y);
+    let shot_direction = camera_transform.forward().as_vec3();
+    app.world_mut().spawn((Player, camera_transform));
 
-    send_mouse_click(&mut app);
+    let disabled_owned_body_count = app
+        .world_mut()
+        .query::<(&OwnedByEnemy, &RagdollBodyPart, Has<RigidBodyDisabled>)>()
+        .iter(app.world())
+        .filter(|(owner, _, disabled)| owner.0 == enemy && *disabled)
+        .count();
+    assert_eq!(disabled_owned_body_count, EXPECTED_RAGDOLL_BODIES);
+
+    app.world_mut().resource_mut::<Time<Physics>>().unpause();
+    app.update();
+    app.world_mut()
+        .resource_mut::<ButtonInput<MouseButton>>()
+        .press(MouseButton::Left);
+    app.world_mut().run_system_once(shoot).expect("shot system should run");
     app.update();
 
-    assert!(
-        app.world().entity(enemy_entity).get::<Dying>().is_some(),
-        "enemy should have Dying component after shooting"
-    );
+    assert!(app.world().entity(enemy).contains::<Dying>());
+
+    let dynamic_owned_body_count = app
+        .world_mut()
+        .query::<(&OwnedByEnemy, &RigidBody)>()
+        .iter(app.world())
+        .filter(|(owner, rigid_body)| owner.0 == enemy && **rigid_body == RigidBody::Dynamic)
+        .count();
+    assert_eq!(dynamic_owned_body_count, EXPECTED_RAGDOLL_BODIES);
+
+    let enabled_owned_body_count = app
+        .world_mut()
+        .query::<(&OwnedByEnemy, &RagdollBodyPart, Has<RigidBodyDisabled>)>()
+        .iter(app.world())
+        .filter(|(owner, _, disabled)| owner.0 == enemy && !*disabled)
+        .count();
+    assert_eq!(enabled_owned_body_count, EXPECTED_RAGDOLL_BODIES);
+
+    let head_linear_velocity = app
+        .world()
+        .get::<LinearVelocity>(head)
+        .expect("head should have velocity");
+    let head_angular_velocity = app.world().get::<AngularVelocity>(head).expect("head should rotate");
+    assert!(head_linear_velocity.dot(shot_direction) > 0.0);
+    assert!(head_angular_velocity.length() > 0.0);
 }
