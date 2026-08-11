@@ -16,7 +16,8 @@ impl Plugin for ShootingPlugin {
                 Update,
                 (position_gun, shoot, play_gunshot)
                     .run_if(in_state(GameState::Playing))
-                    .after(crate::player::mouse_look),
+                    .after(crate::player::mouse_look)
+                    .after(crate::player::move_player),
             );
     }
 }
