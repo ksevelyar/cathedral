@@ -15,19 +15,22 @@ const SLEEP_DEADLINE_SECONDS: f64 = 10.0;
 const ASSET_LOAD_ATTEMPTS: usize = 10_000;
 const EXPECTED_RAGDOLL_BODIES: usize = 14;
 
-fn spawn_dead_enemy(mut commands: Commands, asset_server: Res<AssetServer>) {
+#[derive(Resource, Clone, Copy)]
+struct TestEnemyKind(EnemyKind);
+
+fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind: Res<TestEnemyKind>) {
     spawn_enemy(
         &mut commands,
         &asset_server,
         EnemySpawn {
-            kind: EnemyKind::Standard,
+            kind: kind.0,
             transform: Transform::from_xyz(0.0, 0.5, 0.0),
             life_state: EnemyLifeState::Dead,
         },
     );
 }
 
-fn create_test_app() -> App {
+fn create_test_app(kind: EnemyKind) -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
     let mut app = App::new();
     app.add_plugins((
@@ -41,7 +44,8 @@ fn create_test_app() -> App {
         PhysicsPlugins::default(),
         RagdollPlugin,
     ))
-    .add_systems(Startup, spawn_dead_enemy)
+    .insert_resource(TestEnemyKind(kind))
+    .add_systems(Startup, spawn_test_enemy)
     .init_asset::<Image>()
     .insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
     .insert_resource(TimeUpdateStrategy::ManualDuration(fixed_timestep))
@@ -94,9 +98,8 @@ fn all_ragdoll_bodies_sleeping(world: &mut World) -> bool {
     dynamic_body_count == EXPECTED_RAGDOLL_BODIES
 }
 
-#[test]
-fn human_ragdoll_sleeps_before_deadline() {
-    let mut app = create_test_app();
+fn run_ragdoll_sleep_test(kind: EnemyKind) {
+    let mut app = create_test_app(kind);
     wait_for_ragdoll(&mut app);
     app.world_mut().resource_mut::<Time<Physics>>().unpause();
 
@@ -128,4 +131,14 @@ fn human_ragdoll_sleeps_before_deadline() {
         "human ragdoll did not sleep within {SLEEP_DEADLINE_SECONDS} seconds:\n{}",
         awake_bodies.join("\n")
     );
+}
+
+#[test]
+fn fighter_ragdoll_sleeps_before_deadline() {
+    run_ragdoll_sleep_test(EnemyKind::Fighter);
+}
+
+#[test]
+fn gunner_ragdoll_sleeps_before_deadline() {
+    run_ragdoll_sleep_test(EnemyKind::Gunner);
 }

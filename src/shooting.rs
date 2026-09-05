@@ -37,7 +37,7 @@ impl FromWorld for GunshotSound {
     fn from_world(world: &mut World) -> Self {
         let asset_server = world.resource::<AssetServer>();
         GunshotSound {
-            handle: asset_server.load("pistol.mp3"),
+            handle: asset_server.load("weapon/pistol.mp3"),
         }
     }
 }
@@ -101,7 +101,7 @@ const GUN_BASE_ROTATION: Quat = Quat::from_xyzw(
 pub fn setup_gun(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         Gun,
-        WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("guns/pistol.glb"))),
+        WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("weapon/pistol.glb"))),
         Transform {
             scale: Vec3::splat(0.15),
             rotation: GUN_BASE_ROTATION,

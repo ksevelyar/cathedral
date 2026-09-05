@@ -63,16 +63,16 @@ pub fn setup_map(
 }
 
 pub fn spawn_map_enemies(commands: &mut Commands, asset_server: &AssetServer) {
-    for translation in [
-        Vec3::new(-8.0, 0.0, -8.0),
-        Vec3::new(8.0, 0.0, -8.0),
-        Vec3::new(0.0, 0.0, -10.0),
+    for (translation, kind) in [
+        (Vec3::new(-8.0, 0.0, -8.0), EnemyKind::Gunner),
+        (Vec3::new(8.0, 0.0, -8.0), EnemyKind::Gunner),
+        (Vec3::new(0.0, 0.0, -10.0), EnemyKind::Fighter),
     ] {
         spawn_enemy(
             commands,
             asset_server,
             EnemySpawn {
-                kind: EnemyKind::Standard,
+                kind,
                 transform: Transform::from_translation(translation),
                 life_state: EnemyLifeState::Alive,
             },

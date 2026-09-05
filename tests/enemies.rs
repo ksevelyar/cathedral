@@ -7,7 +7,7 @@ use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use bevy::world_serialization::WorldSerializationPlugin;
-use cathedral::enemies::{Dying, Enemy, EnemyKind, EnemyLifeState, EnemySpawn, spawn_enemy};
+use cathedral::enemies::{Enemy, EnemyKind, EnemyLifeState, EnemySpawn, spawn_enemy};
 use cathedral::player::Player;
 use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart, RagdollPlugin};
 use cathedral::shooting::shoot;
@@ -17,19 +17,22 @@ const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
 const ASSET_LOAD_ATTEMPTS: usize = 10_000;
 const EXPECTED_RAGDOLL_BODIES: usize = 14;
 
-fn spawn_alive_enemy(mut commands: Commands, asset_server: Res<AssetServer>) {
+#[derive(Resource, Clone, Copy)]
+struct TestEnemyKind(EnemyKind);
+
+fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind: Res<TestEnemyKind>) {
     spawn_enemy(
         &mut commands,
         &asset_server,
         EnemySpawn {
-            kind: EnemyKind::Standard,
+            kind: kind.0,
             transform: Transform::from_xyz(0.0, 0.5, 0.0),
             life_state: EnemyLifeState::Alive,
         },
     );
 }
 
-fn create_test_app() -> App {
+fn create_test_app(kind: EnemyKind) -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
     let mut app = App::new();
     app.add_plugins((
@@ -47,7 +50,8 @@ fn create_test_app() -> App {
     .init_asset::<Image>()
     .insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
     .insert_resource(TimeUpdateStrategy::ManualDuration(fixed_timestep))
-    .add_systems(Startup, spawn_alive_enemy)
+    .insert_resource(TestEnemyKind(kind))
+    .add_systems(Startup, spawn_test_enemy)
     .add_systems(Update, shoot);
     app.finish();
     app.cleanup();
@@ -73,9 +77,8 @@ fn wait_for_ragdoll(app: &mut App) {
     panic!("alive enemy ragdoll colliders did not spawn");
 }
 
-#[test]
-fn shooting_alive_enemy_in_head_kills_and_impacts_head() {
-    let mut app = create_test_app();
+fn run_shooting_test(kind: EnemyKind) {
+    let mut app = create_test_app(kind);
     wait_for_ragdoll(&mut app);
 
     let enemy = app
@@ -112,7 +115,7 @@ fn shooting_alive_enemy_in_head_kills_and_impacts_head() {
     app.world_mut().run_system_once(shoot).expect("shot system should run");
     app.update();
 
-    assert!(app.world().entity(enemy).contains::<Dying>());
+    assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
 
     let dynamic_owned_body_count = app
         .world_mut()
@@ -137,4 +140,32 @@ fn shooting_alive_enemy_in_head_kills_and_impacts_head() {
     let head_angular_velocity = app.world().get::<AngularVelocity>(head).expect("head should rotate");
     assert!(head_linear_velocity.dot(shot_direction) > 0.0);
     assert!(head_angular_velocity.length() > 0.0);
+}
+
+#[test]
+fn shooting_alive_fighter_enemy_in_head_kills_and_impacts_head() {
+    run_shooting_test(EnemyKind::Fighter);
+}
+
+#[test]
+fn shooting_alive_gunner_enemy_in_head_kills_and_impacts_head() {
+    run_shooting_test(EnemyKind::Gunner);
+}
+
+#[test]
+fn gunner_enemy_constructs_ragdoll_bodies() {
+    let mut app = create_test_app(EnemyKind::Gunner);
+    wait_for_ragdoll(&mut app);
+
+    let body_count = ragdoll_body_count(app.world_mut());
+    assert_eq!(body_count, EXPECTED_RAGDOLL_BODIES);
+}
+
+#[test]
+fn fighter_enemy_constructs_ragdoll_bodies() {
+    let mut app = create_test_app(EnemyKind::Fighter);
+    wait_for_ragdoll(&mut app);
+
+    let body_count = ragdoll_body_count(app.world_mut());
+    assert_eq!(body_count, EXPECTED_RAGDOLL_BODIES);
 }

@@ -39,6 +39,8 @@
               cargo-watch
               rust-analyzer
 
+              jq
+              python3
               blender
               (
                 rust-bin.nightly.latest.default.override {
