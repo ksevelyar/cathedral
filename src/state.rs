@@ -2,7 +2,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::enemies::Enemy;
-use crate::map;
+use crate::maps::{self, CurrentMap};
 use crate::player::{self, CameraState, Player};
 
 pub struct GameStatePlugin;
@@ -64,6 +64,7 @@ fn restart_game(
     mut commands: Commands,
     enemy_query: Query<Entity, With<Enemy>>,
     player_query: Query<(&mut Transform, &mut CameraState), With<Player>>,
+    mut current_map: ResMut<CurrentMap>,
     asset_server: Res<AssetServer>,
 ) {
     if !keyboard.just_pressed(KeyCode::Space) {
@@ -75,6 +76,6 @@ fn restart_game(
     }
 
     player::reset_player(player_query);
-    map::spawn_map_enemies(&mut commands, &asset_server);
+    maps::restart(&mut current_map, &mut commands, &asset_server);
     next_state.set(GameState::Playing);
 }

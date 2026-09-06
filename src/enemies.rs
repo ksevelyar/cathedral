@@ -7,6 +7,12 @@ use crate::player::Player;
 use crate::ragdoll::setup_ragdoll;
 use crate::state::GameState;
 
+mod fighter;
+mod gunner;
+
+pub use fighter::Fighter;
+pub use gunner::Gunner;
+
 pub struct EnemiesPlugin;
 
 impl Plugin for EnemiesPlugin {
@@ -69,116 +75,6 @@ struct WeaponSpec {
     rotation_euler_yxz: (f32, f32, f32),
     translation: Vec3,
     collider_half_extents: Vec3,
-}
-
-#[derive(Clone)]
-pub struct Fighter {
-    rig: EnemyRig,
-    move_speed: f32,
-    reach: f32,
-    attack_cooldown: f32,
-    attack_animation_seconds: f32,
-}
-
-impl Default for Fighter {
-    fn default() -> Self {
-        Self {
-            rig: EnemyRig {
-                scene: "animation/Unreal-Godot/UAL1_Standard.glb",
-                animation_source: "animation/Unreal-Godot/UAL1_Standard.glb",
-                idle_animation: 40,
-                moving_animation: 36,
-                attack_animation: 39,
-                weapon: WeaponSpec {
-                    path: "weapon/katana.glb",
-                    scale: 1.0,
-                    rotation_euler_yxz: (0.0, 0.0, 0.0),
-                    translation: Vec3::ZERO,
-                    collider_half_extents: Vec3::new(0.01, 0.04, 0.35),
-                },
-            },
-            move_speed: 1.0,
-            reach: 2.5,
-            attack_cooldown: 2.0,
-            attack_animation_seconds: 1.53,
-        }
-    }
-}
-
-impl Fighter {
-    fn update(&self, player: &Transform, enemy: &mut Transform, activity: &mut EnemyActivity, delta_secs: f32) {
-        let Some((direction, distance)) = planar_direction(player, enemy) else {
-            return;
-        };
-
-        if distance <= self.reach {
-            activity.attack_on_cooldown(self.attack_cooldown, self.attack_animation_seconds);
-        } else {
-            activity.state = AnimationState::Moving;
-            enemy.look_to(-direction, Vec3::Y);
-            let available_distance = distance - self.reach;
-            let movement = (self.move_speed * delta_secs).min(available_distance);
-            enemy.translation += direction * movement;
-        }
-    }
-}
-
-#[derive(Clone)]
-pub struct Gunner {
-    rig: EnemyRig,
-    move_speed: f32,
-    flee_distance: f32,
-    attack_distance: f32,
-    attack_cooldown: f32,
-    attack_animation_seconds: f32,
-}
-
-impl Default for Gunner {
-    fn default() -> Self {
-        Self {
-            rig: EnemyRig {
-                scene: "universal-base-characters/Base Characters/Godot - UE/Superhero_Female_FullBody.gltf",
-                animation_source: "animation/Unreal-Godot/UAL1_Standard.glb",
-                idle_animation: 21,
-                moving_animation: 36,
-                attack_animation: 23,
-                weapon: WeaponSpec {
-                    path: "weapon/pistol.glb",
-                    scale: 0.15,
-                    rotation_euler_yxz: (1.5240, 0.0217, 1.3841),
-                    translation: Vec3::new(-0.05, 0.0, 0.0),
-                    collider_half_extents: Vec3::new(0.88, 0.15, 0.1),
-                },
-            },
-            move_speed: 1.0,
-            flee_distance: 4.0,
-            attack_distance: 12.0,
-            attack_cooldown: 2.0,
-            attack_animation_seconds: 1.0,
-        }
-    }
-}
-
-impl Gunner {
-    fn update(&self, player: &Transform, enemy: &mut Transform, activity: &mut EnemyActivity, delta_secs: f32) {
-        let Some((direction, distance)) = planar_direction(player, enemy) else {
-            return;
-        };
-
-        if distance < self.flee_distance {
-            let away_direction = -direction;
-            enemy.look_to(direction, Vec3::Y);
-            enemy.translation += away_direction * (self.move_speed * delta_secs);
-            activity.state = AnimationState::Moving;
-        } else if distance > self.attack_distance {
-            enemy.look_to(-direction, Vec3::Y);
-            enemy.translation += direction * (self.move_speed * delta_secs);
-            activity.state = AnimationState::Moving;
-        } else {
-            enemy.look_to(-direction, Vec3::Y);
-            activity.attack_on_cooldown(self.attack_cooldown, self.attack_animation_seconds);
-        }
-    }
 }
 
 fn planar_direction(player: &Transform, enemy: &Transform) -> Option<(Vec3, f32)> {

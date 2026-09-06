@@ -2,7 +2,7 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 
 pub mod enemies;
-pub mod map;
+pub mod maps;
 pub mod player;
 pub mod ragdoll;
 pub mod shooting;
@@ -17,7 +17,7 @@ impl Plugin for GamePlugin {
             PhysicsPlugins::default(),
             PhysicsDebugPlugin,
             state::GameStatePlugin,
-            map::MapPlugin,
+            maps::MapsPlugin,
             player::PlayerPlugin,
             enemies::EnemiesPlugin,
             ragdoll::RagdollPlugin,
