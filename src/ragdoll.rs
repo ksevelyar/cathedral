@@ -113,10 +113,17 @@ fn wake_ragdoll_bodies_on_hit(
     hit: On<EnemyHit>,
     mut commands: Commands,
     ragdoll_bodies: Query<(Entity, &OwnedByEnemy), With<RagdollBodyPart>>,
+    ragdoll_joints: Query<(Entity, &OwnedByEnemy), Or<(With<SphericalJoint>, With<RevoluteJoint>)>>,
 ) {
     for (body, owner) in &ragdoll_bodies {
         if owner.0 == hit.entity {
             commands.entity(body).remove::<RigidBodyDisabled>();
+        }
+    }
+
+    for (joint, owner) in &ragdoll_joints {
+        if owner.0 == hit.entity {
+            commands.entity(joint).remove::<JointDisabled>();
         }
     }
 
@@ -442,16 +449,18 @@ fn spawn_spherical_joint(
     child: Entity,
     anchor: Vec3,
     angular_damping: f32,
-) {
-    commands.spawn((
-        OwnedByEnemy(enemy),
-        SphericalJoint::new(parent, child).with_anchor(anchor),
-        JointDamping {
-            linear: 0.0,
-            angular: angular_damping,
-        },
-        JointCollisionDisabled,
-    ));
+) -> Entity {
+    commands
+        .spawn((
+            OwnedByEnemy(enemy),
+            SphericalJoint::new(parent, child).with_anchor(anchor),
+            JointDamping {
+                linear: 0.0,
+                angular: angular_damping,
+            },
+            JointCollisionDisabled,
+        ))
+        .id()
 }
 
 struct JointBodies {
@@ -467,7 +476,7 @@ fn spawn_revolute_joint(
     child_segment: Segment,
     hinge_axis: Vec3,
     angle_limits: (f32, f32),
-) {
+) -> Entity {
     let parent_axis = parent_segment.rotation * Vec3::Y;
     let joint_x_axis = (parent_axis - hinge_axis * parent_axis.dot(hinge_axis))
         .try_normalize()
@@ -476,20 +485,22 @@ fn spawn_revolute_joint(
     let world_joint_basis = Quat::from_mat3(&Mat3::from_cols(joint_x_axis, joint_y_axis, hinge_axis));
     let anchor = child_segment.start;
 
-    commands.spawn((
-        OwnedByEnemy(bodies.enemy),
-        RevoluteJoint::new(bodies.parent, bodies.child)
-            .with_local_anchor1(parent_segment.rotation.inverse() * (anchor - parent_segment.midpoint))
-            .with_local_anchor2(child_segment.rotation.inverse() * (anchor - child_segment.midpoint))
-            .with_local_basis1(parent_segment.rotation.inverse() * world_joint_basis)
-            .with_local_basis2(child_segment.rotation.inverse() * world_joint_basis)
-            .with_angle_limits(angle_limits.0, angle_limits.1),
-        JointDamping {
-            linear: 0.0,
-            angular: JOINT_ANGULAR_DAMPING,
-        },
-        JointCollisionDisabled,
-    ));
+    commands
+        .spawn((
+            OwnedByEnemy(bodies.enemy),
+            RevoluteJoint::new(bodies.parent, bodies.child)
+                .with_local_anchor1(parent_segment.rotation.inverse() * (anchor - parent_segment.midpoint))
+                .with_local_anchor2(child_segment.rotation.inverse() * (anchor - child_segment.midpoint))
+                .with_local_basis1(parent_segment.rotation.inverse() * world_joint_basis)
+                .with_local_basis2(child_segment.rotation.inverse() * world_joint_basis)
+                .with_angle_limits(angle_limits.0, angle_limits.1),
+            JointDamping {
+                linear: 0.0,
+                angular: JOINT_ANGULAR_DAMPING,
+            },
+            JointCollisionDisabled,
+        ))
+        .id()
 }
 
 fn spawn_body(
@@ -576,6 +587,7 @@ fn spawn_ragdoll_bodies(
         let mut limbs: HashMap<RagdollBodyPart, MeasuredLimb> = HashMap::new();
         let mut part_entities: HashMap<RagdollBodyPart, Entity> = HashMap::new();
         let mut parts: Vec<RigPart> = Vec::new();
+        let mut joints: Vec<Entity> = Vec::new();
 
         for spec in LIMBS {
             let Some(start_position) = measure_point(spec.start, Vec3::ZERO, &ragdoll.bones, &transforms) else {
@@ -610,7 +622,7 @@ fn spawn_ragdoll_bodies(
                 let parent_entity = part_entities[&parent_part];
                 match joint {
                     JointSpec::Spherical { angular_damping } => {
-                        spawn_spherical_joint(
+                        let joint = spawn_spherical_joint(
                             &mut commands,
                             root,
                             parent_entity,
@@ -618,9 +630,10 @@ fn spawn_ragdoll_bodies(
                             start_position,
                             angular_damping,
                         );
+                        joints.push(joint);
                     }
                     JointSpec::Revolute { angle_limits } => {
-                        spawn_revolute_joint(
+                        let joint = spawn_revolute_joint(
                             &mut commands,
                             JointBodies {
                                 enemy: root,
@@ -632,6 +645,7 @@ fn spawn_ragdoll_bodies(
                             hinge_axis(&limbs),
                             angle_limits,
                         );
+                        joints.push(joint);
                     }
                 }
             }
@@ -679,6 +693,9 @@ fn spawn_ragdoll_bodies(
         }
 
         if !dying {
+            for joint in &joints {
+                commands.entity(*joint).insert(JointDisabled);
+            }
             for part in &parts {
                 commands.entity(part.entity).insert(RigidBodyDisabled);
             }
