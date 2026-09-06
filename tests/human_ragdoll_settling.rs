@@ -6,7 +6,7 @@ use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use bevy::world_serialization::WorldSerializationPlugin;
-use cathedral::enemies::{EnemyKind, EnemyLifeState, EnemySpawn, spawn_enemy};
+use cathedral::enemies::{EnemyKind, Fighter, Gunner, spawn_enemy};
 use cathedral::ragdoll::RagdollPlugin;
 use std::time::Duration;
 
@@ -15,18 +15,16 @@ const SLEEP_DEADLINE_SECONDS: f64 = 10.0;
 const ASSET_LOAD_ATTEMPTS: usize = 10_000;
 const EXPECTED_RAGDOLL_BODIES: usize = 14;
 
-#[derive(Resource, Clone, Copy)]
+#[derive(Resource, Clone)]
 struct TestEnemyKind(EnemyKind);
 
 fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind: Res<TestEnemyKind>) {
     spawn_enemy(
         &mut commands,
         &asset_server,
-        EnemySpawn {
-            kind: kind.0,
-            transform: Transform::from_xyz(0.0, 0.5, 0.0),
-            life_state: EnemyLifeState::Dead,
-        },
+        kind.0.clone(),
+        Transform::from_xyz(0.0, 0.5, 0.0),
+        false,
     );
 }
 
@@ -135,10 +133,10 @@ fn run_ragdoll_sleep_test(kind: EnemyKind) {
 
 #[test]
 fn fighter_ragdoll_sleeps_before_deadline() {
-    run_ragdoll_sleep_test(EnemyKind::Fighter);
+    run_ragdoll_sleep_test(EnemyKind::Fighter(Fighter::default()));
 }
 
 #[test]
 fn gunner_ragdoll_sleeps_before_deadline() {
-    run_ragdoll_sleep_test(EnemyKind::Gunner);
+    run_ragdoll_sleep_test(EnemyKind::Gunner(Gunner::default()));
 }

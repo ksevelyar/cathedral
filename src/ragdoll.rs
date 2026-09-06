@@ -1,3 +1,4 @@
+use crate::enemies::{Dying, EnemyHit};
 use avian3d::math::AsF32;
 use avian3d::prelude::*;
 use bevy::prelude::*;
@@ -5,24 +6,26 @@ use bevy::transform::TransformSystems;
 use bevy::world_serialization::WorldInstanceReady;
 use std::collections::HashMap;
 
-use crate::enemies::Dying;
+pub(crate) const RAGDOLL_GROUP: u32 = 0b10;
+pub(crate) const WORLD_GROUP: u32 = 0b01;
 
 pub struct RagdollPlugin;
 
 impl Plugin for RagdollPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            PostUpdate,
-            (spawn_ragdoll_bodies, synchronize_ragdoll_bodies, apply_ragdoll_pose)
-                .chain()
-                .after(TransformSystems::Propagate),
-        )
-        .add_systems(
-            FixedPostUpdate,
-            apply_pending_impacts
-                .after(PhysicsSystems::Prepare)
-                .before(PhysicsSystems::StepSimulation),
-        );
+        app.add_observer(wake_ragdoll_bodies_on_hit)
+            .add_systems(
+                PostUpdate,
+                (spawn_ragdoll_bodies, synchronize_ragdoll_bodies, apply_ragdoll_pose)
+                    .chain()
+                    .after(TransformSystems::Propagate),
+            )
+            .add_systems(
+                FixedPostUpdate,
+                apply_pending_impacts
+                    .after(PhysicsSystems::Prepare)
+                    .before(PhysicsSystems::StepSimulation),
+            );
     }
 }
 
@@ -54,17 +57,17 @@ struct PendingRagdoll {
     bones: HashMap<String, Entity>,
 }
 
+#[derive(Component)]
+struct RagdollData {
+    bones: HashMap<String, Entity>,
+    parts: Vec<RigPart>,
+}
+
 struct RigPart {
     entity: Entity,
     body_part: RagdollBodyPart,
     initial: GlobalTransform,
     bones: Vec<(Entity, GlobalTransform)>,
-}
-
-#[derive(Component)]
-struct RagdollData {
-    bones: RagdollBones,
-    parts: Vec<RigPart>,
 }
 
 #[derive(Component)]
@@ -75,7 +78,7 @@ pub struct OwnedByEnemy(pub Entity);
 #[relationship_target(relationship = OwnedByEnemy, linked_spawn)]
 pub struct EnemyPhysicsEntities(Vec<Entity>);
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RagdollBodyPart {
     Torso,
     Head,
@@ -106,7 +109,24 @@ fn apply_pending_impacts(mut commands: Commands, mut impacted_bodies: Query<(Ent
     }
 }
 
-pub fn setup_ragdoll(
+fn wake_ragdoll_bodies_on_hit(
+    hit: On<EnemyHit>,
+    mut commands: Commands,
+    ragdoll_bodies: Query<(Entity, &OwnedByEnemy), With<RagdollBodyPart>>,
+) {
+    for (body, owner) in &ragdoll_bodies {
+        if owner.0 == hit.entity {
+            commands.entity(body).remove::<RigidBodyDisabled>();
+        }
+    }
+
+    commands.entity(hit.body).insert(PendingRagdollImpact {
+        impulse: hit.impulse,
+        point: hit.point,
+    });
+}
+
+pub(crate) fn setup_ragdoll(
     scene_ready: On<WorldInstanceReady>,
     mut commands: Commands,
     children: Query<&Children>,
@@ -148,10 +168,271 @@ impl Segment {
     }
 }
 
-struct PhysicsPart {
-    entity: Entity,
-    body_part: RagdollBodyPart,
-    initial: GlobalTransform,
+#[derive(Clone, Copy)]
+enum BonePoint {
+    Joint(&'static str),
+    First(&'static [&'static str]),
+    Raised { bone: &'static str, offset: Vec3 },
+    Extended { toward: &'static str, length: f32 },
+}
+
+#[derive(Clone, Copy)]
+enum Shape {
+    Capsule { radius: f32 },
+    Sphere { radius: f32 },
+}
+
+#[derive(Clone, Copy)]
+enum JointSpec {
+    Spherical { angular_damping: f32 },
+    Revolute { angle_limits: (f32, f32) },
+}
+
+struct LimbSpec {
+    part: RagdollBodyPart,
+    name: &'static str,
+    shape: Shape,
+    start: BonePoint,
+    end: BonePoint,
+    parent: Option<RagdollBodyPart>,
+    joint: Option<JointSpec>,
+}
+
+impl LimbSpec {
+    fn bone_names(&self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        match self.start {
+            BonePoint::Joint(name) => names.push(name),
+            BonePoint::First(bone_names) => names.extend_from_slice(bone_names),
+            BonePoint::Raised { bone, .. } => names.push(bone),
+            BonePoint::Extended { toward, .. } => names.push(toward),
+        }
+        match self.end {
+            BonePoint::Joint(name) => names.push(name),
+            BonePoint::First(bone_names) => names.extend_from_slice(bone_names),
+            BonePoint::Raised { bone, .. } => names.push(bone),
+            BonePoint::Extended { toward, .. } => names.push(toward),
+        }
+        names
+    }
+
+    fn driven_bones(&self) -> Vec<&'static str> {
+        let mut names = Vec::new();
+        if let BonePoint::Joint(name) = self.start {
+            names.push(name);
+        }
+        match self.end {
+            BonePoint::Raised { bone, .. } => names.push(bone),
+            BonePoint::Extended { toward, .. } => names.push(toward),
+            _ => {}
+        }
+        names
+    }
+}
+
+const LIMBS: &[LimbSpec] = &[
+    LimbSpec {
+        part: RagdollBodyPart::Torso,
+        name: "torso",
+        shape: Shape::Capsule { radius: TORSO_RADIUS },
+        start: BonePoint::Joint("pelvis"),
+        end: BonePoint::First(&["spine_03", "spine_02"]),
+        parent: None,
+        joint: None,
+    },
+    LimbSpec {
+        part: RagdollBodyPart::Head,
+        name: "head",
+        shape: Shape::Sphere { radius: HEAD_RADIUS },
+        start: BonePoint::Joint("neck_01"),
+        end: BonePoint::Raised {
+            bone: "Head",
+            offset: Vec3::new(0.0, HEAD_OFFSET, 0.0),
+        },
+        parent: Some(RagdollBodyPart::Torso),
+        joint: Some(JointSpec::Spherical {
+            angular_damping: NECK_ANGULAR_DAMPING,
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::LeftUpperArm,
+        name: "left_upper_arm",
+        shape: Shape::Capsule {
+            radius: UPPER_ARM_RADIUS,
+        },
+        start: BonePoint::Joint("upperarm_l"),
+        end: BonePoint::Joint("lowerarm_l"),
+        parent: Some(RagdollBodyPart::Torso),
+        joint: Some(JointSpec::Spherical {
+            angular_damping: JOINT_ANGULAR_DAMPING,
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::RightUpperArm,
+        name: "right_upper_arm",
+        shape: Shape::Capsule {
+            radius: UPPER_ARM_RADIUS,
+        },
+        start: BonePoint::Joint("upperarm_r"),
+        end: BonePoint::Joint("lowerarm_r"),
+        parent: Some(RagdollBodyPart::Torso),
+        joint: Some(JointSpec::Spherical {
+            angular_damping: JOINT_ANGULAR_DAMPING,
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::LeftForearm,
+        name: "left_forearm",
+        shape: Shape::Capsule { radius: FOREARM_RADIUS },
+        start: BonePoint::Joint("lowerarm_l"),
+        end: BonePoint::Joint("hand_l"),
+        parent: Some(RagdollBodyPart::LeftUpperArm),
+        joint: Some(JointSpec::Revolute {
+            angle_limits: (-2.6, 0.1),
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::LeftHand,
+        name: "left_hand",
+        shape: Shape::Capsule { radius: HAND_RADIUS },
+        start: BonePoint::Joint("hand_l"),
+        end: BonePoint::Extended {
+            toward: "middle_01_l",
+            length: HAND_LENGTH,
+        },
+        parent: Some(RagdollBodyPart::LeftForearm),
+        joint: Some(JointSpec::Spherical {
+            angular_damping: WRIST_ANGULAR_DAMPING,
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::RightForearm,
+        name: "right_forearm",
+        shape: Shape::Capsule { radius: FOREARM_RADIUS },
+        start: BonePoint::Joint("lowerarm_r"),
+        end: BonePoint::Joint("hand_r"),
+        parent: Some(RagdollBodyPart::RightUpperArm),
+        joint: Some(JointSpec::Revolute {
+            angle_limits: (-0.1, 2.6),
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::RightHand,
+        name: "right_hand",
+        shape: Shape::Capsule { radius: HAND_RADIUS },
+        start: BonePoint::Joint("hand_r"),
+        end: BonePoint::Extended {
+            toward: "middle_01_r",
+            length: HAND_LENGTH,
+        },
+        parent: Some(RagdollBodyPart::RightForearm),
+        joint: Some(JointSpec::Spherical {
+            angular_damping: WRIST_ANGULAR_DAMPING,
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::LeftThigh,
+        name: "left_thigh",
+        shape: Shape::Capsule { radius: THIGH_RADIUS },
+        start: BonePoint::Joint("thigh_l"),
+        end: BonePoint::Joint("calf_l"),
+        parent: Some(RagdollBodyPart::Torso),
+        joint: Some(JointSpec::Spherical {
+            angular_damping: HIP_ANGULAR_DAMPING,
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::LeftCalf,
+        name: "left_calf",
+        shape: Shape::Capsule { radius: CALF_RADIUS },
+        start: BonePoint::Joint("calf_l"),
+        end: BonePoint::Joint("foot_l"),
+        parent: Some(RagdollBodyPart::LeftThigh),
+        joint: Some(JointSpec::Revolute {
+            angle_limits: (-0.1, 2.6),
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::LeftFoot,
+        name: "left_foot",
+        shape: Shape::Capsule { radius: FOOT_RADIUS },
+        start: BonePoint::Joint("foot_l"),
+        end: BonePoint::Extended {
+            toward: "ball_l",
+            length: FOOT_LENGTH,
+        },
+        parent: Some(RagdollBodyPart::LeftCalf),
+        joint: Some(JointSpec::Spherical {
+            angular_damping: ANKLE_ANGULAR_DAMPING,
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::RightThigh,
+        name: "right_thigh",
+        shape: Shape::Capsule { radius: THIGH_RADIUS },
+        start: BonePoint::Joint("thigh_r"),
+        end: BonePoint::Joint("calf_r"),
+        parent: Some(RagdollBodyPart::Torso),
+        joint: Some(JointSpec::Spherical {
+            angular_damping: HIP_ANGULAR_DAMPING,
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::RightCalf,
+        name: "right_calf",
+        shape: Shape::Capsule { radius: CALF_RADIUS },
+        start: BonePoint::Joint("calf_r"),
+        end: BonePoint::Joint("foot_r"),
+        parent: Some(RagdollBodyPart::RightThigh),
+        joint: Some(JointSpec::Revolute {
+            angle_limits: (-0.1, 2.6),
+        }),
+    },
+    LimbSpec {
+        part: RagdollBodyPart::RightFoot,
+        name: "right_foot",
+        shape: Shape::Capsule { radius: FOOT_RADIUS },
+        start: BonePoint::Joint("foot_r"),
+        end: BonePoint::Extended {
+            toward: "ball_r",
+            length: FOOT_LENGTH,
+        },
+        parent: Some(RagdollBodyPart::RightCalf),
+        joint: Some(JointSpec::Spherical {
+            angular_damping: ANKLE_ANGULAR_DAMPING,
+        }),
+    },
+];
+
+fn bone_position(name: &str, bones: &HashMap<String, Entity>, transforms: &Query<&GlobalTransform>) -> Option<Vec3> {
+    let entity = bones.get(name)?;
+    transforms.get(*entity).ok().map(|transform| transform.translation())
+}
+
+fn measure_point(
+    point: BonePoint,
+    start_position: Vec3,
+    bones: &HashMap<String, Entity>,
+    transforms: &Query<&GlobalTransform>,
+) -> Option<Vec3> {
+    match point {
+        BonePoint::Joint(name) => bone_position(name, bones, transforms),
+        BonePoint::First(bone_names) => bone_names
+            .iter()
+            .find_map(|name| bone_position(name, bones, transforms)),
+        BonePoint::Raised { bone, offset } => Some(bone_position(bone, bones, transforms)? + offset),
+        BonePoint::Extended { toward, length } => {
+            let toward_position = bone_position(toward, bones, transforms)?;
+            let direction = (toward_position - start_position).try_normalize()?;
+            Some(start_position + direction * length)
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct MeasuredLimb {
+    anchor: Vec3,
+    segment: Option<Segment>,
 }
 
 fn spawn_spherical_joint(
@@ -171,6 +452,12 @@ fn spawn_spherical_joint(
         },
         JointCollisionDisabled,
     ));
+}
+
+struct JointBodies {
+    enemy: Entity,
+    parent: Entity,
+    child: Entity,
 }
 
 fn spawn_revolute_joint(
@@ -205,240 +492,50 @@ fn spawn_revolute_joint(
     ));
 }
 
-struct JointBodies {
-    enemy: Entity,
-    parent: Entity,
-    child: Entity,
-}
-
-fn spawn_capsule(
+fn spawn_body(
     commands: &mut Commands,
     enemy: Entity,
-    body_part: RagdollBodyPart,
-    name: &'static str,
-    segment: Segment,
-    radius: f32,
-) -> PhysicsPart {
-    let entity = commands
-        .spawn((
-            Name::new(name),
-            OwnedByEnemy(enemy),
-            body_part,
-            RigidBody::Dynamic,
-            AngularDamping(ANGULAR_DAMPING),
-            LinearDamping(LINEAR_DAMPING),
-            SleepThreshold {
-                linear: 0.15,
-                angular: RAGDOLL_ANGULAR_SLEEP_THRESHOLD,
-            },
-            Collider::capsule(radius, segment.length - 2.0 * radius),
-            ColliderDensity(1000.0),
-            CollisionLayers::new(0b10, 0b01),
-            Friction::new(0.1).with_combine_rule(CoefficientCombine::Min),
-            segment.transform(),
-        ))
-        .id();
-    PhysicsPart {
-        entity,
-        body_part,
-        initial: GlobalTransform::from(segment.transform()),
-    }
-}
+    spec: &LimbSpec,
+    transform: Transform,
+    segment: Option<Segment>,
+) -> Entity {
+    let collider = match (spec.shape, segment) {
+        (Shape::Capsule { radius }, Some(segment)) => Collider::capsule(radius, segment.length - 2.0 * radius),
+        (Shape::Sphere { radius }, _) => Collider::sphere(radius),
+        _ => unreachable!("capsule limbs always have a measured segment"),
+    };
 
-fn spawn_head(commands: &mut Commands, enemy: Entity, center: Vec3) -> PhysicsPart {
-    let entity = commands
-        .spawn((
-            Name::new("head"),
-            OwnedByEnemy(enemy),
-            RagdollBodyPart::Head,
-            RigidBody::Dynamic,
-            AngularDamping(ANGULAR_DAMPING),
-            LinearDamping(LINEAR_DAMPING),
-            SleepThreshold {
-                linear: 0.15,
-                angular: RAGDOLL_ANGULAR_SLEEP_THRESHOLD,
-            },
-            Collider::sphere(HEAD_RADIUS),
-            ColliderDensity(1000.0),
-            CollisionLayers::new(0b10, 0b01),
-            Friction::new(0.1).with_combine_rule(CoefficientCombine::Min),
-            Restitution::ZERO,
-            Transform::from_translation(center),
-        ))
-        .id();
-    PhysicsPart {
-        entity,
-        body_part: RagdollBodyPart::Head,
-        initial: GlobalTransform::from_translation(center),
-    }
-}
+    let mut body = commands.spawn((
+        Name::new(spec.name),
+        OwnedByEnemy(enemy),
+        spec.part,
+        RigidBody::Dynamic,
+        AngularDamping(ANGULAR_DAMPING),
+        LinearDamping(LINEAR_DAMPING),
+        SleepThreshold {
+            linear: 0.15,
+            angular: RAGDOLL_ANGULAR_SLEEP_THRESHOLD,
+        },
+        collider,
+        ColliderDensity(1000.0),
+        CollisionLayers::new(RAGDOLL_GROUP, WORLD_GROUP),
+        Friction::new(0.1).with_combine_rule(CoefficientCombine::Min),
+        transform,
+    ));
 
-#[derive(Clone, Copy)]
-struct ArmBones {
-    shoulder: Entity,
-    elbow: Entity,
-    wrist: Entity,
-    finger: Entity,
-}
-
-#[derive(Clone, Copy)]
-struct LegBones {
-    hip: Entity,
-    knee: Entity,
-    ankle: Entity,
-    ball: Entity,
-}
-
-#[derive(Clone, Copy)]
-struct RagdollBones {
-    pelvis: Entity,
-    spine_tip: Entity,
-    neck: Entity,
-    head: Entity,
-    left_arm: ArmBones,
-    right_arm: ArmBones,
-    left_leg: LegBones,
-    right_leg: LegBones,
-}
-
-impl RagdollBones {
-    fn resolve(bones: &HashMap<String, Entity>) -> Result<Self, &'static str> {
-        let resolve = |name: &'static str| bones.get(name).copied().ok_or(name);
-
-        Ok(Self {
-            pelvis: resolve("pelvis")?,
-            spine_tip: bones
-                .get("spine_03")
-                .or_else(|| bones.get("spine_02"))
-                .copied()
-                .ok_or("spine_03")?,
-            neck: resolve("neck_01")?,
-            head: resolve("Head")?,
-            left_arm: ArmBones {
-                shoulder: resolve("upperarm_l")?,
-                elbow: resolve("lowerarm_l")?,
-                wrist: resolve("hand_l")?,
-                finger: resolve("middle_01_l")?,
-            },
-            right_arm: ArmBones {
-                shoulder: resolve("upperarm_r")?,
-                elbow: resolve("lowerarm_r")?,
-                wrist: resolve("hand_r")?,
-                finger: resolve("middle_01_r")?,
-            },
-            left_leg: LegBones {
-                hip: resolve("thigh_l")?,
-                knee: resolve("calf_l")?,
-                ankle: resolve("foot_l")?,
-                ball: resolve("ball_l")?,
-            },
-            right_leg: LegBones {
-                hip: resolve("thigh_r")?,
-                knee: resolve("calf_r")?,
-                ankle: resolve("foot_r")?,
-                ball: resolve("ball_r")?,
-            },
-        })
-    }
-}
-
-struct ArmPose {
-    upper_arm: Segment,
-    forearm: Segment,
-    hand: Segment,
-}
-
-impl ArmPose {
-    fn read(bones: &ArmBones, transforms: &Query<&GlobalTransform>) -> Option<Self> {
-        let shoulder = transforms.get(bones.shoulder).ok()?.translation();
-        let elbow = transforms.get(bones.elbow).ok()?.translation();
-        let wrist = transforms.get(bones.wrist).ok()?.translation();
-        let finger = transforms.get(bones.finger).ok()?.translation();
-
-        let upper_arm = Segment::between(shoulder, elbow)?;
-        let forearm = Segment::between(elbow, wrist)?;
-        let hand_forward = (finger - wrist).try_normalize()?;
-        let hand = Segment::between(wrist, wrist + hand_forward * HAND_LENGTH)?;
-
-        Some(Self {
-            upper_arm,
-            forearm,
-            hand,
-        })
-    }
-}
-
-struct LegPose {
-    thigh: Segment,
-    calf: Segment,
-    foot: Segment,
-}
-
-impl LegPose {
-    fn read(bones: &LegBones, transforms: &Query<&GlobalTransform>) -> Option<Self> {
-        let hip = transforms.get(bones.hip).ok()?.translation();
-        let knee = transforms.get(bones.knee).ok()?.translation();
-        let ankle = transforms.get(bones.ankle).ok()?.translation();
-        let ball = transforms.get(bones.ball).ok()?.translation();
-
-        let thigh = Segment::between(hip, knee)?;
-        let calf = Segment::between(knee, ankle)?;
-        let foot_forward = (ball - ankle).try_normalize()?;
-        let foot = Segment::between(ankle, ankle + foot_forward * FOOT_LENGTH)?;
-
-        Some(Self { thigh, calf, foot })
-    }
-}
-
-struct RagdollPose {
-    torso: Segment,
-    neck: Vec3,
-    head_center: Vec3,
-    left_arm: ArmPose,
-    right_arm: ArmPose,
-    left_leg: LegPose,
-    right_leg: LegPose,
-}
-
-impl RagdollPose {
-    fn read(bones: &RagdollBones, transforms: &Query<&GlobalTransform>) -> Option<Self> {
-        let pelvis = transforms.get(bones.pelvis).ok()?.translation();
-        let spine_tip = transforms.get(bones.spine_tip).ok()?.translation();
-        let neck = transforms.get(bones.neck).ok()?.translation();
-        let head = transforms.get(bones.head).ok()?.translation();
-
-        let torso = Segment::between(pelvis, spine_tip)?;
-        let head_center = head + Vec3::Y * HEAD_OFFSET;
-
-        Some(Self {
-            torso,
-            neck,
-            head_center,
-            left_arm: ArmPose::read(&bones.left_arm, transforms)?,
-            right_arm: ArmPose::read(&bones.right_arm, transforms)?,
-            left_leg: LegPose::read(&bones.left_leg, transforms)?,
-            right_leg: LegPose::read(&bones.right_leg, transforms)?,
-        })
+    if matches!(spec.shape, Shape::Sphere { .. }) {
+        body.insert(Restitution::ZERO);
     }
 
-    fn body_transform(&self, body_part: RagdollBodyPart) -> Transform {
-        match body_part {
-            RagdollBodyPart::Torso => self.torso.transform(),
-            RagdollBodyPart::Head => Transform::from_translation(self.head_center),
-            RagdollBodyPart::LeftUpperArm => self.left_arm.upper_arm.transform(),
-            RagdollBodyPart::LeftForearm => self.left_arm.forearm.transform(),
-            RagdollBodyPart::LeftHand => self.left_arm.hand.transform(),
-            RagdollBodyPart::RightUpperArm => self.right_arm.upper_arm.transform(),
-            RagdollBodyPart::RightForearm => self.right_arm.forearm.transform(),
-            RagdollBodyPart::RightHand => self.right_arm.hand.transform(),
-            RagdollBodyPart::LeftThigh => self.left_leg.thigh.transform(),
-            RagdollBodyPart::LeftCalf => self.left_leg.calf.transform(),
-            RagdollBodyPart::LeftFoot => self.left_leg.foot.transform(),
-            RagdollBodyPart::RightThigh => self.right_leg.thigh.transform(),
-            RagdollBodyPart::RightCalf => self.right_leg.calf.transform(),
-            RagdollBodyPart::RightFoot => self.right_leg.foot.transform(),
-        }
-    }
+    body.id()
+}
+
+fn hinge_axis(limbs: &HashMap<RagdollBodyPart, MeasuredLimb>) -> Vec3 {
+    let left_shoulder = limbs[&RagdollBodyPart::LeftUpperArm].anchor;
+    let right_shoulder = limbs[&RagdollBodyPart::RightUpperArm].anchor;
+    let shoulder_axis = (left_shoulder - right_shoulder).try_normalize().unwrap_or(Vec3::X);
+    let torso_axis = limbs[&RagdollBodyPart::Torso].segment.unwrap().rotation * Vec3::Y;
+    shoulder_axis.cross(torso_axis).try_normalize().unwrap_or(Vec3::Z)
 }
 
 fn nearest_driver(
@@ -466,322 +563,134 @@ fn spawn_ragdoll_bodies(
     parents: Query<&ChildOf>,
 ) {
     for (root, ragdoll, dying) in &pending {
-        let bones = match RagdollBones::resolve(&ragdoll.bones) {
-            Ok(bones) => bones,
-            Err(missing) => {
-                warn!("Cannot create ragdoll for {root:?}: missing bone {missing}");
-                commands.entity(root).remove::<PendingRagdoll>();
-                continue;
-            }
-        };
-
-        let Some(pose) = RagdollPose::read(&bones, &transforms) else {
-            warn!("Cannot create ragdoll for {root:?}: failed to read bone pose");
+        let missing_bone = LIMBS
+            .iter()
+            .flat_map(LimbSpec::bone_names)
+            .find(|name| !ragdoll.bones.contains_key(*name));
+        if let Some(name) = missing_bone {
+            warn!("Cannot create ragdoll for {root:?}: missing bone {name}");
             commands.entity(root).remove::<PendingRagdoll>();
             continue;
-        };
-
-        let torso = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::Torso,
-            "torso",
-            pose.torso,
-            TORSO_RADIUS,
-        );
-        let upper_arm = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::LeftUpperArm,
-            "left_upper_arm",
-            pose.left_arm.upper_arm,
-            UPPER_ARM_RADIUS,
-        );
-        spawn_spherical_joint(
-            &mut commands,
-            root,
-            torso.entity,
-            upper_arm.entity,
-            pose.left_arm.upper_arm.start,
-            JOINT_ANGULAR_DAMPING,
-        );
-
-        let forearm = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::LeftForearm,
-            "left_forearm",
-            pose.left_arm.forearm,
-            FOREARM_RADIUS,
-        );
-        let shoulder_axis = (pose.left_arm.upper_arm.start - pose.right_arm.upper_arm.start)
-            .try_normalize()
-            .unwrap_or(Vec3::X);
-        let torso_axis = pose.torso.rotation * Vec3::Y;
-        let hinge_axis = shoulder_axis.cross(torso_axis).try_normalize().unwrap_or(Vec3::Z);
-        spawn_revolute_joint(
-            &mut commands,
-            JointBodies {
-                enemy: root,
-                parent: upper_arm.entity,
-                child: forearm.entity,
-            },
-            pose.left_arm.upper_arm,
-            pose.left_arm.forearm,
-            hinge_axis,
-            (-2.6, 0.1),
-        );
-
-        let hand = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::LeftHand,
-            "left_hand",
-            pose.left_arm.hand,
-            HAND_RADIUS,
-        );
-        spawn_spherical_joint(
-            &mut commands,
-            root,
-            forearm.entity,
-            hand.entity,
-            pose.left_arm.hand.start,
-            WRIST_ANGULAR_DAMPING,
-        );
-
-        let right_upper_arm = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::RightUpperArm,
-            "right_upper_arm",
-            pose.right_arm.upper_arm,
-            UPPER_ARM_RADIUS,
-        );
-        spawn_spherical_joint(
-            &mut commands,
-            root,
-            torso.entity,
-            right_upper_arm.entity,
-            pose.right_arm.upper_arm.start,
-            JOINT_ANGULAR_DAMPING,
-        );
-
-        let right_forearm = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::RightForearm,
-            "right_forearm",
-            pose.right_arm.forearm,
-            FOREARM_RADIUS,
-        );
-        spawn_revolute_joint(
-            &mut commands,
-            JointBodies {
-                enemy: root,
-                parent: right_upper_arm.entity,
-                child: right_forearm.entity,
-            },
-            pose.right_arm.upper_arm,
-            pose.right_arm.forearm,
-            hinge_axis,
-            (-0.1, 2.6),
-        );
-
-        let right_hand = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::RightHand,
-            "right_hand",
-            pose.right_arm.hand,
-            HAND_RADIUS,
-        );
-        spawn_spherical_joint(
-            &mut commands,
-            root,
-            right_forearm.entity,
-            right_hand.entity,
-            pose.right_arm.hand.start,
-            WRIST_ANGULAR_DAMPING,
-        );
-
-        let head = spawn_head(&mut commands, root, pose.head_center);
-        spawn_spherical_joint(
-            &mut commands,
-            root,
-            torso.entity,
-            head.entity,
-            pose.neck,
-            NECK_ANGULAR_DAMPING,
-        );
-
-        let left_thigh = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::LeftThigh,
-            "left_thigh",
-            pose.left_leg.thigh,
-            THIGH_RADIUS,
-        );
-        spawn_spherical_joint(
-            &mut commands,
-            root,
-            torso.entity,
-            left_thigh.entity,
-            pose.left_leg.thigh.start,
-            HIP_ANGULAR_DAMPING,
-        );
-
-        let left_calf = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::LeftCalf,
-            "left_calf",
-            pose.left_leg.calf,
-            CALF_RADIUS,
-        );
-        spawn_revolute_joint(
-            &mut commands,
-            JointBodies {
-                enemy: root,
-                parent: left_thigh.entity,
-                child: left_calf.entity,
-            },
-            pose.left_leg.thigh,
-            pose.left_leg.calf,
-            shoulder_axis,
-            (-0.1, 2.6),
-        );
-
-        let left_foot = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::LeftFoot,
-            "left_foot",
-            pose.left_leg.foot,
-            FOOT_RADIUS,
-        );
-        spawn_spherical_joint(
-            &mut commands,
-            root,
-            left_calf.entity,
-            left_foot.entity,
-            pose.left_leg.foot.start,
-            ANKLE_ANGULAR_DAMPING,
-        );
-
-        let right_thigh = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::RightThigh,
-            "right_thigh",
-            pose.right_leg.thigh,
-            THIGH_RADIUS,
-        );
-        spawn_spherical_joint(
-            &mut commands,
-            root,
-            torso.entity,
-            right_thigh.entity,
-            pose.right_leg.thigh.start,
-            HIP_ANGULAR_DAMPING,
-        );
-
-        let right_calf = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::RightCalf,
-            "right_calf",
-            pose.right_leg.calf,
-            CALF_RADIUS,
-        );
-        spawn_revolute_joint(
-            &mut commands,
-            JointBodies {
-                enemy: root,
-                parent: right_thigh.entity,
-                child: right_calf.entity,
-            },
-            pose.right_leg.thigh,
-            pose.right_leg.calf,
-            shoulder_axis,
-            (-0.1, 2.6),
-        );
-
-        let right_foot = spawn_capsule(
-            &mut commands,
-            root,
-            RagdollBodyPart::RightFoot,
-            "right_foot",
-            pose.right_leg.foot,
-            FOOT_RADIUS,
-        );
-        spawn_spherical_joint(
-            &mut commands,
-            root,
-            right_calf.entity,
-            right_foot.entity,
-            pose.right_leg.foot.start,
-            ANKLE_ANGULAR_DAMPING,
-        );
-
-        let drivers = HashMap::from([
-            (bones.neck, head.entity),
-            (bones.head, head.entity),
-            (bones.left_leg.hip, left_thigh.entity),
-            (bones.left_leg.knee, left_calf.entity),
-            (bones.left_leg.ankle, left_foot.entity),
-            (bones.left_leg.ball, left_foot.entity),
-            (bones.right_leg.hip, right_thigh.entity),
-            (bones.right_leg.knee, right_calf.entity),
-            (bones.right_leg.ankle, right_foot.entity),
-            (bones.right_leg.ball, right_foot.entity),
-            (bones.left_arm.shoulder, upper_arm.entity),
-            (bones.left_arm.elbow, forearm.entity),
-            (bones.left_arm.wrist, hand.entity),
-            (bones.right_arm.shoulder, right_upper_arm.entity),
-            (bones.right_arm.elbow, right_forearm.entity),
-            (bones.right_arm.wrist, right_hand.entity),
-        ]);
-        let mut bones_by_part: HashMap<Entity, Vec<(Entity, GlobalTransform)>> = HashMap::new();
-        for &entity in ragdoll.bones.values() {
-            let Ok(transform) = transforms.get(entity).copied() else {
-                continue;
-            };
-            let part = nearest_driver(entity, &drivers, &parents, torso.entity);
-            bones_by_part.entry(part).or_default().push((entity, transform));
         }
 
-        let physics_parts = [
-            torso,
-            upper_arm,
-            forearm,
-            hand,
-            right_upper_arm,
-            right_forearm,
-            right_hand,
-            head,
-            left_thigh,
-            left_calf,
-            left_foot,
-            right_thigh,
-            right_calf,
-            right_foot,
-        ];
+        let mut limbs: HashMap<RagdollBodyPart, MeasuredLimb> = HashMap::new();
+        let mut part_entities: HashMap<RagdollBodyPart, Entity> = HashMap::new();
+        let mut parts: Vec<RigPart> = Vec::new();
+
+        for spec in LIMBS {
+            let Some(start_position) = measure_point(spec.start, Vec3::ZERO, &ragdoll.bones, &transforms) else {
+                warn!(
+                    "Cannot create ragdoll for {root:?}: failed to read bone pose of {}",
+                    spec.name
+                );
+                break;
+            };
+            let Some(end_position) = measure_point(spec.end, start_position, &ragdoll.bones, &transforms) else {
+                warn!(
+                    "Cannot create ragdoll for {root:?}: failed to read bone pose of {}",
+                    spec.name
+                );
+                break;
+            };
+
+            let (transform, segment) = match spec.shape {
+                Shape::Capsule { .. } => {
+                    let Some(segment) = Segment::between(start_position, end_position) else {
+                        warn!("Cannot create ragdoll for {root:?}: degenerate limb {}", spec.name);
+                        break;
+                    };
+                    (segment.transform(), Some(segment))
+                }
+                Shape::Sphere { .. } => (Transform::from_translation(end_position), None),
+            };
+
+            let entity = spawn_body(&mut commands, root, spec, transform, segment);
+
+            if let (Some(parent_part), Some(joint)) = (spec.parent, spec.joint) {
+                let parent_entity = part_entities[&parent_part];
+                match joint {
+                    JointSpec::Spherical { angular_damping } => {
+                        spawn_spherical_joint(
+                            &mut commands,
+                            root,
+                            parent_entity,
+                            entity,
+                            start_position,
+                            angular_damping,
+                        );
+                    }
+                    JointSpec::Revolute { angle_limits } => {
+                        spawn_revolute_joint(
+                            &mut commands,
+                            JointBodies {
+                                enemy: root,
+                                parent: parent_entity,
+                                child: entity,
+                            },
+                            limbs[&parent_part].segment.unwrap(),
+                            segment.unwrap(),
+                            hinge_axis(&limbs),
+                            angle_limits,
+                        );
+                    }
+                }
+            }
+
+            part_entities.insert(spec.part, entity);
+            limbs.insert(
+                spec.part,
+                MeasuredLimb {
+                    anchor: start_position,
+                    segment,
+                },
+            );
+            parts.push(RigPart {
+                entity,
+                body_part: spec.part,
+                initial: GlobalTransform::from(transform),
+                bones: Vec::new(),
+            });
+        }
+
+        let incomplete = parts.len() < LIMBS.len();
+        if incomplete {
+            commands.entity(root).remove::<PendingRagdoll>();
+            continue;
+        }
+
+        let torso_entity = part_entities[&RagdollBodyPart::Torso];
+        let mut drivers: HashMap<Entity, Entity> = HashMap::new();
+        for spec in LIMBS {
+            let part_entity = part_entities[&spec.part];
+            for name in spec.driven_bones() {
+                if let Some(&bone_entity) = ragdoll.bones.get(name) {
+                    drivers.insert(bone_entity, part_entity);
+                }
+            }
+        }
+
+        let mut bones_by_part: HashMap<Entity, Vec<(Entity, GlobalTransform)>> = HashMap::new();
+        for &bone_entity in ragdoll.bones.values() {
+            let Ok(transform) = transforms.get(bone_entity).copied() else {
+                continue;
+            };
+            let part = nearest_driver(bone_entity, &drivers, &parents, torso_entity);
+            bones_by_part.entry(part).or_default().push((bone_entity, transform));
+        }
+
         if !dying {
-            for part in &physics_parts {
+            for part in &parts {
                 commands.entity(part.entity).insert(RigidBodyDisabled);
             }
         }
-        let parts = physics_parts
-            .map(|part| RigPart {
-                entity: part.entity,
-                body_part: part.body_part,
-                initial: part.initial,
-                bones: bones_by_part.remove(&part.entity).unwrap_or_default(),
-            })
-            .into();
+        for part in parts.iter_mut() {
+            part.bones = bones_by_part.remove(&part.entity).unwrap_or_default();
+        }
 
-        commands.entity(root).insert(RagdollData { bones, parts });
+        commands.entity(root).insert(RagdollData {
+            bones: ragdoll.bones.clone(),
+            parts,
+        });
         commands.entity(root).remove::<PendingRagdoll>();
     }
 }
@@ -795,18 +704,30 @@ fn synchronize_ragdoll_bodies(
         if dying.as_ref().is_some_and(|dying| !dying.is_added()) {
             continue;
         }
-        let Some(pose) = RagdollPose::read(&ragdoll.bones, &bone_transforms) else {
-            continue;
-        };
+
+        let limb_transforms: HashMap<RagdollBodyPart, Transform> = LIMBS
+            .iter()
+            .filter_map(|spec| {
+                let start = measure_point(spec.start, Vec3::ZERO, &ragdoll.bones, &bone_transforms)?;
+                let end = measure_point(spec.end, start, &ragdoll.bones, &bone_transforms)?;
+                let transform = match spec.shape {
+                    Shape::Capsule { .. } => Segment::between(start, end)?.transform(),
+                    Shape::Sphere { .. } => Transform::from_translation(end),
+                };
+                Some((spec.part, transform))
+            })
+            .collect();
 
         for part in &ragdoll.parts {
+            let Some(body_transform) = limb_transforms.get(&part.body_part) else {
+                continue;
+            };
             let Ok((mut position, mut rotation, mut transform)) = body_transforms.get_mut(part.entity) else {
                 continue;
             };
-            let body_transform = pose.body_transform(part.body_part);
             position.0 = body_transform.translation;
             rotation.0 = body_transform.rotation;
-            *transform = body_transform;
+            *transform = *body_transform;
         }
     }
 }

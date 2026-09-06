@@ -1,7 +1,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use crate::enemies::{EnemyKind, EnemyLifeState, EnemySpawn, spawn_enemy};
+use crate::enemies::{EnemyKind, Fighter, Gunner, spawn_enemy};
 
 pub struct MapPlugin;
 
@@ -11,7 +11,7 @@ impl Plugin for MapPlugin {
     }
 }
 
-pub fn setup_map(
+fn setup_map(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -64,18 +64,16 @@ pub fn setup_map(
 
 pub fn spawn_map_enemies(commands: &mut Commands, asset_server: &AssetServer) {
     for (translation, kind) in [
-        (Vec3::new(-8.0, 0.0, -8.0), EnemyKind::Gunner),
-        (Vec3::new(8.0, 0.0, -8.0), EnemyKind::Gunner),
-        (Vec3::new(0.0, 0.0, -10.0), EnemyKind::Fighter),
+        (Vec3::new(-8.0, 0.0, -8.0), EnemyKind::Gunner(Gunner::default())),
+        (Vec3::new(8.0, 0.0, -8.0), EnemyKind::Gunner(Gunner::default())),
+        (Vec3::new(0.0, 0.0, -10.0), EnemyKind::Fighter(Fighter::default())),
     ] {
         spawn_enemy(
             commands,
             asset_server,
-            EnemySpawn {
-                kind,
-                transform: Transform::from_translation(translation),
-                life_state: EnemyLifeState::Alive,
-            },
+            kind,
+            Transform::from_translation(translation),
+            true,
         );
     }
 }

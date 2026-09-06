@@ -1,9 +1,9 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-use crate::enemies::{Dying, Enemy};
+use crate::enemies::EnemyHit;
 use crate::player::Player;
-use crate::ragdoll::{OwnedByEnemy, PendingRagdollImpact, RagdollBodyPart};
+use crate::ragdoll::{OwnedByEnemy, RAGDOLL_GROUP};
 use crate::state::GameState;
 
 pub struct ShootingPlugin;
@@ -23,14 +23,14 @@ impl Plugin for ShootingPlugin {
 }
 
 #[derive(Component)]
-pub struct Crosshair;
+pub(crate) struct Crosshair;
 
 #[derive(Component)]
-pub struct Gun;
+pub(crate) struct Gun;
 
 #[derive(Resource)]
-pub struct GunshotSound {
-    pub handle: Handle<AudioSource>,
+pub(crate) struct GunshotSound {
+    handle: Handle<AudioSource>,
 }
 
 impl FromWorld for GunshotSound {
@@ -42,7 +42,7 @@ impl FromWorld for GunshotSound {
     }
 }
 
-pub fn setup_crosshair(mut commands: Commands) {
+fn setup_crosshair(mut commands: Commands) {
     commands.spawn((
         Crosshair,
         Node {
@@ -98,7 +98,7 @@ const GUN_BASE_ROTATION: Quat = Quat::from_xyzw(
     std::f32::consts::FRAC_1_SQRT_2,
 );
 
-pub fn setup_gun(mut commands: Commands, asset_server: Res<AssetServer>) {
+fn setup_gun(mut commands: Commands, asset_server: Res<AssetServer>) {
     commands.spawn((
         Gun,
         WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("weapon/pistol.glb"))),
@@ -124,8 +124,6 @@ fn position_gun(
     gun_transform.rotation = camera_transform.rotation * GUN_BASE_ROTATION;
 }
 
-type AliveEnemy = (With<Enemy>, Without<Dying>);
-
 const SHOT_DISTANCE: f32 = 100.0;
 const SHOT_IMPULSE: f32 = 100.0;
 
@@ -134,8 +132,6 @@ pub fn shoot(
     camera_query: Query<&Transform, With<Player>>,
     spatial_query: SpatialQuery,
     owners: Query<&OwnedByEnemy>,
-    alive_enemies: Query<(), AliveEnemy>,
-    ragdoll_bodies: Query<(Entity, &OwnedByEnemy), With<RagdollBodyPart>>,
     mut commands: Commands,
 ) {
     if !mouse_button.just_pressed(MouseButton::Left) {
@@ -153,33 +149,23 @@ pub fn shoot(
         direction,
         SHOT_DISTANCE,
         true,
-        &SpatialQueryFilter::from_mask(0b10),
+        &SpatialQueryFilter::from_mask(RAGDOLL_GROUP),
     ) else {
         return;
     };
     let Ok(owner) = owners.get(hit.entity) else {
         return;
     };
-    if alive_enemies.get(owner.0).is_err() {
-        return;
-    }
-    for (body, body_owner) in &ragdoll_bodies {
-        if body_owner.0 == owner.0 {
-            commands.entity(body).remove::<RigidBodyDisabled>();
-        }
-    }
-    commands.entity(owner.0).insert(Dying);
-    commands.entity(hit.entity).insert(PendingRagdollImpact {
+
+    commands.entity(owner.0).trigger(|entity| EnemyHit {
+        entity,
+        body: hit.entity,
         impulse: direction.as_vec3() * SHOT_IMPULSE,
         point: origin + direction.as_vec3() * hit.distance,
     });
 }
 
-pub fn play_gunshot(
-    mouse_button: Res<ButtonInput<MouseButton>>,
-    gunshot_sound: Res<GunshotSound>,
-    mut commands: Commands,
-) {
+fn play_gunshot(mouse_button: Res<ButtonInput<MouseButton>>, gunshot_sound: Res<GunshotSound>, mut commands: Commands) {
     if mouse_button.just_pressed(MouseButton::Left) {
         commands.spawn((
             AudioPlayer::new(gunshot_sound.handle.clone()),

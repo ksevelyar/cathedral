@@ -1,8 +1,9 @@
+use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::enemies::Enemy;
 use crate::map;
-use crate::player::{CameraState, PLAYER_START_POSITION, Player};
+use crate::player::{self, CameraState, Player};
 
 pub struct GameStatePlugin;
 
@@ -10,7 +11,11 @@ impl Plugin for GameStatePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<GameState>().add_systems(
             Update,
-            (toggle_pause, restart_game.run_if(in_state(GameState::GameOver))),
+            (
+                toggle_pause,
+                toggle_physics_pause,
+                restart_game.run_if(in_state(GameState::GameOver)),
+            ),
         );
     }
 }
@@ -37,12 +42,28 @@ pub fn toggle_pause(
     }
 }
 
-pub fn restart_game(
+fn toggle_physics_pause(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut time: ResMut<Time<Physics>>,
+    mut gizmo_configs: ResMut<GizmoConfigStore>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyP) {
+        let pause = !time.is_paused();
+        if pause {
+            time.pause();
+        } else {
+            time.unpause();
+        }
+        gizmo_configs.config_mut::<PhysicsGizmos>().0.enabled = pause;
+    }
+}
+
+fn restart_game(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut next_state: ResMut<NextState<GameState>>,
     mut commands: Commands,
     enemy_query: Query<Entity, With<Enemy>>,
-    mut player_query: Query<(&mut Transform, &mut CameraState), With<Player>>,
+    player_query: Query<(&mut Transform, &mut CameraState), With<Player>>,
     asset_server: Res<AssetServer>,
 ) {
     if !keyboard.just_pressed(KeyCode::Space) {
@@ -53,13 +74,7 @@ pub fn restart_game(
         commands.entity(entity).despawn();
     }
 
-    if let Ok((mut transform, mut camera_state)) = player_query.single_mut() {
-        transform.translation = PLAYER_START_POSITION;
-        camera_state.yaw = 0.0;
-        camera_state.pitch = 0.0;
-        transform.rotation = Quat::IDENTITY;
-    }
-
+    player::reset_player(player_query);
     map::spawn_map_enemies(&mut commands, &asset_server);
     next_state.set(GameState::Playing);
 }

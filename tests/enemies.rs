@@ -7,7 +7,7 @@ use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use bevy::world_serialization::WorldSerializationPlugin;
-use cathedral::enemies::{Enemy, EnemyKind, EnemyLifeState, EnemySpawn, spawn_enemy};
+use cathedral::enemies::{Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
 use cathedral::player::Player;
 use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart, RagdollPlugin};
 use cathedral::shooting::shoot;
@@ -17,18 +17,16 @@ const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
 const ASSET_LOAD_ATTEMPTS: usize = 10_000;
 const EXPECTED_RAGDOLL_BODIES: usize = 14;
 
-#[derive(Resource, Clone, Copy)]
+#[derive(Resource, Clone)]
 struct TestEnemyKind(EnemyKind);
 
 fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind: Res<TestEnemyKind>) {
     spawn_enemy(
         &mut commands,
         &asset_server,
-        EnemySpawn {
-            kind: kind.0,
-            transform: Transform::from_xyz(0.0, 0.5, 0.0),
-            life_state: EnemyLifeState::Alive,
-        },
+        kind.0.clone(),
+        Transform::from_xyz(0.0, 0.5, 0.0),
+        true,
     );
 }
 
@@ -144,17 +142,17 @@ fn run_shooting_test(kind: EnemyKind) {
 
 #[test]
 fn shooting_alive_fighter_enemy_in_head_kills_and_impacts_head() {
-    run_shooting_test(EnemyKind::Fighter);
+    run_shooting_test(EnemyKind::Fighter(Fighter::default()));
 }
 
 #[test]
 fn shooting_alive_gunner_enemy_in_head_kills_and_impacts_head() {
-    run_shooting_test(EnemyKind::Gunner);
+    run_shooting_test(EnemyKind::Gunner(Gunner::default()));
 }
 
 #[test]
 fn gunner_enemy_constructs_ragdoll_bodies() {
-    let mut app = create_test_app(EnemyKind::Gunner);
+    let mut app = create_test_app(EnemyKind::Gunner(Gunner::default()));
     wait_for_ragdoll(&mut app);
 
     let body_count = ragdoll_body_count(app.world_mut());
@@ -163,7 +161,7 @@ fn gunner_enemy_constructs_ragdoll_bodies() {
 
 #[test]
 fn fighter_enemy_constructs_ragdoll_bodies() {
-    let mut app = create_test_app(EnemyKind::Fighter);
+    let mut app = create_test_app(EnemyKind::Fighter(Fighter::default()));
     wait_for_ragdoll(&mut app);
 
     let body_count = ragdoll_body_count(app.world_mut());
