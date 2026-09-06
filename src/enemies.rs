@@ -1,6 +1,5 @@
 use avian3d::prelude::{Collider, Position, RigidBody, Rotation};
 use bevy::animation::{AnimatedBy, AnimationTargetId};
-use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
@@ -269,47 +268,53 @@ pub fn spawn_enemy(
         .id()
 }
 
-#[derive(SystemParam)]
-struct EnemyScene<'w, 's> {
-    children: Query<'w, 's, &'static Children>,
-    names: Query<'w, 's, &'static Name>,
-    animation_players: Query<'w, 's, &'static mut AnimationPlayer>,
-    weapon_colliders: Query<'w, 's, &'static WeaponColliderHalfExtents>,
-    global_transforms: Query<'w, 's, &'static GlobalTransform>,
-}
-
 fn kill_enemy_on_hit(
     hit: On<EnemyHit>,
     alive_enemies: Query<(), AliveEnemy>,
     mut commands: Commands,
-    mut scene: EnemyScene,
+    children: Query<&Children>,
+    mut animation_players: Query<&mut AnimationPlayer>,
+    enemy_kinds: Query<&EnemyKind>,
+    weapons: Query<(&Name, &GlobalTransform)>,
 ) {
     if alive_enemies.get(hit.entity).is_err() {
         return;
     }
 
     commands.entity(hit.entity).insert(Dying);
-    stop_enemy_animation(hit.entity, &mut scene);
-    drop_weapon(hit.entity, &mut commands, &scene);
+    stop_enemy_animation(hit.entity, &children, &mut animation_players);
+    drop_weapon(hit.entity, &mut commands, &children, &enemy_kinds, &weapons);
 }
 
-fn stop_enemy_animation(enemy: Entity, scene: &mut EnemyScene) {
-    for descendant in scene.children.iter_descendants(enemy) {
-        if let Ok(mut player) = scene.animation_players.get_mut(descendant) {
+fn stop_enemy_animation(
+    enemy: Entity,
+    children: &Query<&Children>,
+    animation_players: &mut Query<&mut AnimationPlayer>,
+) {
+    for descendant in children.iter_descendants(enemy) {
+        if let Ok(mut player) = animation_players.get_mut(descendant) {
             player.stop_all();
         }
     }
 }
 
-fn drop_weapon(enemy: Entity, commands: &mut Commands, scene: &EnemyScene) {
-    for descendant in scene.children.iter_descendants(enemy) {
-        if !scene.names.get(descendant).is_ok_and(|name| name.as_str() == "Weapon") {
+fn drop_weapon(
+    enemy: Entity,
+    commands: &mut Commands,
+    children: &Query<&Children>,
+    enemy_kinds: &Query<&EnemyKind>,
+    weapons: &Query<(&Name, &GlobalTransform)>,
+) {
+    let Ok(kind) = enemy_kinds.get(enemy) else {
+        return;
+    };
+    let collider_half_extents = kind.rig().weapon.collider_half_extents;
+
+    for descendant in children.iter_descendants(enemy) {
+        if !weapons.get(descendant).is_ok_and(|(name, _)| name.as_str() == "Weapon") {
             continue;
         }
-        let Ok(collider) = scene.weapon_colliders.get(descendant) else {
-            continue;
-        };
-        let Ok(global) = scene.global_transforms.get(descendant) else {
+        let Ok((_, global)) = weapons.get(descendant) else {
             continue;
         };
         let (scale, rotation, translation) = global.to_scale_rotation_translation();
@@ -321,7 +326,11 @@ fn drop_weapon(enemy: Entity, commands: &mut Commands, scene: &EnemyScene) {
                 scale,
             },
             RigidBody::Dynamic,
-            Collider::cuboid(collider.0.x, collider.0.y, collider.0.z),
+            Collider::cuboid(
+                collider_half_extents.x,
+                collider_half_extents.y,
+                collider_half_extents.z,
+            ),
             Position(translation),
             Rotation(rotation),
         ));
@@ -414,7 +423,6 @@ fn attach_weapon(
         .spawn((
             Name::new("Weapon"),
             WorldAssetRoot(animations.weapon.clone()),
-            WeaponColliderHalfExtents(weapon.collider_half_extents),
             Transform {
                 translation: weapon.translation,
                 rotation: Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll),
@@ -425,9 +433,6 @@ fn attach_weapon(
 
     commands.entity(right_hand).add_children(&[weapon_entity]);
 }
-
-#[derive(Component)]
-struct WeaponColliderHalfExtents(Vec3);
 
 fn build_animation_targets(
     commands: &mut Commands,
