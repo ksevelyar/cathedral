@@ -52,14 +52,25 @@ const CALF_RADIUS: f32 = 0.06;
 const FOOT_RADIUS: f32 = 0.035;
 const FOOT_LENGTH: f32 = 0.24;
 
-#[derive(Component)]
-struct PendingRagdoll {
-    bones: HashMap<String, Entity>,
+#[derive(Component, Clone, Default)]
+pub(crate) struct BoneMap(HashMap<Box<str>, Entity>);
+
+impl BoneMap {
+    pub(crate) fn get(&self, name: &str) -> Option<Entity> {
+        self.0.get(name).copied()
+    }
+
+    pub(crate) fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
+        self.0.values().copied()
+    }
 }
 
 #[derive(Component)]
+struct PendingRagdoll;
+
+#[derive(Component)]
 struct RagdollData {
-    bones: HashMap<String, Entity>,
+    bones: BoneMap,
     parts: Vec<RigPart>,
 }
 
@@ -109,11 +120,14 @@ fn apply_pending_impacts(mut commands: Commands, mut impacted_bodies: Query<(Ent
     }
 }
 
+type OwnedJoint = (Entity, &'static OwnedByEnemy);
+type OwnedJoints<'w, 's> = Query<'w, 's, OwnedJoint, Or<(With<SphericalJoint>, With<RevoluteJoint>)>>;
+
 fn wake_ragdoll_bodies_on_hit(
     hit: On<EnemyHit>,
     mut commands: Commands,
     ragdoll_bodies: Query<(Entity, &OwnedByEnemy), With<RagdollBodyPart>>,
-    ragdoll_joints: Query<(Entity, &OwnedByEnemy), Or<(With<SphericalJoint>, With<RevoluteJoint>)>>,
+    ragdoll_joints: OwnedJoints,
 ) {
     for (body, owner) in &ragdoll_bodies {
         if owner.0 == hit.entity {
@@ -141,14 +155,14 @@ pub(crate) fn setup_ragdoll(
 ) {
     let root = scene_ready.entity;
 
-    let mut bones: HashMap<String, Entity> = HashMap::new();
+    let mut bones: HashMap<Box<str>, Entity> = HashMap::new();
     for descendant in children.iter_descendants(root) {
         if let Ok(name) = names.get(descendant) {
-            bones.insert(name.as_str().to_string(), descendant);
+            bones.insert(name.as_str().into(), descendant);
         }
     }
 
-    commands.entity(root).insert(PendingRagdoll { bones });
+    commands.entity(root).insert((BoneMap(bones), PendingRagdoll));
 }
 
 #[derive(Clone, Copy)]
@@ -411,15 +425,15 @@ const LIMBS: &[LimbSpec] = &[
     },
 ];
 
-fn bone_position(name: &str, bones: &HashMap<String, Entity>, transforms: &Query<&GlobalTransform>) -> Option<Vec3> {
+fn bone_position(name: &str, bones: &BoneMap, transforms: &Query<&GlobalTransform>) -> Option<Vec3> {
     let entity = bones.get(name)?;
-    transforms.get(*entity).ok().map(|transform| transform.translation())
+    transforms.get(entity).ok().map(|transform| transform.translation())
 }
 
 fn measure_point(
     point: BonePoint,
     start_position: Vec3,
-    bones: &HashMap<String, Entity>,
+    bones: &BoneMap,
     transforms: &Query<&GlobalTransform>,
 ) -> Option<Vec3> {
     match point {
@@ -434,6 +448,23 @@ fn measure_point(
             Some(start_position + direction * length)
         }
     }
+}
+
+fn measure_limb(
+    spec: &LimbSpec,
+    bones: &BoneMap,
+    transforms: &Query<&GlobalTransform>,
+) -> Option<(Transform, MeasuredLimb)> {
+    let start = measure_point(spec.start, Vec3::ZERO, bones, transforms)?;
+    let end = measure_point(spec.end, start, bones, transforms)?;
+    let segment = match spec.shape {
+        Shape::Capsule { .. } => Some(Segment::between(start, end)?),
+        Shape::Sphere { .. } => None,
+    };
+    let transform = segment
+        .map(Segment::transform)
+        .unwrap_or_else(|| Transform::from_translation(end));
+    Some((transform, MeasuredLimb { anchor: start, segment }))
 }
 
 #[derive(Clone, Copy)]
@@ -569,15 +600,15 @@ fn nearest_driver(
 
 fn spawn_ragdoll_bodies(
     mut commands: Commands,
-    pending: Query<(Entity, &PendingRagdoll, Has<Dying>)>,
+    pending: Query<(Entity, &BoneMap, &PendingRagdoll, Has<Dying>)>,
     transforms: Query<&GlobalTransform>,
     parents: Query<&ChildOf>,
 ) {
-    for (root, ragdoll, dying) in &pending {
+    for (root, bones, _, dying) in &pending {
         let missing_bone = LIMBS
             .iter()
             .flat_map(LimbSpec::bone_names)
-            .find(|name| !ragdoll.bones.contains_key(*name));
+            .find(|name| bones.get(name).is_none());
         if let Some(name) = missing_bone {
             warn!("Cannot create ragdoll for {root:?}: missing bone {name}");
             commands.entity(root).remove::<PendingRagdoll>();
@@ -590,33 +621,14 @@ fn spawn_ragdoll_bodies(
         let mut joints: Vec<Entity> = Vec::new();
 
         for spec in LIMBS {
-            let Some(start_position) = measure_point(spec.start, Vec3::ZERO, &ragdoll.bones, &transforms) else {
-                warn!(
-                    "Cannot create ragdoll for {root:?}: failed to read bone pose of {}",
-                    spec.name
-                );
-                break;
-            };
-            let Some(end_position) = measure_point(spec.end, start_position, &ragdoll.bones, &transforms) else {
-                warn!(
-                    "Cannot create ragdoll for {root:?}: failed to read bone pose of {}",
-                    spec.name
-                );
+            let Ok((transform, measured)) = measure_limb(spec, bones, &transforms)
+                .ok_or(spec.name)
+                .inspect_err(|&name| warn!("Cannot create ragdoll for {root:?}: cannot measure limb {name}"))
+            else {
                 break;
             };
 
-            let (transform, segment) = match spec.shape {
-                Shape::Capsule { .. } => {
-                    let Some(segment) = Segment::between(start_position, end_position) else {
-                        warn!("Cannot create ragdoll for {root:?}: degenerate limb {}", spec.name);
-                        break;
-                    };
-                    (segment.transform(), Some(segment))
-                }
-                Shape::Sphere { .. } => (Transform::from_translation(end_position), None),
-            };
-
-            let entity = spawn_body(&mut commands, root, spec, transform, segment);
+            let entity = spawn_body(&mut commands, root, spec, transform, measured.segment);
 
             if let (Some(parent_part), Some(joint)) = (spec.parent, spec.joint) {
                 let parent_entity = part_entities[&parent_part];
@@ -627,7 +639,7 @@ fn spawn_ragdoll_bodies(
                             root,
                             parent_entity,
                             entity,
-                            start_position,
+                            measured.anchor,
                             angular_damping,
                         );
                         joints.push(joint);
@@ -641,7 +653,7 @@ fn spawn_ragdoll_bodies(
                                 child: entity,
                             },
                             limbs[&parent_part].segment.unwrap(),
-                            segment.unwrap(),
+                            measured.segment.unwrap(),
                             hinge_axis(&limbs),
                             angle_limits,
                         );
@@ -651,13 +663,7 @@ fn spawn_ragdoll_bodies(
             }
 
             part_entities.insert(spec.part, entity);
-            limbs.insert(
-                spec.part,
-                MeasuredLimb {
-                    anchor: start_position,
-                    segment,
-                },
-            );
+            limbs.insert(spec.part, measured);
             parts.push(RigPart {
                 entity,
                 body_part: spec.part,
@@ -677,14 +683,14 @@ fn spawn_ragdoll_bodies(
         for spec in LIMBS {
             let part_entity = part_entities[&spec.part];
             for name in spec.driven_bones() {
-                if let Some(&bone_entity) = ragdoll.bones.get(name) {
+                if let Some(bone_entity) = bones.get(name) {
                     drivers.insert(bone_entity, part_entity);
                 }
             }
         }
 
         let mut bones_by_part: HashMap<Entity, Vec<(Entity, GlobalTransform)>> = HashMap::new();
-        for &bone_entity in ragdoll.bones.values() {
+        for bone_entity in bones.entities() {
             let Ok(transform) = transforms.get(bone_entity).copied() else {
                 continue;
             };
@@ -705,7 +711,7 @@ fn spawn_ragdoll_bodies(
         }
 
         commands.entity(root).insert(RagdollData {
-            bones: ragdoll.bones.clone(),
+            bones: bones.clone(),
             parts,
         });
         commands.entity(root).remove::<PendingRagdoll>();
@@ -724,15 +730,7 @@ fn synchronize_ragdoll_bodies(
 
         let limb_transforms: HashMap<RagdollBodyPart, Transform> = LIMBS
             .iter()
-            .filter_map(|spec| {
-                let start = measure_point(spec.start, Vec3::ZERO, &ragdoll.bones, &bone_transforms)?;
-                let end = measure_point(spec.end, start, &ragdoll.bones, &bone_transforms)?;
-                let transform = match spec.shape {
-                    Shape::Capsule { .. } => Segment::between(start, end)?.transform(),
-                    Shape::Sphere { .. } => Transform::from_translation(end),
-                };
-                Some((spec.part, transform))
-            })
+            .filter_map(|spec| Some((spec.part, measure_limb(spec, &ragdoll.bones, &bone_transforms)?.0)))
             .collect();
 
         for part in &ragdoll.parts {

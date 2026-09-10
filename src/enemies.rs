@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
 use crate::player::Player;
-use crate::ragdoll::setup_ragdoll;
+use crate::ragdoll::{BoneMap, setup_ragdoll};
 use crate::state::GameState;
 
 mod fighter;
@@ -128,6 +128,12 @@ struct ArmatureAnimation {
     current: Option<AnimationState>,
 }
 
+#[derive(Component)]
+struct EnemyArmature(Entity);
+
+#[derive(Component)]
+struct EnemyWeapon(Entity);
+
 pub fn spawn_enemy(
     commands: &mut Commands,
     asset_server: &AssetServer,
@@ -168,69 +174,56 @@ fn kill_enemy_on_hit(
     hit: On<EnemyHit>,
     alive_enemies: Query<(), AliveEnemy>,
     mut commands: Commands,
-    children: Query<&Children>,
+    armatures: Query<&EnemyArmature>,
     mut animation_players: Query<&mut AnimationPlayer>,
-    enemy_kinds: Query<&EnemyKind>,
-    weapons: Query<(&Name, &GlobalTransform)>,
+    enemies: Query<(&EnemyKind, &EnemyWeapon)>,
+    weapon_transforms: Query<&GlobalTransform>,
 ) {
     if alive_enemies.get(hit.entity).is_err() {
         return;
     }
 
     commands.entity(hit.entity).insert(Dying);
-    stop_enemy_animation(hit.entity, &children, &mut animation_players);
-    drop_weapon(hit.entity, &mut commands, &children, &enemy_kinds, &weapons);
-}
-
-fn stop_enemy_animation(
-    enemy: Entity,
-    children: &Query<&Children>,
-    animation_players: &mut Query<&mut AnimationPlayer>,
-) {
-    for descendant in children.iter_descendants(enemy) {
-        if let Ok(mut player) = animation_players.get_mut(descendant) {
-            player.stop_all();
-        }
+    if let Ok(mut player) = armatures
+        .get(hit.entity)
+        .and_then(|armature| animation_players.get_mut(armature.0))
+    {
+        player.stop_all();
     }
+    drop_weapon(hit.entity, &mut commands, &enemies, &weapon_transforms);
 }
 
 fn drop_weapon(
     enemy: Entity,
     commands: &mut Commands,
-    children: &Query<&Children>,
-    enemy_kinds: &Query<&EnemyKind>,
-    weapons: &Query<(&Name, &GlobalTransform)>,
+    enemies: &Query<(&EnemyKind, &EnemyWeapon)>,
+    weapon_transforms: &Query<&GlobalTransform>,
 ) {
-    let Ok(kind) = enemy_kinds.get(enemy) else {
+    let Ok((kind, weapon)) = enemies.get(enemy) else {
+        return;
+    };
+    let Ok(global) = weapon_transforms.get(weapon.0) else {
         return;
     };
     let collider_half_extents = kind.rig().weapon.collider_half_extents;
 
-    for descendant in children.iter_descendants(enemy) {
-        if !weapons.get(descendant).is_ok_and(|(name, _)| name.as_str() == "Weapon") {
-            continue;
-        }
-        let Ok((_, global)) = weapons.get(descendant) else {
-            continue;
-        };
-        let (scale, rotation, translation) = global.to_scale_rotation_translation();
-        commands.entity(descendant).remove::<ChildOf>();
-        commands.entity(descendant).insert((
-            Transform {
-                translation,
-                rotation,
-                scale,
-            },
-            RigidBody::Dynamic,
-            Collider::cuboid(
-                collider_half_extents.x,
-                collider_half_extents.y,
-                collider_half_extents.z,
-            ),
-            Position(translation),
-            Rotation(rotation),
-        ));
-    }
+    let (scale, rotation, translation) = global.to_scale_rotation_translation();
+    commands.entity(weapon.0).remove::<ChildOf>();
+    commands.entity(weapon.0).insert((
+        Transform {
+            translation,
+            rotation,
+            scale,
+        },
+        RigidBody::Dynamic,
+        Collider::cuboid(
+            collider_half_extents.x,
+            collider_half_extents.y,
+            collider_half_extents.z,
+        ),
+        Position(translation),
+        Rotation(rotation),
+    ));
 }
 
 #[derive(Component)]
@@ -253,6 +246,7 @@ fn prepare_enemy_animation(
 
 fn setup_external_animation(
     mut commands: Commands,
+    bone_maps: Query<&BoneMap>,
     children: Query<&Children>,
     names: Query<&Name>,
     pending: Query<(Entity, &PendingAnimationSetup, &EnemyKind)>,
@@ -260,10 +254,10 @@ fn setup_external_animation(
     players: Query<&AnimationPlayer>,
 ) {
     for (enemy_entity, setup, kind) in &pending {
-        let Some(armature) = children
-            .iter_descendants(enemy_entity)
-            .find(|&descendant| names.get(descendant).is_ok_and(|name| name.as_str() == "Armature"))
-        else {
+        let Ok(bones) = bone_maps.get(enemy_entity) else {
+            continue;
+        };
+        let Some(armature) = bones.get("Armature") else {
             continue;
         };
 
@@ -287,30 +281,22 @@ fn setup_external_animation(
             },
         ));
 
-        commands.entity(enemy_entity).remove::<PendingAnimationSetup>();
-        attach_weapon(
-            &mut commands,
-            enemy_entity,
-            &children,
-            &names,
-            &animations,
-            &kind.rig().weapon,
-        );
+        commands
+            .entity(enemy_entity)
+            .insert(EnemyArmature(armature))
+            .remove::<PendingAnimationSetup>();
+        attach_weapon(&mut commands, enemy_entity, bones, &animations, &kind.rig().weapon);
     }
 }
 
 fn attach_weapon(
     commands: &mut Commands,
     enemy_entity: Entity,
-    children: &Query<&Children>,
-    names: &Query<&Name>,
+    bones: &BoneMap,
     animations: &EnemyAnimations,
     weapon: &WeaponSpec,
 ) {
-    let Some(right_hand) = children
-        .iter_descendants(enemy_entity)
-        .find(|&descendant| names.get(descendant).is_ok_and(|name| name.as_str() == "hand_r"))
-    else {
+    let Some(right_hand) = bones.get("hand_r") else {
         return;
     };
 
@@ -328,6 +314,7 @@ fn attach_weapon(
         .id();
 
     commands.entity(right_hand).add_children(&[weapon_entity]);
+    commands.entity(enemy_entity).insert(EnemyWeapon(weapon_entity));
 }
 
 fn build_animation_targets(
@@ -354,20 +341,11 @@ fn build_animation_targets(
 }
 
 fn update_enemy_animations(
-    children: Query<&Children>,
-    names: Query<&Name>,
-    enemies: Query<(Entity, &EnemyActivity)>,
+    enemies: Query<(&EnemyActivity, &EnemyArmature)>,
     mut armatures: Query<(&mut ArmatureAnimation, &mut AnimationPlayer)>,
 ) {
-    for (enemy_entity, activity) in &enemies {
-        let Some(armature) = children
-            .iter_descendants(enemy_entity)
-            .find(|&descendant| names.get(descendant).is_ok_and(|name| name.as_str() == "Armature"))
-        else {
-            continue;
-        };
-
-        let Ok((mut armature_animation, mut player)) = armatures.get_mut(armature) else {
+    for (activity, armature) in &enemies {
+        let Ok((mut armature_animation, mut player)) = armatures.get_mut(armature.0) else {
             continue;
         };
 
