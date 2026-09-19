@@ -1,10 +1,11 @@
 use avian3d::prelude::{Collider, Position, RigidBody, Rotation};
 use bevy::animation::{AnimatedBy, AnimationTargetId};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
 use crate::player::Player;
-use crate::ragdoll::{BoneMap, setup_ragdoll};
+use crate::ragdoll::{BoneMap, OwnedByEnemy, RagdollBodyPart, setup_ragdoll};
 use crate::state::GameState;
 
 mod fighter;
@@ -170,18 +171,74 @@ pub fn spawn_enemy(
         .id()
 }
 
+#[derive(SystemParam)]
+pub(crate) struct RagdollDiagnostics<'w, 's> {
+    alive_enemies: Query<'w, 's, (), AliveEnemy>,
+    enemy_transforms: Query<'w, 's, &'static Transform, With<Enemy>>,
+    owned_bodies: Query<
+        'w,
+        's,
+        (
+            Entity,
+            &'static OwnedByEnemy,
+            &'static RagdollBodyPart,
+            &'static Position,
+        ),
+    >,
+}
+
+impl RagdollDiagnostics<'_, '_> {
+    fn is_alive(&self, enemy: Entity) -> bool {
+        self.alive_enemies.get(enemy).is_ok()
+    }
+
+    fn log_kill(&self, enemy: Entity, body: Entity) {
+        let root_position = self
+            .enemy_transforms
+            .get(enemy)
+            .map(|transform| transform.translation)
+            .unwrap_or_default();
+        let hit_part = self
+            .owned_bodies
+            .iter()
+            .find(|(entity, owner, ..)| owner.0 == enemy && *entity == body)
+            .map(|(_, _, part, _)| format!("{:?}", part))
+            .unwrap_or_else(|| "unknown".to_string());
+        let parts = self
+            .owned_bodies
+            .iter()
+            .filter(|(_, owner, ..)| owner.0 == enemy)
+            .map(|(_, _, part, position)| {
+                format!(
+                    "{:?}@{:.2?}({:.1}m)",
+                    part,
+                    position.0,
+                    position.0.distance(root_position)
+                )
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        info!(
+            "RAGDOLL KILL root={:?} body={:?} hit_part={} root_pos={:.2?} parts=[{}]",
+            enemy, body, hit_part, root_position, parts
+        );
+    }
+}
+
 fn kill_enemy_on_hit(
     hit: On<EnemyHit>,
-    alive_enemies: Query<(), AliveEnemy>,
     mut commands: Commands,
     armatures: Query<&EnemyArmature>,
     mut animation_players: Query<&mut AnimationPlayer>,
     enemies: Query<(&EnemyKind, &EnemyWeapon)>,
     weapon_transforms: Query<&GlobalTransform>,
+    ragdoll: RagdollDiagnostics,
 ) {
-    if alive_enemies.get(hit.entity).is_err() {
+    if !ragdoll.is_alive(hit.entity) {
         return;
     }
+
+    ragdoll.log_kill(hit.entity, hit.body);
 
     commands.entity(hit.entity).insert(Dying);
     if let Ok(mut player) = armatures
