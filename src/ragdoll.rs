@@ -16,7 +16,13 @@ impl Plugin for RagdollPlugin {
         app.add_observer(wake_ragdoll_bodies_on_hit)
             .add_systems(
                 PostUpdate,
-                (spawn_ragdoll_bodies, synchronize_ragdoll_bodies, apply_ragdoll_pose)
+                (
+                    spawn_ragdoll_bodies,
+                    synchronize_ragdoll_bodies,
+                    activate_ragdoll_on_death,
+                    apply_ragdoll_pose,
+                    log_ragdoll_aftermath,
+                )
                     .chain()
                     .after(TransformSystems::Propagate),
             )
@@ -37,6 +43,8 @@ const NECK_ANGULAR_DAMPING: f32 = 64.0;
 const HIP_ANGULAR_DAMPING: f32 = 15.0;
 const ANKLE_ANGULAR_DAMPING: f32 = 64.0;
 const RAGDOLL_ANGULAR_SLEEP_THRESHOLD: f32 = 0.6;
+const MAX_HIT_SPEED: f32 = 11.0;
+const AFTERMATH_LOG_PERIOD_SECONDS: f32 = 0.25;
 
 const TORSO_RADIUS: f32 = 0.18;
 const HEAD_RADIUS: f32 = 0.12;
@@ -70,8 +78,18 @@ struct PendingRagdoll;
 
 #[derive(Component)]
 struct RagdollData {
+    root: Entity,
     bones: BoneMap,
     parts: Vec<RigPart>,
+    joints: Vec<RagdollJoint>,
+}
+
+#[derive(Clone, Copy)]
+struct RagdollJoint {
+    entity: Entity,
+    parent: RagdollBodyPart,
+    child: RagdollBodyPart,
+    specification: JointSpec,
 }
 
 struct RigPart {
@@ -113,6 +131,13 @@ pub(crate) struct PendingRagdollImpact {
     pub point: Vec3,
 }
 
+#[derive(Component)]
+struct PendingRagdollImpactRequest {
+    body_part: RagdollBodyPart,
+    impulse: Vec3,
+    point: Vec3,
+}
+
 fn apply_pending_impacts(mut commands: Commands, mut impacted_bodies: Query<(Entity, &PendingRagdollImpact, Forces)>) {
     for (entity, impact, mut forces) in &mut impacted_bodies {
         forces.apply_linear_impulse_at_point(impact.impulse, impact.point);
@@ -120,28 +145,16 @@ fn apply_pending_impacts(mut commands: Commands, mut impacted_bodies: Query<(Ent
     }
 }
 
-type OwnedJoint = (Entity, &'static OwnedByEnemy);
-type OwnedJoints<'w, 's> = Query<'w, 's, OwnedJoint, Or<(With<SphericalJoint>, With<RevoluteJoint>)>>;
-
 fn wake_ragdoll_bodies_on_hit(
     hit: On<EnemyHit>,
     mut commands: Commands,
-    ragdoll_bodies: Query<(Entity, &OwnedByEnemy), With<RagdollBodyPart>>,
-    ragdoll_joints: OwnedJoints,
+    ragdoll_bodies: Query<(&OwnedByEnemy, &RagdollBodyPart)>,
 ) {
-    for (body, owner) in &ragdoll_bodies {
-        if owner.0 == hit.entity {
-            commands.entity(body).remove::<RigidBodyDisabled>();
-        }
-    }
-
-    for (joint, owner) in &ragdoll_joints {
-        if owner.0 == hit.entity {
-            commands.entity(joint).remove::<JointDisabled>();
-        }
-    }
-
-    commands.entity(hit.body).insert(PendingRagdollImpact {
+    let Some(body_part) = ragdoll_bodies.get(hit.body).ok().map(|(_, part)| *part) else {
+        return;
+    };
+    commands.entity(hit.entity).insert(PendingRagdollImpactRequest {
+        body_part,
         impulse: hit.impulse,
         point: hit.point,
     });
@@ -154,6 +167,8 @@ pub(crate) fn setup_ragdoll(
     names: Query<&Name>,
 ) {
     let root = scene_ready.entity;
+
+    info!("RAGDOLL SETUP root={:?}", scene_ready.entity);
 
     let mut bones: HashMap<Box<str>, Entity> = HashMap::new();
     for descendant in children.iter_descendants(root) {
@@ -508,6 +523,34 @@ fn spawn_revolute_joint(
     hinge_axis: Vec3,
     angle_limits: (f32, f32),
 ) -> Entity {
+    commands
+        .spawn((
+            OwnedByEnemy(bodies.enemy),
+            make_revolute_joint(
+                bodies.parent,
+                bodies.child,
+                parent_segment,
+                child_segment,
+                hinge_axis,
+                angle_limits,
+            ),
+            JointDamping {
+                linear: 0.0,
+                angular: JOINT_ANGULAR_DAMPING,
+            },
+            JointCollisionDisabled,
+        ))
+        .id()
+}
+
+fn make_revolute_joint(
+    parent: Entity,
+    child: Entity,
+    parent_segment: Segment,
+    child_segment: Segment,
+    hinge_axis: Vec3,
+    angle_limits: (f32, f32),
+) -> RevoluteJoint {
     let parent_axis = parent_segment.rotation * Vec3::Y;
     let joint_x_axis = (parent_axis - hinge_axis * parent_axis.dot(hinge_axis))
         .try_normalize()
@@ -516,22 +559,12 @@ fn spawn_revolute_joint(
     let world_joint_basis = Quat::from_mat3(&Mat3::from_cols(joint_x_axis, joint_y_axis, hinge_axis));
     let anchor = child_segment.start;
 
-    commands
-        .spawn((
-            OwnedByEnemy(bodies.enemy),
-            RevoluteJoint::new(bodies.parent, bodies.child)
-                .with_local_anchor1(parent_segment.rotation.inverse() * (anchor - parent_segment.midpoint))
-                .with_local_anchor2(child_segment.rotation.inverse() * (anchor - child_segment.midpoint))
-                .with_local_basis1(parent_segment.rotation.inverse() * world_joint_basis)
-                .with_local_basis2(child_segment.rotation.inverse() * world_joint_basis)
-                .with_angle_limits(angle_limits.0, angle_limits.1),
-            JointDamping {
-                linear: 0.0,
-                angular: JOINT_ANGULAR_DAMPING,
-            },
-            JointCollisionDisabled,
-        ))
-        .id()
+    RevoluteJoint::new(parent, child)
+        .with_local_anchor1(parent_segment.rotation.inverse() * (anchor - parent_segment.midpoint))
+        .with_local_anchor2(child_segment.rotation.inverse() * (anchor - child_segment.midpoint))
+        .with_local_basis1(parent_segment.rotation.inverse() * world_joint_basis)
+        .with_local_basis2(child_segment.rotation.inverse() * world_joint_basis)
+        .with_angle_limits(angle_limits.0, angle_limits.1)
 }
 
 fn spawn_body(
@@ -598,13 +631,26 @@ fn nearest_driver(
     }
 }
 
+type PendingRagdollQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Entity,
+        &'static BoneMap,
+        &'static PendingRagdoll,
+        Has<Dying>,
+        Option<&'static RagdollData>,
+    ),
+>;
+
 fn spawn_ragdoll_bodies(
     mut commands: Commands,
-    pending: Query<(Entity, &BoneMap, &PendingRagdoll, Has<Dying>)>,
+    pending: PendingRagdollQuery<'_, '_>,
     transforms: Query<&GlobalTransform>,
     parents: Query<&ChildOf>,
+    mut body_transforms: Query<(&mut Position, &mut Rotation, &mut Transform), With<RagdollBodyPart>>,
 ) {
-    for (root, bones, _, dying) in &pending {
+    for (root, bones, _, dying, existing_ragdoll) in &pending {
         let missing_bone = LIMBS
             .iter()
             .flat_map(LimbSpec::bone_names)
@@ -618,7 +664,18 @@ fn spawn_ragdoll_bodies(
         let mut limbs: HashMap<RagdollBodyPart, MeasuredLimb> = HashMap::new();
         let mut part_entities: HashMap<RagdollBodyPart, Entity> = HashMap::new();
         let mut parts: Vec<RigPart> = Vec::new();
-        let mut joints: Vec<Entity> = Vec::new();
+        let mut joints: Vec<RagdollJoint> = Vec::new();
+        let mut stale_parts: Vec<Entity> = Vec::new();
+        let reused_parts: HashMap<RagdollBodyPart, Entity> = existing_ragdoll
+            .map(|ragdoll| ragdoll.parts.iter().map(|part| (part.body_part, part.entity)).collect())
+            .unwrap_or_default();
+        let reuse = !dying;
+        info!(
+            "RAGDOLL SPAWN root={:?} dying={dying} existing_rig={} rebuilding={}",
+            root,
+            existing_ragdoll.is_some(),
+            !reuse,
+        );
 
         for spec in LIMBS {
             let Ok((transform, measured)) = measure_limb(spec, bones, &transforms)
@@ -628,9 +685,25 @@ fn spawn_ragdoll_bodies(
                 break;
             };
 
-            let entity = spawn_body(&mut commands, root, spec, transform, measured.segment);
+            let (entity, is_new) = match (reuse, reused_parts.get(&spec.part)) {
+                (true, Some(&existing_entity)) => {
+                    if let Ok((mut position, mut rotation, mut body_transform)) =
+                        body_transforms.get_mut(existing_entity)
+                    {
+                        position.0 = transform.translation;
+                        rotation.0 = transform.rotation;
+                        *body_transform = transform;
+                    }
+                    (existing_entity, false)
+                }
+                (false, Some(&stale_entity)) => {
+                    stale_parts.push(stale_entity);
+                    (spawn_body(&mut commands, root, spec, transform, measured.segment), true)
+                }
+                _ => (spawn_body(&mut commands, root, spec, transform, measured.segment), true),
+            };
 
-            if let (Some(parent_part), Some(joint)) = (spec.parent, spec.joint) {
+            if is_new && let (Some(parent_part), Some(joint)) = (spec.parent, spec.joint) {
                 let parent_entity = part_entities[&parent_part];
                 match joint {
                     JointSpec::Spherical { angular_damping } => {
@@ -642,7 +715,12 @@ fn spawn_ragdoll_bodies(
                             measured.anchor,
                             angular_damping,
                         );
-                        joints.push(joint);
+                        joints.push(RagdollJoint {
+                            entity: joint,
+                            parent: parent_part,
+                            child: spec.part,
+                            specification: spec.joint.unwrap(),
+                        });
                     }
                     JointSpec::Revolute { angle_limits } => {
                         let joint = spawn_revolute_joint(
@@ -657,7 +735,12 @@ fn spawn_ragdoll_bodies(
                             hinge_axis(&limbs),
                             angle_limits,
                         );
-                        joints.push(joint);
+                        joints.push(RagdollJoint {
+                            entity: joint,
+                            parent: parent_part,
+                            child: spec.part,
+                            specification: spec.joint.unwrap(),
+                        });
                     }
                 }
             }
@@ -700,7 +783,7 @@ fn spawn_ragdoll_bodies(
 
         if !dying {
             for joint in &joints {
-                commands.entity(*joint).insert(JointDisabled);
+                commands.entity(joint.entity).insert(JointDisabled);
             }
             for part in &parts {
                 commands.entity(part.entity).insert(RigidBodyDisabled);
@@ -709,10 +792,16 @@ fn spawn_ragdoll_bodies(
         for part in parts.iter_mut() {
             part.bones = bones_by_part.remove(&part.entity).unwrap_or_default();
         }
+        parts.retain(|part| !stale_parts.contains(&part.entity));
+        for stale_entity in stale_parts {
+            commands.entity(stale_entity).despawn();
+        }
 
         commands.entity(root).insert(RagdollData {
+            root,
             bones: bones.clone(),
             parts,
+            joints,
         });
         commands.entity(root).remove::<PendingRagdoll>();
     }
@@ -744,6 +833,111 @@ fn synchronize_ragdoll_bodies(
             rotation.0 = body_transform.rotation;
             *transform = *body_transform;
         }
+    }
+}
+
+fn log_ragdoll_aftermath(
+    ragdolls: Query<&RagdollData, With<Dying>>,
+    bodies: Query<(&Position, &LinearVelocity, &RagdollBodyPart, &OwnedByEnemy)>,
+    time: Res<Time>,
+    mut next_log_seconds: Local<f32>,
+) {
+    if time.elapsed_secs() < *next_log_seconds {
+        return;
+    }
+    *next_log_seconds = time.elapsed_secs() + AFTERMATH_LOG_PERIOD_SECONDS;
+
+    for ragdoll in &ragdolls {
+        let owned_bodies = bodies
+            .iter()
+            .filter(|(.., owner)| owner.0 == ragdoll.root)
+            .map(|(position, velocity, part, _)| (position.0, velocity.0, *part))
+            .collect::<Vec<_>>();
+        let (max_speed, fastest_part) = owned_bodies
+            .iter()
+            .map(|(_, velocity, part)| (velocity.length(), *part))
+            .max_by(|a, b| a.0.total_cmp(&b.0))
+            .map(|(speed, part)| (speed, format!("{part:?}")))
+            .unwrap_or((0.0, String::new()));
+        let max_spread = owned_bodies
+            .iter()
+            .flat_map(|(position_a, ..)| {
+                owned_bodies
+                    .iter()
+                    .map(|(position_b, ..)| position_a.distance(*position_b))
+            })
+            .fold(0.0_f32, f32::max);
+        info!(
+            "RAGDOLL AFTERMATH root={:?} fastest={} max_speed={:.1} max_spread={:.2}",
+            ragdoll.root, fastest_part, max_speed, max_spread,
+        );
+    }
+}
+
+fn activate_ragdoll_on_death(
+    mut commands: Commands,
+    pending: Query<(Entity, &PendingRagdollImpactRequest, &RagdollData, &BoneMap)>,
+    transforms: Query<&GlobalTransform>,
+    body_masses: Query<(Entity, Option<&ComputedMass>)>,
+) {
+    for (root, impact, ragdoll, bones) in &pending {
+        let mut limbs = HashMap::new();
+        for spec in LIMBS {
+            let Some((_, measured)) = measure_limb(spec, bones, &transforms) else {
+                continue;
+            };
+            limbs.insert(spec.part, measured);
+        }
+        if limbs.len() != LIMBS.len() {
+            continue;
+        }
+
+        let part_entities = ragdoll
+            .parts
+            .iter()
+            .map(|part| (part.body_part, part.entity))
+            .collect::<HashMap<_, _>>();
+        for part in &ragdoll.parts {
+            commands.entity(part.entity).remove::<RigidBodyDisabled>();
+        }
+        for joint in &ragdoll.joints {
+            let parent = part_entities[&joint.parent];
+            let child = part_entities[&joint.child];
+            match joint.specification {
+                JointSpec::Spherical { .. } => {
+                    commands
+                        .entity(joint.entity)
+                        .insert(SphericalJoint::new(parent, child).with_anchor(limbs[&joint.child].anchor));
+                }
+                JointSpec::Revolute { angle_limits } => {
+                    commands.entity(joint.entity).insert(make_revolute_joint(
+                        parent,
+                        child,
+                        limbs[&joint.parent].segment.unwrap(),
+                        limbs[&joint.child].segment.unwrap(),
+                        hinge_axis(&limbs),
+                        angle_limits,
+                    ));
+                }
+            }
+            commands.entity(joint.entity).remove::<JointDisabled>();
+        }
+
+        let Some(&body) = part_entities.get(&impact.body_part) else {
+            continue;
+        };
+        let hit_mass = body_masses
+            .get(body)
+            .ok()
+            .and_then(|(_, mass)| mass)
+            .map(|mass| 1.0 / mass.inverse())
+            .filter(|mass| mass.is_finite() && *mass > 0.0)
+            .unwrap_or_default();
+        commands.entity(body).insert(PendingRagdollImpact {
+            impulse: impact.impulse.normalize_or_zero() * (MAX_HIT_SPEED * hit_mass),
+            point: impact.point,
+        });
+        commands.entity(root).remove::<PendingRagdollImpactRequest>();
     }
 }
 
