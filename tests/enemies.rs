@@ -295,6 +295,22 @@ fn assert_ragdoll_settled(app: &mut App, enemy: Entity, kill_position: Vec3) {
     }
 }
 
+fn assert_body_received_bounded_kick(world: &World, body: Entity, shot_direction: Vec3) {
+    let kick = world
+        .get::<LinearVelocity>(body)
+        .expect("hit body should have velocity after the shot")
+        .0;
+    assert!(
+        kick.dot(shot_direction) > 0.0,
+        "kick {kick:?} should push the hit body along the shot direction {shot_direction:?}"
+    );
+    assert!(
+        kick.length() < MAX_KICK_SPEED,
+        "kick launched the hit body at {} m/s, it must be mass-capped below {MAX_KICK_SPEED} m/s",
+        kick.length()
+    );
+}
+
 #[test]
 fn head_shot_kills_fighter_without_scattering_ragdoll() {
     let (mut app, enemy) = spawn_walking_enemy_with_player(EnemyKind::Fighter(Fighter::default()));
@@ -310,20 +326,7 @@ fn head_shot_kills_fighter_without_scattering_ragdoll() {
     print_ragdoll_metrics(&mut app, enemy, "after_first_step");
 
     assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
-    let kick = app
-        .world()
-        .get::<LinearVelocity>(hit_body)
-        .expect("hit body should have velocity after the shot")
-        .0;
-    assert!(
-        kick.dot(shot_direction) > 0.0,
-        "kick {kick:?} should push the hit body along the shot direction {shot_direction:?}"
-    );
-    assert!(
-        kick.length() < MAX_KICK_SPEED,
-        "kick launched the hit body at {} m/s, it must be mass-capped below {MAX_KICK_SPEED} m/s",
-        kick.length()
-    );
+    assert_body_received_bounded_kick(app.world(), hit_body, shot_direction);
 
     respawn_scene_instance(&mut app, enemy);
     assert_ragdoll_settled(&mut app, enemy, part_position);
@@ -344,20 +347,7 @@ fn head_shot_kills_gunner_without_scattering_ragdoll() {
     print_ragdoll_metrics(&mut app, enemy, "after_first_step");
 
     assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
-    let kick = app
-        .world()
-        .get::<LinearVelocity>(hit_body)
-        .expect("hit body should have velocity after the shot")
-        .0;
-    assert!(
-        kick.dot(shot_direction) > 0.0,
-        "kick {kick:?} should push the hit body along the shot direction {shot_direction:?}"
-    );
-    assert!(
-        kick.length() < MAX_KICK_SPEED,
-        "kick launched the hit body at {} m/s, it must be mass-capped below {MAX_KICK_SPEED} m/s",
-        kick.length()
-    );
+    assert_body_received_bounded_kick(app.world(), hit_body, shot_direction);
 
     respawn_scene_instance(&mut app, enemy);
     assert_ragdoll_settled(&mut app, enemy, part_position);
@@ -378,20 +368,7 @@ fn hand_shot_kills_fighter_without_scattering_ragdoll() {
     print_ragdoll_metrics(&mut app, enemy, "after_first_step");
 
     assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
-    let kick = app
-        .world()
-        .get::<LinearVelocity>(hit_body)
-        .expect("hit body should have velocity after the shot")
-        .0;
-    assert!(
-        kick.dot(shot_direction) > 0.0,
-        "kick {kick:?} should push the hit body along the shot direction {shot_direction:?}"
-    );
-    assert!(
-        kick.length() < MAX_KICK_SPEED,
-        "kick launched the hit body at {} m/s, it must be mass-capped below {MAX_KICK_SPEED} m/s",
-        kick.length()
-    );
+    assert_body_received_bounded_kick(app.world(), hit_body, shot_direction);
 
     respawn_scene_instance(&mut app, enemy);
     assert_ragdoll_settled(&mut app, enemy, part_position);
@@ -412,20 +389,7 @@ fn hand_shot_kills_gunner_without_scattering_ragdoll() {
     print_ragdoll_metrics(&mut app, enemy, "after_first_step");
 
     assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
-    let kick = app
-        .world()
-        .get::<LinearVelocity>(hit_body)
-        .expect("hit body should have velocity after the shot")
-        .0;
-    assert!(
-        kick.dot(shot_direction) > 0.0,
-        "kick {kick:?} should push the hit body along the shot direction {shot_direction:?}"
-    );
-    assert!(
-        kick.length() < MAX_KICK_SPEED,
-        "kick launched the hit body at {} m/s, it must be mass-capped below {MAX_KICK_SPEED} m/s",
-        kick.length()
-    );
+    assert_body_received_bounded_kick(app.world(), hit_body, shot_direction);
 
     respawn_scene_instance(&mut app, enemy);
     assert_ragdoll_settled(&mut app, enemy, part_position);
