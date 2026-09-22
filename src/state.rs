@@ -1,8 +1,9 @@
 use avian3d::prelude::*;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::enemies::Enemy;
-use crate::maps::{self, CurrentMap};
+use crate::maps::{self, CurrentMap, PlayerStartPosition};
 use crate::player::{self, CameraState, Player};
 
 pub struct GameStatePlugin;
@@ -58,24 +59,35 @@ fn toggle_physics_pause(
     }
 }
 
+#[derive(SystemParam)]
+struct GameRestartContext<'w, 's> {
+    commands: Commands<'w, 's>,
+    enemy_query: Query<'w, 's, Entity, With<Enemy>>,
+    current_map: ResMut<'w, CurrentMap>,
+    player_start: ResMut<'w, PlayerStartPosition>,
+    asset_server: Res<'w, AssetServer>,
+}
+
 fn restart_game(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut next_state: ResMut<NextState<GameState>>,
-    mut commands: Commands,
-    enemy_query: Query<Entity, With<Enemy>>,
     player_query: Query<(&mut Transform, &mut CameraState), With<Player>>,
-    mut current_map: ResMut<CurrentMap>,
-    asset_server: Res<AssetServer>,
+    mut restart_context: GameRestartContext,
 ) {
     if !keyboard.just_pressed(KeyCode::Space) {
         return;
     }
 
-    for entity in enemy_query.iter() {
-        commands.entity(entity).despawn();
+    for entity in restart_context.enemy_query.iter() {
+        restart_context.commands.entity(entity).despawn();
     }
 
-    player::reset_player(player_query);
-    maps::restart(&mut current_map, &mut commands, &asset_server);
+    maps::restart(
+        &mut restart_context.current_map,
+        &mut restart_context.player_start,
+        &mut restart_context.commands,
+        &restart_context.asset_server,
+    );
+    player::reset_player(player_query, &restart_context.player_start);
     next_state.set(GameState::Playing);
 }

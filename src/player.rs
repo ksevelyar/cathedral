@@ -1,6 +1,9 @@
+use avian3d::prelude::{Gravity, LinearVelocity, MoveAndSlide, SpatialQueryFilter};
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 
+use crate::collision::{integrate_fall, slide_translation, snapped_ground_height};
+use crate::maps::PlayerStartPosition;
 use crate::state::GameState;
 
 pub struct PlayerPlugin;
@@ -14,7 +17,12 @@ impl Plugin for PlayerPlugin {
             })
             .add_systems(
                 Update,
-                (mouse_look.run_if(not(in_state(GameState::Paused))), move_player).run_if(in_state(GameState::Playing)),
+                (
+                    mouse_look.run_if(not(in_state(GameState::Paused))),
+                    settle_player_on_startup,
+                    move_player,
+                )
+                    .run_if(in_state(GameState::Playing)),
             );
     }
 }
@@ -37,27 +45,51 @@ impl Default for CameraState {
 const MOUSE_SENSITIVITY: f32 = 0.003;
 const PLAYER_MOVE_SPEED: f32 = 5.0;
 const CAMERA_PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
+const PLAYER_COLLISION_RADIUS: f32 = 0.4;
+const PLAYER_EYE_HEIGHT: f32 = 1.8;
 
-const PLAYER_START_POSITION: Vec3 = Vec3::new(0.0, 1.5, 12.0);
-
-pub fn setup_player(mut commands: Commands) {
+pub fn setup_player(mut commands: Commands, start_position: Option<Res<PlayerStartPosition>>) {
     commands.spawn((
         Camera3d::default(),
-        Transform::from_translation(PLAYER_START_POSITION),
+        Transform::from_translation(
+            start_position
+                .map(|start_position| start_position.position)
+                .unwrap_or(Vec3::ZERO),
+        ),
         CameraState::default(),
+        LinearVelocity::default(),
         Player,
     ));
 }
 
-pub fn reset_player(mut player_query: Query<(&mut Transform, &mut CameraState), With<Player>>) {
+pub fn reset_player(
+    mut player_query: Query<(&mut Transform, &mut CameraState), With<Player>>,
+    start_position: &PlayerStartPosition,
+) {
     let Ok((mut transform, mut camera_state)) = player_query.single_mut() else {
         return;
     };
 
-    transform.translation = PLAYER_START_POSITION;
+    transform.translation = start_position.position;
     camera_state.yaw = 0.0;
     camera_state.pitch = 0.0;
     transform.rotation = Quat::IDENTITY;
+}
+
+pub fn settle_player_on_startup(
+    mut player: Query<(&mut Transform, &mut LinearVelocity), Added<Player>>,
+    move_and_slide: MoveAndSlide,
+) {
+    for (mut transform, mut velocity) in &mut player {
+        if let Some(ground_height) = snapped_ground_height(
+            &move_and_slide.spatial_query,
+            transform.translation,
+            &SpatialQueryFilter::default(),
+        ) {
+            transform.translation.y = ground_height + PLAYER_EYE_HEIGHT;
+            velocity.y = 0.0;
+        }
+    }
 }
 
 pub fn mouse_look(
@@ -83,9 +115,11 @@ pub fn mouse_look(
 pub fn move_player(
     keyboard: Res<ButtonInput<KeyCode>>,
     time: Res<Time>,
-    mut query: Query<(&mut Transform, &CameraState), With<Player>>,
+    move_and_slide: MoveAndSlide,
+    gravity: Res<Gravity>,
+    mut query: Query<(&mut Transform, &CameraState, &mut LinearVelocity), With<Player>>,
 ) {
-    let Ok((mut transform, camera_state)) = query.single_mut() else {
+    let Ok((mut transform, camera_state, mut velocity)) = query.single_mut() else {
         return;
     };
 
@@ -107,6 +141,29 @@ pub fn move_player(
     }
 
     if movement_direction != Vec3::ZERO {
-        transform.translation += movement_direction.normalize() * PLAYER_MOVE_SPEED * time.delta_secs();
+        let desired_translation = movement_direction.normalize() * PLAYER_MOVE_SPEED * time.delta_secs();
+        let position = transform.translation;
+        transform.translation += slide_translation(
+            &move_and_slide,
+            position,
+            PLAYER_COLLISION_RADIUS,
+            0.0,
+            &SpatialQueryFilter::default(),
+            desired_translation,
+            time.delta_secs(),
+        );
     }
+    let ground_height = snapped_ground_height(
+        &move_and_slide.spatial_query,
+        transform.translation,
+        &SpatialQueryFilter::default(),
+    );
+    integrate_fall(
+        &mut velocity,
+        &mut transform.translation.y,
+        ground_height,
+        PLAYER_EYE_HEIGHT,
+        time.delta_secs(),
+        gravity.0.y,
+    );
 }

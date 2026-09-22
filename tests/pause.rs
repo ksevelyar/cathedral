@@ -1,14 +1,30 @@
+use avian3d::prelude::{Collider, PhysicsPlugins, RigidBody};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
+use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
 use cathedral::player::setup_player;
 use cathedral::state::{GameState, toggle_pause};
 use cathedral::ui::setup_pause_menu;
 use std::time::Duration;
 
+fn spawn_floor(mut commands: Commands) {
+    commands.spawn((
+        RigidBody::Static,
+        Collider::cuboid(60.0, 0.1, 60.0),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+    ));
+}
+
 fn create_test_app() -> App {
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
+    app.add_plugins((
+        MinimalPlugins,
+        TransformPlugin,
+        AssetPlugin::default(),
+        MeshPlugin,
+        PhysicsPlugins::default(),
+    ));
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.add_plugins(bevy::input::InputPlugin);
     app.init_state::<GameState>();
@@ -17,9 +33,11 @@ fn create_test_app() -> App {
     )));
     app.insert_resource(Assets::<Mesh>::default());
     app.insert_resource(Assets::<StandardMaterial>::default());
-    app.add_systems(Startup, setup_player);
+    app.add_systems(Startup, (setup_player, spawn_floor));
     app.add_systems(Update, toggle_pause);
     app.add_systems(OnEnter(GameState::Paused), setup_pause_menu);
+    app.finish();
+    app.cleanup();
     app
 }
 

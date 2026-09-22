@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::{AnimationState, EnemyActivity, EnemyRig, WeaponSpec, planar_direction};
+use super::{AnimationState, EnemyActivity, EnemyRig, Obstacles, WeaponSpec, planar_direction};
 
 #[derive(Clone)]
 pub struct Gunner {
@@ -29,7 +29,7 @@ impl Default for Gunner {
                     collider_half_extents: Vec3::new(0.88, 0.15, 0.1),
                 },
             },
-            move_speed: 1.0,
+            move_speed: 4.0,
             flee_distance: 4.0,
             attack_distance: 12.0,
             attack_cooldown: 2.0,
@@ -45,6 +45,7 @@ impl Gunner {
         enemy: &mut Transform,
         activity: &mut EnemyActivity,
         delta_secs: f32,
+        obstacles: Obstacles,
     ) {
         let Some((direction, distance)) = planar_direction(player, enemy) else {
             return;
@@ -53,11 +54,13 @@ impl Gunner {
         if distance < self.flee_distance {
             let away_direction = -direction;
             enemy.look_to(direction, Vec3::Y);
-            enemy.translation += away_direction * (self.move_speed * delta_secs);
+            enemy.translation +=
+                obstacles.clear_direction(enemy.translation, away_direction * (self.move_speed * delta_secs));
             activity.state = AnimationState::Moving;
         } else if distance > self.attack_distance {
             enemy.look_to(-direction, Vec3::Y);
-            enemy.translation += direction * (self.move_speed * delta_secs);
+            enemy.translation +=
+                obstacles.clear_direction(enemy.translation, direction * (self.move_speed * delta_secs));
             activity.state = AnimationState::Moving;
         } else {
             enemy.look_to(-direction, Vec3::Y);

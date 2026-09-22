@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::{AnimationState, EnemyActivity, EnemyRig, WeaponSpec, planar_direction};
+use super::{AnimationState, EnemyActivity, EnemyRig, Obstacles, WeaponSpec, planar_direction};
 
 #[derive(Clone)]
 pub struct Fighter {
@@ -28,7 +28,7 @@ impl Default for Fighter {
                     collider_half_extents: Vec3::new(0.01, 0.04, 0.35),
                 },
             },
-            move_speed: 1.0,
+            move_speed: 3.0,
             reach: 2.5,
             attack_cooldown: 2.0,
             attack_animation_seconds: 1.53,
@@ -43,6 +43,7 @@ impl Fighter {
         enemy: &mut Transform,
         activity: &mut EnemyActivity,
         delta_secs: f32,
+        obstacles: Obstacles,
     ) {
         let Some((direction, distance)) = planar_direction(player, enemy) else {
             return;
@@ -53,9 +54,8 @@ impl Fighter {
         } else {
             activity.state = AnimationState::Moving;
             enemy.look_to(-direction, Vec3::Y);
-            let available_distance = distance - self.reach;
-            let movement = (self.move_speed * delta_secs).min(available_distance);
-            enemy.translation += direction * movement;
+            enemy.translation +=
+                obstacles.clear_direction(enemy.translation, direction * (self.move_speed * delta_secs));
         }
     }
 }

@@ -1,9 +1,13 @@
-use avian3d::prelude::{Collider, Position, RigidBody, Rotation};
+use avian3d::prelude::{
+    Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation, ShapeCastConfig, SpatialQuery,
+    SpatialQueryFilter,
+};
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
+use crate::collision::{integrate_fall, slide_translation, snapped_ground_height};
 use crate::player::Player;
 use crate::ragdoll::{BoneMap, OwnedByEnemy, RagdollBodyPart, setup_ragdoll};
 use crate::state::GameState;
@@ -51,10 +55,17 @@ impl EnemyKind {
         }
     }
 
-    fn update(&self, player: &Transform, enemy: &mut Transform, activity: &mut EnemyActivity, delta_secs: f32) {
+    fn update(
+        &self,
+        player: &Transform,
+        enemy: &mut Transform,
+        activity: &mut EnemyActivity,
+        delta_secs: f32,
+        obstacles: Obstacles,
+    ) {
         match self {
-            Self::Fighter(fighter) => fighter.update(player, enemy, activity, delta_secs),
-            Self::Gunner(gunner) => gunner.update(player, enemy, activity, delta_secs),
+            Self::Fighter(fighter) => fighter.update(player, enemy, activity, delta_secs, obstacles),
+            Self::Gunner(gunner) => gunner.update(player, enemy, activity, delta_secs, obstacles),
         }
     }
 }
@@ -85,9 +96,68 @@ fn planar_direction(player: &Transform, enemy: &Transform) -> Option<(Vec3, f32)
     (distance > 0.0).then(|| (planar_offset / distance, distance))
 }
 
+const OBSTACLE_PROBE_DISTANCE: f32 = 2.0;
+const OBSTACLE_AVOIDANCE_ANGLES_DEGREES: [f32; 5] = [0.0, 45.0, -45.0, 90.0, -90.0];
+
+#[derive(Clone, Copy)]
+struct Obstacles<'a> {
+    spatial_query: &'a SpatialQuery<'a, 'a>,
+    radius: f32,
+    center_height_offset: f32,
+    filter: &'a SpatialQueryFilter,
+}
+
+impl Obstacles<'_> {
+    fn clear_direction(&self, from: Vec3, desired: Vec3) -> Vec3 {
+        avoid_obstacles(
+            self.spatial_query,
+            from,
+            self.radius,
+            self.center_height_offset,
+            self.filter,
+            desired,
+        )
+    }
+}
+
+fn avoid_obstacles(
+    spatial_query: &SpatialQuery,
+    from: Vec3,
+    radius: f32,
+    center_height_offset: f32,
+    filter: &SpatialQueryFilter,
+    desired: Vec3,
+) -> Vec3 {
+    let distance = desired.length();
+    if distance == 0.0 {
+        return Vec3::ZERO;
+    }
+    let direction = desired / distance;
+    for angle_degrees in OBSTACLE_AVOIDANCE_ANGLES_DEGREES {
+        let candidate = Quat::from_rotation_y(angle_degrees.to_radians()) * direction;
+        let Ok(candidate_direction) = Dir3::new(candidate) else {
+            continue;
+        };
+        if spatial_query
+            .cast_shape(
+                &Collider::sphere(radius),
+                from + Vec3::Y * center_height_offset,
+                Quat::IDENTITY,
+                candidate_direction,
+                &ShapeCastConfig::from_max_distance(OBSTACLE_PROBE_DISTANCE),
+                filter,
+            )
+            .is_none()
+        {
+            return candidate_direction * distance;
+        }
+    }
+    Vec3::ZERO
+}
+
 #[derive(Component, Default)]
-struct EnemyActivity {
-    state: AnimationState,
+pub struct EnemyActivity {
+    pub state: AnimationState,
     attack_cooldown: f32,
 }
 
@@ -105,8 +175,8 @@ impl EnemyActivity {
     }
 }
 
-#[derive(Component, Clone, Copy, Default, PartialEq, Eq)]
-enum AnimationState {
+#[derive(Component, Clone, Copy, Default, PartialEq, Eq, Debug)]
+pub enum AnimationState {
     #[default]
     Idle,
     Moving,
@@ -160,6 +230,7 @@ pub fn spawn_enemy(
                 weapon: asset_server.load(GltfAssetLabel::Scene(0).from_asset(rig.weapon.path)),
             },
             EnemyActivity::default(),
+            LinearVelocity::default(),
         ));
     } else {
         enemy.insert(Dying);
@@ -423,19 +494,79 @@ fn update_enemy_animations(
 }
 
 pub(crate) type AliveEnemy = (With<Enemy>, Without<Dying>);
+type EnemyBehavior = (
+    Entity,
+    &'static EnemyKind,
+    &'static mut Transform,
+    &'static mut EnemyActivity,
+    &'static mut LinearVelocity,
+);
+
+const ENEMY_COLLISION_RADIUS: f32 = 0.35;
+const ENEMY_COLLISION_CENTER_HEIGHT: f32 = 1.0;
 
 fn enemy_behavior(
     time: Res<Time>,
+    move_and_slide: MoveAndSlide,
+    gravity: Res<Gravity>,
     player: Query<&Transform, (With<Player>, Without<Enemy>)>,
-    mut enemies: Query<(&EnemyKind, &mut Transform, &mut EnemyActivity), (AliveEnemy, Without<Player>)>,
+    mut enemies: Query<EnemyBehavior, (AliveEnemy, Without<Player>)>,
+    owned_bodies: Query<(Entity, &OwnedByEnemy)>,
 ) {
     let Ok(player_transform) = player.single() else {
         return;
     };
     let delta_secs = time.delta_secs();
 
-    for (kind, mut enemy_transform, mut activity) in &mut enemies {
+    for (enemy_entity, kind, mut enemy_transform, mut activity, mut velocity) in &mut enemies {
         activity.attack_cooldown -= delta_secs;
-        kind.update(player_transform, &mut enemy_transform, &mut activity, delta_secs);
+        let filter = own_collider_filter(enemy_entity, &owned_bodies);
+        let obstacles = Obstacles {
+            spatial_query: &move_and_slide.spatial_query,
+            radius: ENEMY_COLLISION_RADIUS,
+            center_height_offset: ENEMY_COLLISION_CENTER_HEIGHT,
+            filter: &filter,
+        };
+        let previous_translation = enemy_transform.translation;
+        kind.update(
+            player_transform,
+            &mut enemy_transform,
+            &mut activity,
+            delta_secs,
+            obstacles,
+        );
+        let desired_translation = enemy_transform.translation - previous_translation;
+        enemy_transform.translation = previous_translation
+            + slide_translation(
+                &move_and_slide,
+                previous_translation,
+                ENEMY_COLLISION_RADIUS,
+                ENEMY_COLLISION_CENTER_HEIGHT,
+                &filter,
+                desired_translation,
+                delta_secs,
+            );
+        let ground_height = snapped_ground_height(
+            &move_and_slide.spatial_query,
+            enemy_transform.translation + Vec3::Y * ENEMY_COLLISION_CENTER_HEIGHT,
+            &filter,
+        );
+        integrate_fall(
+            &mut velocity,
+            &mut enemy_transform.translation.y,
+            ground_height,
+            0.0,
+            delta_secs,
+            gravity.0.y,
+        );
     }
+}
+
+fn own_collider_filter(enemy_entity: Entity, owned_bodies: &Query<(Entity, &OwnedByEnemy)>) -> SpatialQueryFilter {
+    SpatialQueryFilter::default().with_excluded_entities(
+        owned_bodies
+            .iter()
+            .filter(|(_, owner)| owner.0 == enemy_entity)
+            .map(|(body_entity, _)| body_entity),
+    )
 }

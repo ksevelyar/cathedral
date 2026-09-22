@@ -1,12 +1,28 @@
+use avian3d::prelude::{Collider, RigidBody};
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
-use cathedral::player::{CameraState, Player, mouse_look, move_player, setup_player};
+use cathedral::player::{CameraState, Player, mouse_look, move_player, settle_player_on_startup, setup_player};
 use cathedral::state::GameState;
 use std::time::Duration;
 
+fn spawn_floor(mut commands: Commands) {
+    commands.spawn((
+        RigidBody::Static,
+        Collider::cuboid(60.0, 0.1, 60.0),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+    ));
+}
+
 fn create_test_app() -> App {
     let mut app = App::new();
-    app.add_plugins(MinimalPlugins);
+    app.add_plugins((
+        MinimalPlugins,
+        TransformPlugin,
+        AssetPlugin::default(),
+        MeshPlugin,
+        avian3d::prelude::PhysicsPlugins::default(),
+    ));
     app.add_plugins(bevy::state::app::StatesPlugin);
     app.init_state::<GameState>();
     app.insert_resource(ButtonInput::<KeyCode>::default());
@@ -16,8 +32,13 @@ fn create_test_app() -> App {
     )));
     app.insert_resource(Assets::<Mesh>::default());
     app.insert_resource(Assets::<StandardMaterial>::default());
-    app.add_systems(Startup, setup_player);
-    app.add_systems(Update, (mouse_look, move_player).run_if(in_state(GameState::Playing)));
+    app.add_systems(Startup, (setup_player, spawn_floor));
+    app.add_systems(
+        Update,
+        (mouse_look, settle_player_on_startup, move_player).run_if(in_state(GameState::Playing)),
+    );
+    app.finish();
+    app.cleanup();
     app
 }
 
@@ -143,6 +164,7 @@ fn movement_is_on_xz_plane() {
     app.world_mut()
         .resource_mut::<ButtonInput<KeyCode>>()
         .press(KeyCode::KeyD);
+    app.update();
     app.update();
 
     let y = app.world().get::<Transform>(player).unwrap().translation.y;
