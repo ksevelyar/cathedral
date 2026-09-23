@@ -1,15 +1,15 @@
 use avian3d::prelude::*;
 use bevy::animation::AnimationPlugin;
-use bevy::ecs::system::RunSystemOnce;
 use bevy::asset::AssetPlugin;
 use bevy::audio::AudioPlugin;
+use bevy::ecs::system::RunSystemOnce;
 use bevy::gltf::GltfPlugin;
 use bevy::input::InputPlugin;
 use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
 use bevy::world_serialization::WorldSerializationPlugin;
-use cathedral::enemies::{Dying, Enemy, EnemiesPlugin};
+use cathedral::enemies::{Dying, EnemiesPlugin, Enemy};
 use cathedral::maps::MapsPlugin;
 use cathedral::player::{Player, PlayerPlugin};
 use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart, RagdollPlugin};
@@ -91,13 +91,9 @@ fn wait_for_map01_enemies(app: &mut App) -> Vec<Entity> {
 
 fn all_bodies_spawned(world: &mut World, enemies: &[Entity]) -> bool {
     let mut bodies = world.query::<(&OwnedByEnemy, &RagdollBodyPart)>();
-    enemies.iter().all(|enemy| {
-        bodies
-            .iter(world)
-            .filter(|(owner, _)| owner.0 == *enemy)
-            .count()
-            == BODIES_PER_ENEMY
-    })
+    enemies
+        .iter()
+        .all(|enemy| bodies.iter(world).filter(|(owner, _)| owner.0 == *enemy).count() == BODIES_PER_ENEMY)
 }
 
 fn head_body_position(world: &mut World, enemy: Entity) -> Vec3 {
@@ -127,7 +123,9 @@ fn fire(app: &mut App) {
     app.world_mut()
         .resource_mut::<ButtonInput<MouseButton>>()
         .press(MouseButton::Left);
-    app.world_mut().run_system_once(cathedral::shooting::shoot).expect("shoot should run");
+    app.world_mut()
+        .run_system_once(cathedral::shooting::shoot)
+        .expect("shoot should run");
     app.update();
     app.world_mut()
         .resource_mut::<ButtonInput<MouseButton>>()
@@ -157,7 +155,11 @@ fn wait_for_dying(app: &mut App, enemy: Entity) {
         if app.world().get_entity(enemy).is_err() {
             return;
         }
-        eprintln!("MARK fired {enemy:?} dying={} bodies={:?}", is_dying(app.world_mut(), enemy), owned_bodies(app, enemy));
+        eprintln!(
+            "MARK fired {enemy:?} dying={} bodies={:?}",
+            is_dying(app.world_mut(), enemy),
+            owned_bodies(app, enemy)
+        );
         if is_dying(app.world_mut(), enemy) {
             return;
         }
@@ -169,9 +171,7 @@ fn doomed_entities_of(app: &mut App, enemy: Entity) -> Vec<Entity> {
     if app.world().get_entity(enemy).is_err() {
         return Vec::new();
     }
-    let mut owned = app
-        .world_mut()
-        .query_filtered::<(Entity, &OwnedByEnemy), ()>();
+    let mut owned = app.world_mut().query_filtered::<(Entity, &OwnedByEnemy), ()>();
     let mut doomed = owned
         .iter(app.world_mut())
         .filter(|(_, owner)| owner.0 == enemy)

@@ -704,7 +704,11 @@ fn spawn_ragdoll_bodies(
             part.bones = bones_by_part.remove(&part.entity).unwrap_or_default();
         }
 
-        commands.entity(root).insert(RagdollData { bones: bones.clone(), limbs, parts });
+        commands.entity(root).insert(RagdollData {
+            bones: bones.clone(),
+            limbs,
+            parts,
+        });
         commands.entity(root).remove::<PendingRagdoll>();
     }
 }
@@ -758,7 +762,14 @@ fn spawn_joint(
     let child_measured = limbs[&child_part];
     match specification {
         JointSpec::Spherical { angular_damping } => {
-            spawn_spherical_joint(commands, root, parent_entity, child_entity, child_measured.anchor, angular_damping);
+            spawn_spherical_joint(
+                commands,
+                root,
+                parent_entity,
+                child_entity,
+                child_measured.anchor,
+                angular_damping,
+            );
         }
         JointSpec::Revolute { angle_limits } => {
             spawn_revolute_joint(
