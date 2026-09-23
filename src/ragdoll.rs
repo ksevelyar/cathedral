@@ -21,7 +21,6 @@ impl Plugin for RagdollPlugin {
                     synchronize_ragdoll_bodies,
                     activate_ragdoll_on_death,
                     apply_ragdoll_pose,
-                    log_ragdoll_aftermath,
                 )
                     .chain()
                     .after(TransformSystems::Propagate),
@@ -44,7 +43,6 @@ const HIP_ANGULAR_DAMPING: f32 = 15.0;
 const ANKLE_ANGULAR_DAMPING: f32 = 64.0;
 const RAGDOLL_ANGULAR_SLEEP_THRESHOLD: f32 = 0.6;
 const MAX_HIT_SPEED: f32 = 11.0;
-const AFTERMATH_LOG_PERIOD_SECONDS: f32 = 0.25;
 
 const TORSO_RADIUS: f32 = 0.18;
 const HEAD_RADIUS: f32 = 0.12;
@@ -78,8 +76,8 @@ struct PendingRagdoll;
 
 #[derive(Component)]
 struct RagdollData {
-    root: Entity,
     bones: BoneMap,
+    limbs: HashMap<RagdollBodyPart, MeasuredLimb>,
     parts: Vec<RigPart>,
     joints: Vec<RagdollJoint>,
 }
@@ -167,8 +165,6 @@ pub(crate) fn setup_ragdoll(
     names: Query<&Name>,
 ) {
     let root = scene_ready.entity;
-
-    info!("RAGDOLL SETUP root={:?}", scene_ready.entity);
 
     let mut bones: HashMap<Box<str>, Entity> = HashMap::new();
     for descendant in children.iter_descendants(root) {
@@ -670,12 +666,6 @@ fn spawn_ragdoll_bodies(
             .map(|ragdoll| ragdoll.parts.iter().map(|part| (part.body_part, part.entity)).collect())
             .unwrap_or_default();
         let reuse = !dying;
-        info!(
-            "RAGDOLL SPAWN root={:?} dying={dying} existing_rig={} rebuilding={}",
-            root,
-            existing_ragdoll.is_some(),
-            !reuse,
-        );
 
         for spec in LIMBS {
             let Ok((transform, measured)) = measure_limb(spec, bones, &transforms)
@@ -685,10 +675,10 @@ fn spawn_ragdoll_bodies(
                 break;
             };
 
-            let (entity, is_new) = match (reuse, reused_parts.get(&spec.part)) {
-                (true, Some(&existing_entity)) => {
-                    if let Ok((mut position, mut rotation, mut body_transform)) =
-                        body_transforms.get_mut(existing_entity)
+            let reusable_entity = reused_parts.get(&spec.part).copied();
+            let (entity, is_new) = match (reuse, reusable_entity) {
+                (true, Some(existing_entity)) => {
+                    if let Ok((mut position, mut rotation, mut body_transform)) = body_transforms.get_mut(existing_entity)
                     {
                         position.0 = transform.translation;
                         rotation.0 = transform.rotation;
@@ -696,7 +686,7 @@ fn spawn_ragdoll_bodies(
                     }
                     (existing_entity, false)
                 }
-                (false, Some(&stale_entity)) => {
+                (false, Some(stale_entity)) => {
                     stale_parts.push(stale_entity);
                     (spawn_body(&mut commands, root, spec, transform, measured.segment), true)
                 }
@@ -704,45 +694,20 @@ fn spawn_ragdoll_bodies(
             };
 
             if is_new && let (Some(parent_part), Some(joint)) = (spec.parent, spec.joint) {
-                let parent_entity = part_entities[&parent_part];
-                match joint {
-                    JointSpec::Spherical { angular_damping } => {
-                        let joint = spawn_spherical_joint(
-                            &mut commands,
-                            root,
-                            parent_entity,
-                            entity,
-                            measured.anchor,
-                            angular_damping,
-                        );
-                        joints.push(RagdollJoint {
-                            entity: joint,
-                            parent: parent_part,
-                            child: spec.part,
-                            specification: spec.joint.unwrap(),
-                        });
-                    }
-                    JointSpec::Revolute { angle_limits } => {
-                        let joint = spawn_revolute_joint(
-                            &mut commands,
-                            JointBodies {
-                                enemy: root,
-                                parent: parent_entity,
-                                child: entity,
-                            },
-                            limbs[&parent_part].segment.unwrap(),
-                            measured.segment.unwrap(),
-                            hinge_axis(&limbs),
-                            angle_limits,
-                        );
-                        joints.push(RagdollJoint {
-                            entity: joint,
-                            parent: parent_part,
-                            child: spec.part,
-                            specification: spec.joint.unwrap(),
-                        });
-                    }
-                }
+                spawn_joint(
+                    &mut commands,
+                    JointEndpoints {
+                        root,
+                        parent_part,
+                        child_part: spec.part,
+                        parent_entity: part_entities[&parent_part],
+                        child_entity: entity,
+                    },
+                    joint,
+                    &limbs,
+                    measured,
+                    &mut joints,
+                );
             }
 
             part_entities.insert(spec.part, entity);
@@ -755,31 +720,13 @@ fn spawn_ragdoll_bodies(
             });
         }
 
-        let incomplete = parts.len() < LIMBS.len();
-        if incomplete {
+        if parts.len() < LIMBS.len() {
             commands.entity(root).remove::<PendingRagdoll>();
             continue;
         }
 
         let torso_entity = part_entities[&RagdollBodyPart::Torso];
-        let mut drivers: HashMap<Entity, Entity> = HashMap::new();
-        for spec in LIMBS {
-            let part_entity = part_entities[&spec.part];
-            for name in spec.driven_bones() {
-                if let Some(bone_entity) = bones.get(name) {
-                    drivers.insert(bone_entity, part_entity);
-                }
-            }
-        }
-
-        let mut bones_by_part: HashMap<Entity, Vec<(Entity, GlobalTransform)>> = HashMap::new();
-        for bone_entity in bones.entities() {
-            let Ok(transform) = transforms.get(bone_entity).copied() else {
-                continue;
-            };
-            let part = nearest_driver(bone_entity, &drivers, &parents, torso_entity);
-            bones_by_part.entry(part).or_default().push((bone_entity, transform));
-        }
+        let mut bones_by_part = assign_drivers(bones, part_entities, &parents, &transforms, torso_entity);
 
         if !dying {
             for joint in &joints {
@@ -798,8 +745,8 @@ fn spawn_ragdoll_bodies(
         }
 
         commands.entity(root).insert(RagdollData {
-            root,
             bones: bones.clone(),
+            limbs,
             parts,
             joints,
         });
@@ -807,20 +754,101 @@ fn spawn_ragdoll_bodies(
     }
 }
 
+struct JointEndpoints {
+    root: Entity,
+    parent_part: RagdollBodyPart,
+    child_part: RagdollBodyPart,
+    parent_entity: Entity,
+    child_entity: Entity,
+}
+
+fn spawn_joint(
+    commands: &mut Commands,
+    endpoints: JointEndpoints,
+    specification: JointSpec,
+    limbs: &HashMap<RagdollBodyPart, MeasuredLimb>,
+    child_measured: MeasuredLimb,
+    joints: &mut Vec<RagdollJoint>,
+) {
+    let JointEndpoints {
+        root,
+        parent_part,
+        child_part,
+        parent_entity,
+        child_entity,
+    } = endpoints;
+    let joint_entity = match specification {
+        JointSpec::Spherical { angular_damping } => {
+            spawn_spherical_joint(commands, root, parent_entity, child_entity, child_measured.anchor, angular_damping)
+        }
+        JointSpec::Revolute { angle_limits } => spawn_revolute_joint(
+            commands,
+            JointBodies {
+                enemy: root,
+                parent: parent_entity,
+                child: child_entity,
+            },
+            limbs[&parent_part].segment.unwrap(),
+            child_measured.segment.unwrap(),
+            hinge_axis(limbs),
+            angle_limits,
+        ),
+    };
+    joints.push(RagdollJoint {
+        entity: joint_entity,
+        parent: parent_part,
+        child: child_part,
+        specification,
+    });
+}
+
+fn assign_drivers(
+    bones: &BoneMap,
+    part_entities: HashMap<RagdollBodyPart, Entity>,
+    parents: &Query<&ChildOf>,
+    transforms: &Query<&GlobalTransform>,
+    torso_entity: Entity,
+) -> HashMap<Entity, Vec<(Entity, GlobalTransform)>> {
+    let mut drivers: HashMap<Entity, Entity> = HashMap::new();
+    for spec in LIMBS {
+        let part_entity = part_entities[&spec.part];
+        for name in spec.driven_bones() {
+            if let Some(bone_entity) = bones.get(name) {
+                drivers.insert(bone_entity, part_entity);
+            }
+        }
+    }
+
+    let mut bones_by_part: HashMap<Entity, Vec<(Entity, GlobalTransform)>> = HashMap::new();
+    for bone_entity in bones.entities() {
+        let Ok(transform) = transforms.get(bone_entity).copied() else {
+            continue;
+        };
+        let part = nearest_driver(bone_entity, &drivers, parents, torso_entity);
+        bones_by_part.entry(part).or_default().push((bone_entity, transform));
+    }
+    bones_by_part
+}
+
 fn synchronize_ragdoll_bodies(
-    ragdolls: Query<(&RagdollData, Option<Ref<Dying>>)>,
+    mut ragdolls: Query<(&mut RagdollData, Option<Ref<Dying>>)>,
     bone_transforms: Query<&GlobalTransform>,
     mut body_transforms: Query<(&mut Position, &mut Rotation, &mut Transform), With<RagdollBodyPart>>,
 ) {
-    for (ragdoll, dying) in &ragdolls {
+    for (mut ragdoll, dying) in &mut ragdolls {
         if dying.as_ref().is_some_and(|dying| !dying.is_added()) {
             continue;
         }
 
-        let limb_transforms: HashMap<RagdollBodyPart, Transform> = LIMBS
-            .iter()
-            .filter_map(|spec| Some((spec.part, measure_limb(spec, &ragdoll.bones, &bone_transforms)?.0)))
-            .collect();
+        let mut measured_limbs: HashMap<RagdollBodyPart, MeasuredLimb> = HashMap::new();
+        let mut limb_transforms: HashMap<RagdollBodyPart, Transform> = HashMap::new();
+        for spec in LIMBS {
+            let Some((transform, measured)) = measure_limb(spec, &ragdoll.bones, &bone_transforms) else {
+                continue;
+            };
+            limb_transforms.insert(spec.part, transform);
+            measured_limbs.insert(spec.part, measured);
+        }
 
         for part in &ragdoll.parts {
             let Some(body_transform) = limb_transforms.get(&part.body_part) else {
@@ -833,61 +861,20 @@ fn synchronize_ragdoll_bodies(
             rotation.0 = body_transform.rotation;
             *transform = *body_transform;
         }
-    }
-}
 
-fn log_ragdoll_aftermath(
-    ragdolls: Query<&RagdollData, With<Dying>>,
-    bodies: Query<(&Position, &LinearVelocity, &RagdollBodyPart, &OwnedByEnemy)>,
-    time: Res<Time>,
-    mut next_log_seconds: Local<f32>,
-) {
-    if time.elapsed_secs() < *next_log_seconds {
-        return;
-    }
-    *next_log_seconds = time.elapsed_secs() + AFTERMATH_LOG_PERIOD_SECONDS;
-
-    for ragdoll in &ragdolls {
-        let owned_bodies = bodies
-            .iter()
-            .filter(|(.., owner)| owner.0 == ragdoll.root)
-            .map(|(position, velocity, part, _)| (position.0, velocity.0, *part))
-            .collect::<Vec<_>>();
-        let (max_speed, fastest_part) = owned_bodies
-            .iter()
-            .map(|(_, velocity, part)| (velocity.length(), *part))
-            .max_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(speed, part)| (speed, format!("{part:?}")))
-            .unwrap_or((0.0, String::new()));
-        let max_spread = owned_bodies
-            .iter()
-            .flat_map(|(position_a, ..)| {
-                owned_bodies
-                    .iter()
-                    .map(|(position_b, ..)| position_a.distance(*position_b))
-            })
-            .fold(0.0_f32, f32::max);
-        info!(
-            "RAGDOLL AFTERMATH root={:?} fastest={} max_speed={:.1} max_spread={:.2}",
-            ragdoll.root, fastest_part, max_speed, max_spread,
-        );
+        if limb_transforms.len() == LIMBS.len() {
+            ragdoll.limbs = measured_limbs;
+        }
     }
 }
 
 fn activate_ragdoll_on_death(
     mut commands: Commands,
-    pending: Query<(Entity, &PendingRagdollImpactRequest, &RagdollData, &BoneMap)>,
-    transforms: Query<&GlobalTransform>,
+    pending: Query<(Entity, &PendingRagdollImpactRequest, &RagdollData)>,
     body_masses: Query<(Entity, Option<&ComputedMass>)>,
 ) {
-    for (root, impact, ragdoll, bones) in &pending {
-        let mut limbs = HashMap::new();
-        for spec in LIMBS {
-            let Some((_, measured)) = measure_limb(spec, bones, &transforms) else {
-                continue;
-            };
-            limbs.insert(spec.part, measured);
-        }
+    for (root, impact, ragdoll) in &pending {
+        let limbs = &ragdoll.limbs;
         if limbs.len() != LIMBS.len() {
             continue;
         }
@@ -915,7 +902,7 @@ fn activate_ragdoll_on_death(
                         child,
                         limbs[&joint.parent].segment.unwrap(),
                         limbs[&joint.child].segment.unwrap(),
-                        hinge_axis(&limbs),
+                        hinge_axis(limbs),
                         angle_limits,
                     ));
                 }
