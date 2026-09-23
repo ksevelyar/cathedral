@@ -282,10 +282,10 @@ fn respawn_scene_instance(app: &mut App, enemy: Entity) {
 fn assert_ragdoll_settled(app: &mut App, enemy: Entity, kill_position: Vec3) {
     let bodies = app
         .world_mut()
-        .query::<(&OwnedByEnemy, &Position, &LinearVelocity, Has<RigidBodyDisabled>)>()
+        .query::<(&OwnedByEnemy, &RagdollBodyPart, &Position, &LinearVelocity, Has<RigidBodyDisabled>)>()
         .iter(app.world())
         .filter(|(owner, ..)| owner.0 == enemy)
-        .map(|(_, position, velocity, disabled)| (position.0, velocity.0, disabled))
+        .map(|(_, _, position, velocity, disabled)| (position.0, velocity.0, disabled))
         .collect::<Vec<_>>();
     assert_eq!(bodies.len(), EXPECTED_RAGDOLL_BODIES);
     for (position, velocity, disabled) in &bodies {

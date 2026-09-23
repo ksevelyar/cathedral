@@ -281,6 +281,7 @@ fn drop_weapon(
     let (scale, rotation, translation) = global.to_scale_rotation_translation();
     commands.entity(weapon.0).remove::<ChildOf>();
     commands.entity(weapon.0).insert((
+        OwnedByEnemy(enemy),
         Transform {
             translation,
             rotation,

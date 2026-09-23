@@ -79,15 +79,6 @@ struct RagdollData {
     bones: BoneMap,
     limbs: HashMap<RagdollBodyPart, MeasuredLimb>,
     parts: Vec<RigPart>,
-    joints: Vec<RagdollJoint>,
-}
-
-#[derive(Clone, Copy)]
-struct RagdollJoint {
-    entity: Entity,
-    parent: RagdollBodyPart,
-    child: RagdollBodyPart,
-    specification: JointSpec,
 }
 
 struct RigPart {
@@ -104,6 +95,14 @@ pub struct OwnedByEnemy(pub Entity);
 #[derive(Component)]
 #[relationship_target(relationship = OwnedByEnemy, linked_spawn)]
 pub struct EnemyPhysicsEntities(Vec<Entity>);
+
+#[derive(Component)]
+#[relationship(relationship_target = JointsAnchoredToBody)]
+struct JointAnchoredToBody(Entity);
+
+#[derive(Component)]
+#[relationship_target(relationship = JointAnchoredToBody)]
+struct JointsAnchoredToBody(Vec<Entity>);
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum RagdollBodyPart {
@@ -501,6 +500,7 @@ fn spawn_spherical_joint(
                 angular: angular_damping,
             },
             JointCollisionDisabled,
+            JointAnchoredToBody(child),
         ))
         .id()
 }
@@ -522,6 +522,7 @@ fn spawn_revolute_joint(
     commands
         .spawn((
             OwnedByEnemy(bodies.enemy),
+            JointAnchoredToBody(bodies.child),
             make_revolute_joint(
                 bodies.parent,
                 bodies.child,
@@ -635,7 +636,7 @@ type PendingRagdollQuery<'w, 's> = Query<
         &'static BoneMap,
         &'static PendingRagdoll,
         Has<Dying>,
-        Option<&'static RagdollData>,
+        Has<RagdollData>,
     ),
 >;
 
@@ -644,9 +645,13 @@ fn spawn_ragdoll_bodies(
     pending: PendingRagdollQuery<'_, '_>,
     transforms: Query<&GlobalTransform>,
     parents: Query<&ChildOf>,
-    mut body_transforms: Query<(&mut Position, &mut Rotation, &mut Transform), With<RagdollBodyPart>>,
 ) {
-    for (root, bones, _, dying, existing_ragdoll) in &pending {
+    for (root, bones, _, dying, already_spawned) in &pending {
+        if already_spawned {
+            commands.entity(root).remove::<PendingRagdoll>();
+            continue;
+        }
+
         let missing_bone = LIMBS
             .iter()
             .flat_map(LimbSpec::bone_names)
@@ -660,12 +665,6 @@ fn spawn_ragdoll_bodies(
         let mut limbs: HashMap<RagdollBodyPart, MeasuredLimb> = HashMap::new();
         let mut part_entities: HashMap<RagdollBodyPart, Entity> = HashMap::new();
         let mut parts: Vec<RigPart> = Vec::new();
-        let mut joints: Vec<RagdollJoint> = Vec::new();
-        let mut stale_parts: Vec<Entity> = Vec::new();
-        let reused_parts: HashMap<RagdollBodyPart, Entity> = existing_ragdoll
-            .map(|ragdoll| ragdoll.parts.iter().map(|part| (part.body_part, part.entity)).collect())
-            .unwrap_or_default();
-        let reuse = !dying;
 
         for spec in LIMBS {
             let Ok((transform, measured)) = measure_limb(spec, bones, &transforms)
@@ -675,41 +674,10 @@ fn spawn_ragdoll_bodies(
                 break;
             };
 
-            let reusable_entity = reused_parts.get(&spec.part).copied();
-            let (entity, is_new) = match (reuse, reusable_entity) {
-                (true, Some(existing_entity)) => {
-                    if let Ok((mut position, mut rotation, mut body_transform)) = body_transforms.get_mut(existing_entity)
-                    {
-                        position.0 = transform.translation;
-                        rotation.0 = transform.rotation;
-                        *body_transform = transform;
-                    }
-                    (existing_entity, false)
-                }
-                (false, Some(stale_entity)) => {
-                    stale_parts.push(stale_entity);
-                    (spawn_body(&mut commands, root, spec, transform, measured.segment), true)
-                }
-                _ => (spawn_body(&mut commands, root, spec, transform, measured.segment), true),
-            };
-
-            if is_new && let (Some(parent_part), Some(joint)) = (spec.parent, spec.joint) {
-                spawn_joint(
-                    &mut commands,
-                    JointEndpoints {
-                        root,
-                        parent_part,
-                        child_part: spec.part,
-                        parent_entity: part_entities[&parent_part],
-                        child_entity: entity,
-                    },
-                    joint,
-                    &limbs,
-                    measured,
-                    &mut joints,
-                );
+            let entity = spawn_body(&mut commands, root, spec, transform, measured.segment);
+            if !dying {
+                commands.entity(entity).insert(RigidBodyDisabled);
             }
-
             part_entities.insert(spec.part, entity);
             limbs.insert(spec.part, measured);
             parts.push(RigPart {
@@ -725,32 +693,44 @@ fn spawn_ragdoll_bodies(
             continue;
         }
 
+        if dying {
+            spawn_limb_joints(&mut commands, root, &part_entities, &limbs);
+        }
+
         let torso_entity = part_entities[&RagdollBodyPart::Torso];
         let mut bones_by_part = assign_drivers(bones, part_entities, &parents, &transforms, torso_entity);
 
-        if !dying {
-            for joint in &joints {
-                commands.entity(joint.entity).insert(JointDisabled);
-            }
-            for part in &parts {
-                commands.entity(part.entity).insert(RigidBodyDisabled);
-            }
-        }
         for part in parts.iter_mut() {
             part.bones = bones_by_part.remove(&part.entity).unwrap_or_default();
         }
-        parts.retain(|part| !stale_parts.contains(&part.entity));
-        for stale_entity in stale_parts {
-            commands.entity(stale_entity).despawn();
-        }
 
-        commands.entity(root).insert(RagdollData {
-            bones: bones.clone(),
-            limbs,
-            parts,
-            joints,
-        });
+        commands.entity(root).insert(RagdollData { bones: bones.clone(), limbs, parts });
         commands.entity(root).remove::<PendingRagdoll>();
+    }
+}
+
+fn spawn_limb_joints(
+    commands: &mut Commands,
+    enemy: Entity,
+    part_entities: &HashMap<RagdollBodyPart, Entity>,
+    limbs: &HashMap<RagdollBodyPart, MeasuredLimb>,
+) {
+    for spec in LIMBS {
+        let (Some(parent_part), Some(joint)) = (spec.parent, spec.joint) else {
+            continue;
+        };
+        spawn_joint(
+            commands,
+            JointEndpoints {
+                root: enemy,
+                parent_part,
+                child_part: spec.part,
+                parent_entity: part_entities[&parent_part],
+                child_entity: part_entities[&spec.part],
+            },
+            joint,
+            limbs,
+        );
     }
 }
 
@@ -767,8 +747,6 @@ fn spawn_joint(
     endpoints: JointEndpoints,
     specification: JointSpec,
     limbs: &HashMap<RagdollBodyPart, MeasuredLimb>,
-    child_measured: MeasuredLimb,
-    joints: &mut Vec<RagdollJoint>,
 ) {
     let JointEndpoints {
         root,
@@ -777,29 +755,26 @@ fn spawn_joint(
         parent_entity,
         child_entity,
     } = endpoints;
-    let joint_entity = match specification {
+    let child_measured = limbs[&child_part];
+    match specification {
         JointSpec::Spherical { angular_damping } => {
-            spawn_spherical_joint(commands, root, parent_entity, child_entity, child_measured.anchor, angular_damping)
+            spawn_spherical_joint(commands, root, parent_entity, child_entity, child_measured.anchor, angular_damping);
         }
-        JointSpec::Revolute { angle_limits } => spawn_revolute_joint(
-            commands,
-            JointBodies {
-                enemy: root,
-                parent: parent_entity,
-                child: child_entity,
-            },
-            limbs[&parent_part].segment.unwrap(),
-            child_measured.segment.unwrap(),
-            hinge_axis(limbs),
-            angle_limits,
-        ),
-    };
-    joints.push(RagdollJoint {
-        entity: joint_entity,
-        parent: parent_part,
-        child: child_part,
-        specification,
-    });
+        JointSpec::Revolute { angle_limits } => {
+            spawn_revolute_joint(
+                commands,
+                JointBodies {
+                    enemy: root,
+                    parent: parent_entity,
+                    child: child_entity,
+                },
+                limbs[&parent_part].segment.unwrap(),
+                child_measured.segment.unwrap(),
+                hinge_axis(limbs),
+                angle_limits,
+            );
+        }
+    }
 }
 
 fn assign_drivers(
@@ -874,8 +849,7 @@ fn activate_ragdoll_on_death(
     body_masses: Query<(Entity, Option<&ComputedMass>)>,
 ) {
     for (root, impact, ragdoll) in &pending {
-        let limbs = &ragdoll.limbs;
-        if limbs.len() != LIMBS.len() {
+        if ragdoll.limbs.len() != LIMBS.len() {
             continue;
         }
 
@@ -887,28 +861,7 @@ fn activate_ragdoll_on_death(
         for part in &ragdoll.parts {
             commands.entity(part.entity).remove::<RigidBodyDisabled>();
         }
-        for joint in &ragdoll.joints {
-            let parent = part_entities[&joint.parent];
-            let child = part_entities[&joint.child];
-            match joint.specification {
-                JointSpec::Spherical { .. } => {
-                    commands
-                        .entity(joint.entity)
-                        .insert(SphericalJoint::new(parent, child).with_anchor(limbs[&joint.child].anchor));
-                }
-                JointSpec::Revolute { angle_limits } => {
-                    commands.entity(joint.entity).insert(make_revolute_joint(
-                        parent,
-                        child,
-                        limbs[&joint.parent].segment.unwrap(),
-                        limbs[&joint.child].segment.unwrap(),
-                        hinge_axis(limbs),
-                        angle_limits,
-                    ));
-                }
-            }
-            commands.entity(joint.entity).remove::<JointDisabled>();
-        }
+        spawn_limb_joints(&mut commands, root, &part_entities, &ragdoll.limbs);
 
         let Some(&body) = part_entities.get(&impact.body_part) else {
             continue;
