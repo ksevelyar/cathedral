@@ -1,11 +1,13 @@
 mod map01;
 mod map02;
+mod pieces;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
 use crate::enemies::{Dying, Enemy, EnemyKind, spawn_enemy};
 use crate::player;
+use pieces::{CuboidSpec, Item, LightSpec, Piece};
 
 pub struct MapsPlugin;
 
@@ -35,73 +37,12 @@ struct Arena;
 struct Map {
     player_start: Vec3,
     enemies: Vec<EnemySpawn>,
-    geometry: Vec<Geometry>,
+    pieces: Vec<Piece>,
 }
 
 struct EnemySpawn {
     position: Vec3,
     kind: EnemyKind,
-}
-
-struct CuboidGeometry {
-    position: Vec3,
-    size: Vec3,
-    color: Color,
-}
-
-struct StairGeometry {
-    position: Vec3,
-    direction: Vec3,
-    width: f32,
-    steps: u32,
-    step_height: f32,
-    step_depth: f32,
-    color: Color,
-}
-
-enum Geometry {
-    Cuboid(CuboidGeometry),
-    Stair(StairGeometry),
-}
-
-const FLOOR_COLOR: Color = Color::srgb(0.4, 0.4, 0.4);
-const WALL_COLOR: Color = Color::srgb(0.6, 0.6, 0.6);
-const CUBOID_COLOR: Color = Color::srgb(0.5, 0.5, 0.5);
-
-fn floor(position: Vec3, size: Vec3) -> Geometry {
-    Geometry::Cuboid(CuboidGeometry {
-        position,
-        size,
-        color: FLOOR_COLOR,
-    })
-}
-
-fn wall(position: Vec3, size: Vec3) -> Geometry {
-    Geometry::Cuboid(CuboidGeometry {
-        position,
-        size,
-        color: WALL_COLOR,
-    })
-}
-
-fn cuboid(position: Vec3, size: Vec3) -> Geometry {
-    Geometry::Cuboid(CuboidGeometry {
-        position,
-        size,
-        color: CUBOID_COLOR,
-    })
-}
-
-fn stair(position: Vec3, direction: Vec3, width: f32, steps: u32, step_height: f32, step_depth: f32) -> Geometry {
-    Geometry::Stair(StairGeometry {
-        position,
-        direction,
-        width,
-        steps,
-        step_height,
-        step_depth,
-        color: CUBOID_COLOR,
-    })
 }
 
 fn definition(map: &CurrentMap) -> Map {
@@ -132,83 +73,61 @@ fn spawn_map(
     commands.insert_resource(PlayerStartPosition {
         position: map.player_start,
     });
-    spawn_light(commands);
-    spawn_geometry(commands, meshes, materials, &map.geometry);
+    spawn_pieces(commands, meshes, materials, &map.pieces);
     spawn_enemies(commands, asset_server, &map.enemies);
 }
 
-fn spawn_light(commands: &mut Commands) {
-    commands.spawn((
-        Arena,
-        PointLight {
-            intensity: 2_000_000.0,
-            color: Color::srgb(1.0, 0.85, 0.6),
-            shadow_maps_enabled: true,
-            ..default()
-        },
-        Transform::from_xyz(4.8, 4.8, 1.0),
-    ));
-}
-
-fn spawn_geometry(
+fn spawn_pieces(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    geometry: &[Geometry],
+    map_pieces: &[Piece],
 ) {
-    for geometry_item in geometry {
-        match geometry_item {
-            Geometry::Cuboid(cuboid_geometry) => spawn_cuboid(commands, meshes, materials, cuboid_geometry),
-            Geometry::Stair(stair_geometry) => {
-                for step_cuboid in stair_cuboids(stair_geometry) {
-                    spawn_cuboid(commands, meshes, materials, &step_cuboid);
-                }
-            }
+    for map_piece in map_pieces {
+        for item in &map_piece.items {
+            let transform = map_piece.transform * Transform::from_translation(item_position(item));
+            spawn_item(commands, meshes, materials, item, transform);
         }
     }
 }
 
-fn stair_cuboids(stair_geometry: &StairGeometry) -> Vec<CuboidGeometry> {
-    let direction = stair_geometry.direction.normalize();
-    (0..stair_geometry.steps)
-        .map(|step_index| {
-            let along = step_index as f32 + 0.5;
-            CuboidGeometry {
-                position: stair_geometry.position
-                    + direction * (stair_geometry.step_depth * along)
-                    + Vec3::Y * (stair_geometry.step_height * along),
-                size: Vec3::new(
-                    stair_geometry.width,
-                    stair_geometry.step_height,
-                    stair_geometry.step_depth,
-                ),
-                color: stair_geometry.color,
-            }
-        })
-        .collect()
+fn item_position(item: &Item) -> Vec3 {
+    match item {
+        Item::Cuboid(spec) => spec.position,
+        Item::Light(spec) => spec.position,
+    }
 }
 
-fn spawn_cuboid(
+fn spawn_item(
     commands: &mut Commands,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
-    cuboid_geometry: &CuboidGeometry,
+    item: &Item,
+    transform: Transform,
 ) {
-    commands.spawn((
-        Arena,
-        Mesh3d(meshes.add(Cuboid::new(
-            cuboid_geometry.size.x,
-            cuboid_geometry.size.y,
-            cuboid_geometry.size.z,
-        ))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: cuboid_geometry.color,
-            ..default()
-        })),
-        RigidBody::Static,
-        Collider::cuboid(cuboid_geometry.size.x, cuboid_geometry.size.y, cuboid_geometry.size.z),
-        Transform::from_translation(cuboid_geometry.position),
-    ));
+    match item {
+        Item::Cuboid(CuboidSpec { size, color, .. }) => commands.spawn((
+            Arena,
+            Mesh3d(meshes.add(Cuboid::new(size.x, size.y, size.z))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: *color,
+                ..default()
+            })),
+            RigidBody::Static,
+            Collider::cuboid(size.x, size.y, size.z),
+            transform,
+        )),
+        Item::Light(LightSpec { color, intensity, .. }) => commands.spawn((
+            Arena,
+            PointLight {
+                intensity: *intensity,
+                color: *color,
+                shadow_maps_enabled: true,
+                ..default()
+            },
+            transform,
+        )),
+    };
 }
 
 fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &[EnemySpawn]) {
