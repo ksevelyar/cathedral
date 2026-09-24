@@ -1,6 +1,9 @@
+use std::f32::consts::PI;
+
 use bevy::prelude::*;
 
-use super::{EnemySpawn, Map, cuboid, floor, stair, wall};
+use super::pieces::{FLOOR_COLOR, WALL_COLOR, cuboid, door, stair, wall_torch};
+use super::{EnemySpawn, Map};
 use crate::enemies::{EnemyKind, Fighter, Gunner};
 
 pub(super) fn definition() -> Map {
@@ -20,19 +23,45 @@ pub(super) fn definition() -> Map {
                 kind: EnemyKind::Fighter(Fighter::default()),
             },
         ],
-        geometry: vec![
-            floor(Vec3::ZERO, Vec3::new(30.0, 0.1, 30.0)),
-            wall(Vec3::new(0.0, 1.5, -15.0), Vec3::new(30.0, 3.0, 0.1)),
-            wall(Vec3::new(0.0, 1.5, 15.0), Vec3::new(30.0, 3.0, 0.1)),
-            wall(Vec3::new(-15.0, 1.5, 0.0), Vec3::new(0.1, 3.0, 30.0)),
-            wall(Vec3::new(15.0, 1.5, 0.0), Vec3::new(0.1, 3.0, 30.0)),
-            cuboid(Vec3::new(-10.0, 10.0, -10.0), Vec3::new(2.0, 20.0, 2.0)),
-            cuboid(Vec3::new(10.0, 10.0, -10.0), Vec3::new(2.0, 20.0, 2.0)),
-            cuboid(Vec3::new(-10.0, 10.0, 10.0), Vec3::new(2.0, 20.0, 2.0)),
-            cuboid(Vec3::new(10.0, 10.0, 10.0), Vec3::new(2.0, 20.0, 2.0)),
-            stair(Vec3::new(-2.0, 0.05, 5.0), Vec3::NEG_Z, 4.0, 4, 0.5, 1.0),
-            cuboid(Vec3::new(0.0, 1.025, 0.0), Vec3::new(4.0, 2.05, 1.0)),
-            stair(Vec3::new(-2.0, 0.05, -5.0), Vec3::Z, 4.0, 4, 0.5, 1.0),
+        pieces: vec![
+            cuboid(Vec3::ZERO, Vec3::new(30.0, 0.1, 30.0), FLOOR_COLOR),
+            cuboid(Vec3::new(0.0, 1.5, -15.0), Vec3::new(30.0, 3.0, 0.1), WALL_COLOR),
+            cuboid(Vec3::new(0.0, 1.5, 15.0), Vec3::new(30.0, 3.0, 0.1), WALL_COLOR),
+            cuboid(Vec3::new(-15.0, 1.5, 0.0), Vec3::new(0.1, 3.0, 30.0), WALL_COLOR),
+            cuboid(Vec3::new(15.0, 1.5, 0.0), Vec3::new(0.1, 3.0, 30.0), WALL_COLOR),
+            cuboid(
+                Vec3::new(-10.0, 10.0, -10.0),
+                Vec3::new(2.0, 20.0, 2.0),
+                Color::srgb(0.45, 0.45, 0.5),
+            ),
+            cuboid(
+                Vec3::new(10.0, 10.0, -10.0),
+                Vec3::new(2.0, 20.0, 2.0),
+                Color::srgb(0.45, 0.45, 0.5),
+            ),
+            cuboid(
+                Vec3::new(-10.0, 10.0, 10.0),
+                Vec3::new(2.0, 20.0, 2.0),
+                Color::srgb(0.45, 0.45, 0.5),
+            ),
+            cuboid(
+                Vec3::new(10.0, 10.0, 10.0),
+                Vec3::new(2.0, 20.0, 2.0),
+                Color::srgb(0.45, 0.45, 0.5),
+            ),
+            stair(Transform::from_xyz(0.0, 0.05, 14.95), 4.0, 15, 0.1, 1.0),
+            stair(
+                Transform::from_xyz(0.0, 0.05, -14.95).with_rotation(Quat::from_rotation_y(PI)),
+                4.0,
+                15,
+                0.1,
+                1.0,
+            ),
+            door(Transform::from_xyz(0.0, 0.0, -14.95), 3.0, 2.5, 0.3),
+            wall_torch(Transform::from_xyz(-8.0, 0.0, -14.95).with_rotation(Quat::from_rotation_y(PI))),
+            wall_torch(Transform::from_xyz(8.0, 0.0, -14.95).with_rotation(Quat::from_rotation_y(PI))),
+            wall_torch(Transform::from_xyz(-8.0, 0.0, 14.95)),
+            wall_torch(Transform::from_xyz(8.0, 0.0, 14.95)),
         ],
     }
 }
