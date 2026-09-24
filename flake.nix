@@ -48,6 +48,13 @@
                   targets = ["wasm32-unknown-unknown"];
                 }
               )
+
+              (writeShellScriptBin "ci" ''
+                set -euo pipefail
+                cargo fmt --all -- --check --color always
+                cargo clippy --all-features --workspace -- -D warnings
+                cargo test -- --nocapture
+              '')
             ];
 
             LD_LIBRARY_PATH = lib.makeLibraryPath [

@@ -1,9 +1,12 @@
+#![recursion_limit = "512"]
+
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-pub(crate) mod collision;
+pub mod app;
 pub mod enemies;
 pub mod maps;
+pub(crate) mod movement;
 pub mod player;
 pub mod ragdoll;
 pub mod shooting;

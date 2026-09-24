@@ -1,6 +1,7 @@
 use bevy::prelude::*;
 
-use super::{AnimationState, EnemyActivity, EnemyRig, Obstacles, WeaponSpec, planar_direction};
+use super::{AnimationState, EnemyActivity, EnemyRig, WeaponSpec, flatten_direction};
+use crate::movement::PhysicsWorld;
 
 #[derive(Clone)]
 pub struct Fighter {
@@ -42,10 +43,9 @@ impl Fighter {
         player: &Transform,
         enemy: &mut Transform,
         activity: &mut EnemyActivity,
-        delta_secs: f32,
-        obstacles: Obstacles,
+        physics_world: &PhysicsWorld,
     ) {
-        let Some((direction, distance)) = planar_direction(player, enemy) else {
+        let Some((direction, distance)) = flatten_direction(player, enemy) else {
             return;
         };
 
@@ -54,8 +54,10 @@ impl Fighter {
         } else {
             activity.state = AnimationState::Moving;
             enemy.look_to(-direction, Vec3::Y);
-            enemy.translation +=
-                obstacles.clear_direction(enemy.translation, direction * (self.move_speed * delta_secs));
+            enemy.translation += physics_world.steer_direction(
+                enemy.translation,
+                direction * (self.move_speed * physics_world.get_delta_secs()),
+            );
         }
     }
 }

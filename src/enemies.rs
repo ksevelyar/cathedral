@@ -1,12 +1,11 @@
 use avian3d::prelude::{
-    Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation, ShapeCastConfig, SpatialQuery,
-    SpatialQueryFilter,
+    Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation, SpatialQueryFilter,
 };
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
-use crate::collision::{integrate_fall, slide_translation, snapped_ground_height};
+use crate::movement::PhysicsWorld;
 use crate::player::Player;
 use crate::ragdoll::{BoneMap, OwnedByEnemy, setup_ragdoll};
 use crate::state::GameState;
@@ -21,7 +20,7 @@ pub struct EnemiesPlugin;
 
 impl Plugin for EnemiesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, enemy_behavior.run_if(in_state(GameState::Playing)))
+        app.add_systems(Update, update_behaviour.run_if(in_state(GameState::Playing)))
             .add_systems(PostUpdate, (setup_external_animation, update_enemy_animations));
     }
 }
@@ -47,7 +46,7 @@ pub enum EnemyKind {
 }
 
 impl EnemyKind {
-    fn rig(&self) -> &EnemyRig {
+    fn get_rig(&self) -> &EnemyRig {
         match self {
             Self::Fighter(fighter) => &fighter.rig,
             Self::Gunner(gunner) => &gunner.rig,
@@ -59,12 +58,11 @@ impl EnemyKind {
         player: &Transform,
         enemy: &mut Transform,
         activity: &mut EnemyActivity,
-        delta_secs: f32,
-        obstacles: Obstacles,
+        physics_world: &PhysicsWorld,
     ) {
         match self {
-            Self::Fighter(fighter) => fighter.update(player, enemy, activity, delta_secs, obstacles),
-            Self::Gunner(gunner) => gunner.update(player, enemy, activity, delta_secs, obstacles),
+            Self::Fighter(fighter) => fighter.update(player, enemy, activity, physics_world),
+            Self::Gunner(gunner) => gunner.update(player, enemy, activity, physics_world),
         }
     }
 }
@@ -88,70 +86,11 @@ struct WeaponSpec {
     collider_half_extents: Vec3,
 }
 
-fn planar_direction(player: &Transform, enemy: &Transform) -> Option<(Vec3, f32)> {
+fn flatten_direction(player: &Transform, enemy: &Transform) -> Option<(Vec3, f32)> {
     let offset = player.translation - enemy.translation;
     let planar_offset = Vec3::new(offset.x, 0.0, offset.z);
     let distance = planar_offset.length();
     (distance > 0.0).then(|| (planar_offset / distance, distance))
-}
-
-const OBSTACLE_PROBE_DISTANCE: f32 = 2.0;
-const OBSTACLE_AVOIDANCE_ANGLES_DEGREES: [f32; 5] = [0.0, 45.0, -45.0, 90.0, -90.0];
-
-#[derive(Clone, Copy)]
-struct Obstacles<'a> {
-    spatial_query: &'a SpatialQuery<'a, 'a>,
-    radius: f32,
-    center_height_offset: f32,
-    filter: &'a SpatialQueryFilter,
-}
-
-impl Obstacles<'_> {
-    fn clear_direction(&self, from: Vec3, desired: Vec3) -> Vec3 {
-        avoid_obstacles(
-            self.spatial_query,
-            from,
-            self.radius,
-            self.center_height_offset,
-            self.filter,
-            desired,
-        )
-    }
-}
-
-fn avoid_obstacles(
-    spatial_query: &SpatialQuery,
-    from: Vec3,
-    radius: f32,
-    center_height_offset: f32,
-    filter: &SpatialQueryFilter,
-    desired: Vec3,
-) -> Vec3 {
-    let distance = desired.length();
-    if distance == 0.0 {
-        return Vec3::ZERO;
-    }
-    let direction = desired / distance;
-    for angle_degrees in OBSTACLE_AVOIDANCE_ANGLES_DEGREES {
-        let candidate = Quat::from_rotation_y(angle_degrees.to_radians()) * direction;
-        let Ok(candidate_direction) = Dir3::new(candidate) else {
-            continue;
-        };
-        if spatial_query
-            .cast_shape(
-                &Collider::sphere(radius),
-                from + Vec3::Y * center_height_offset,
-                Quat::IDENTITY,
-                candidate_direction,
-                &ShapeCastConfig::from_max_distance(OBSTACLE_PROBE_DISTANCE),
-                filter,
-            )
-            .is_none()
-        {
-            return candidate_direction * distance;
-        }
-    }
-    Vec3::ZERO
 }
 
 #[derive(Component, Default)]
@@ -211,7 +150,7 @@ pub fn spawn_enemy(
     transform: Transform,
     alive: bool,
 ) -> Entity {
-    let rig = *kind.rig();
+    let rig = *kind.get_rig();
     let mut enemy = commands.spawn((
         Enemy,
         WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(rig.scene))),
@@ -276,7 +215,7 @@ fn drop_weapon(
     let Ok(global) = weapon_transforms.get(weapon.0) else {
         return;
     };
-    let collider_half_extents = kind.rig().weapon.collider_half_extents;
+    let collider_half_extents = kind.get_rig().weapon.collider_half_extents;
 
     let (scale, rotation, translation) = global.to_scale_rotation_translation();
     commands.entity(weapon.0).remove::<ChildOf>();
@@ -357,7 +296,7 @@ fn setup_external_animation(
             .entity(enemy_entity)
             .insert(EnemyArmature(armature))
             .remove::<PendingAnimationSetup>();
-        attach_weapon(&mut commands, enemy_entity, bones, &animations, &kind.rig().weapon);
+        attach_weapon(&mut commands, enemy_entity, bones, &animations, &kind.get_rig().weapon);
     }
 }
 
@@ -449,7 +388,7 @@ type EnemyBehavior = (
 const ENEMY_COLLISION_RADIUS: f32 = 0.35;
 const ENEMY_COLLISION_CENTER_HEIGHT: f32 = 1.0;
 
-fn enemy_behavior(
+fn update_behaviour(
     time: Res<Time>,
     move_and_slide: MoveAndSlide,
     gravity: Res<Gravity>,
@@ -464,49 +403,43 @@ fn enemy_behavior(
 
     for (enemy_entity, kind, mut enemy_transform, mut activity, mut velocity) in &mut enemies {
         activity.attack_cooldown -= delta_secs;
-        let filter = own_collider_filter(enemy_entity, &owned_bodies);
-        let obstacles = Obstacles {
-            spatial_query: &move_and_slide.spatial_query,
-            radius: ENEMY_COLLISION_RADIUS,
-            center_height_offset: ENEMY_COLLISION_CENTER_HEIGHT,
-            filter: &filter,
-        };
-        let previous_translation = enemy_transform.translation;
-        kind.update(
+        let filter = exclude_own_bodies(enemy_entity, &owned_bodies);
+        let physics_world = PhysicsWorld::new(
+            &move_and_slide,
+            gravity.0.y,
+            delta_secs,
+            &filter,
+            ENEMY_COLLISION_RADIUS,
+            ENEMY_COLLISION_CENTER_HEIGHT,
+            0.0,
+        );
+        move_enemy(
+            &physics_world,
             player_transform,
+            kind,
             &mut enemy_transform,
             &mut activity,
-            delta_secs,
-            obstacles,
-        );
-        let desired_translation = enemy_transform.translation - previous_translation;
-        enemy_transform.translation = previous_translation
-            + slide_translation(
-                &move_and_slide,
-                previous_translation,
-                ENEMY_COLLISION_RADIUS,
-                ENEMY_COLLISION_CENTER_HEIGHT,
-                &filter,
-                desired_translation,
-                delta_secs,
-            );
-        let ground_height = snapped_ground_height(
-            &move_and_slide.spatial_query,
-            enemy_transform.translation + Vec3::Y * ENEMY_COLLISION_CENTER_HEIGHT,
-            &filter,
-        );
-        integrate_fall(
             &mut velocity,
-            &mut enemy_transform.translation.y,
-            ground_height,
-            0.0,
-            delta_secs,
-            gravity.0.y,
         );
     }
 }
 
-fn own_collider_filter(enemy_entity: Entity, owned_bodies: &Query<(Entity, &OwnedByEnemy)>) -> SpatialQueryFilter {
+fn move_enemy(
+    physics_world: &PhysicsWorld,
+    player: &Transform,
+    kind: &EnemyKind,
+    enemy_transform: &mut Transform,
+    activity: &mut EnemyActivity,
+    velocity: &mut LinearVelocity,
+) {
+    let previous_translation = enemy_transform.translation;
+    kind.update(player, enemy_transform, activity, physics_world);
+    let desired_translation = enemy_transform.translation - previous_translation;
+    enemy_transform.translation = previous_translation + physics_world.slide(previous_translation, desired_translation);
+    physics_world.integrate_fall(velocity, &mut enemy_transform.translation);
+}
+
+fn exclude_own_bodies(enemy_entity: Entity, owned_bodies: &Query<(Entity, &OwnedByEnemy)>) -> SpatialQueryFilter {
     SpatialQueryFilter::default().with_excluded_entities(
         owned_bodies
             .iter()
