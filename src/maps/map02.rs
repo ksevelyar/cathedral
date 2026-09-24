@@ -1,10 +1,17 @@
+use std::f32::consts::{FRAC_PI_2, PI};
+
 use bevy::prelude::*;
 
-use super::{EnemySpawn, Map, cuboid, floor, stair, wall};
+use super::pieces::{
+    CUBOID_MATERIAL, FLOOR_MATERIAL, WALL_MATERIAL, build_cuboid, build_door, build_stair, build_wall_torch,
+};
+use super::{EnemySpawn, Map};
 use crate::enemies::{EnemyKind, Fighter, Gunner};
 
-pub(super) fn definition() -> Map {
+pub(super) fn build_map() -> Map {
     Map {
+        ambient: GlobalAmbientLight::NONE,
+        clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
         player_start: Vec3::new(0.0, 1.85, 12.0),
         enemies: vec![
             EnemySpawn {
@@ -24,15 +31,35 @@ pub(super) fn definition() -> Map {
                 kind: EnemyKind::Gunner(Gunner::default()),
             },
         ],
-        geometry: vec![
-            floor(Vec3::ZERO, Vec3::new(30.0, 0.1, 30.0)),
-            wall(Vec3::new(0.0, 1.5, -15.0), Vec3::new(30.0, 3.0, 0.1)),
-            wall(Vec3::new(0.0, 1.5, 15.0), Vec3::new(30.0, 3.0, 0.1)),
-            wall(Vec3::new(-15.0, 1.5, 0.0), Vec3::new(0.1, 3.0, 30.0)),
-            wall(Vec3::new(15.0, 1.5, 0.0), Vec3::new(0.1, 3.0, 30.0)),
-            cuboid(Vec3::new(-6.0, 1.0, -7.0), Vec3::new(4.0, 2.0, 4.0)),
-            cuboid(Vec3::new(6.0, 0.75, -7.0), Vec3::new(4.0, 1.5, 4.0)),
-            stair(Vec3::new(-2.0, 0.05, 6.0), Vec3::new(0.0, 0.0, -1.0), 4.0, 4, 0.5, 1.0),
+        pieces: vec![
+            build_cuboid(Vec3::ZERO, Vec3::new(30.0, 0.1, 30.0), FLOOR_MATERIAL),
+            build_cuboid(Vec3::new(0.0, 1.5, -15.0), Vec3::new(30.0, 3.0, 0.1), WALL_MATERIAL),
+            build_cuboid(Vec3::new(0.0, 1.5, 15.0), Vec3::new(30.0, 3.0, 0.1), WALL_MATERIAL),
+            build_cuboid(Vec3::new(-15.0, 1.5, 0.0), Vec3::new(0.1, 3.0, 30.0), WALL_MATERIAL),
+            build_cuboid(Vec3::new(15.0, 1.5, 0.0), Vec3::new(0.1, 3.0, 30.0), WALL_MATERIAL),
+            build_cuboid(Vec3::new(-6.0, 1.0, -7.0), Vec3::new(4.0, 2.0, 4.0), CUBOID_MATERIAL),
+            build_cuboid(Vec3::new(6.0, 1.0, -7.0), Vec3::new(4.0, 2.0, 4.0), CUBOID_MATERIAL),
+            build_cuboid(Vec3::new(-6.0, 1.0, 7.0), Vec3::new(4.0, 2.0, 4.0), CUBOID_MATERIAL),
+            build_cuboid(Vec3::new(6.0, 1.0, 7.0), Vec3::new(4.0, 2.0, 4.0), CUBOID_MATERIAL),
+            build_stair(
+                Transform::from_xyz(14.95, 0.05, 0.0).with_rotation(Quat::from_rotation_y(FRAC_PI_2)),
+                4.0,
+                15,
+                0.1,
+                1.0,
+            ),
+            build_stair(
+                Transform::from_xyz(-14.95, 0.05, 0.0).with_rotation(Quat::from_rotation_y(-FRAC_PI_2)),
+                4.0,
+                15,
+                0.1,
+                1.0,
+            ),
+            build_door(Transform::from_xyz(0.0, 0.0, -14.95), 3.0, 2.5, 0.3),
+            build_wall_torch(Transform::from_xyz(-8.0, 0.0, -14.95).with_rotation(Quat::from_rotation_y(PI))),
+            build_wall_torch(Transform::from_xyz(8.0, 0.0, -14.95).with_rotation(Quat::from_rotation_y(PI))),
+            build_wall_torch(Transform::from_xyz(-8.0, 0.0, 14.95)),
+            build_wall_torch(Transform::from_xyz(8.0, 0.0, 14.95)),
         ],
     }
 }

@@ -3,7 +3,7 @@ use bevy::prelude::*;
 
 use crate::enemies::EnemyHit;
 use crate::player::Player;
-use crate::ragdoll::{OwnedByEnemy, RAGDOLL_GROUP};
+use crate::ragdoll::{OBJECTS_GROUP, OwnedByEnemy, RAGDOLL_GROUP};
 use crate::state::GameState;
 
 pub struct ShootingPlugin;
@@ -16,7 +16,7 @@ impl Plugin for ShootingPlugin {
                 Update,
                 (position_gun, shoot, play_gunshot)
                     .run_if(in_state(GameState::Playing))
-                    .after(crate::player::mouse_look)
+                    .after(crate::player::apply_mouse_look)
                     .after(crate::player::move_player),
             );
     }
@@ -132,6 +132,8 @@ pub fn shoot(
     camera_query: Query<&Transform, With<Player>>,
     spatial_query: SpatialQuery,
     owners: Query<&OwnedByEnemy>,
+    collider_parents: Query<&ChildOf>,
+    mut prop_bodies: Query<Forces>,
     mut commands: Commands,
 ) {
     if !mouse_button.just_pressed(MouseButton::Left) {
@@ -149,20 +151,44 @@ pub fn shoot(
         direction,
         SHOT_DISTANCE,
         true,
-        &SpatialQueryFilter::from_mask(RAGDOLL_GROUP),
+        &SpatialQueryFilter::from_mask(RAGDOLL_GROUP | OBJECTS_GROUP),
     ) else {
         return;
     };
-    let Ok(owner) = owners.get(hit.entity) else {
-        return;
-    };
 
-    commands.entity(owner.0).trigger(|entity| EnemyHit {
-        entity,
-        body: hit.entity,
-        impulse: direction.as_vec3() * SHOT_IMPULSE,
-        point: origin + direction.as_vec3() * hit.distance,
-    });
+    if let Ok(owner) = owners.get(hit.entity) {
+        commands.entity(owner.0).trigger(|entity| EnemyHit {
+            entity,
+            body: hit.entity,
+            impulse: direction.as_vec3() * SHOT_IMPULSE,
+            point: origin + direction.as_vec3() * hit.distance,
+        });
+        return;
+    }
+
+    let impulse = direction.as_vec3() * SHOT_IMPULSE;
+    let point = origin + direction.as_vec3() * hit.distance;
+    if let Some(body_entity) = find_dynamic_body_ancestor(hit.entity, &collider_parents, &prop_bodies)
+        && let Ok(mut forces) = prop_bodies.get_mut(body_entity)
+    {
+        forces.apply_linear_impulse_at_point(impulse, point);
+    }
+}
+
+fn find_dynamic_body_ancestor(
+    mut entity: Entity,
+    collider_parents: &Query<&ChildOf>,
+    prop_bodies: &Query<Forces>,
+) -> Option<Entity> {
+    loop {
+        if prop_bodies.contains(entity) {
+            return Some(entity);
+        }
+        let Ok(collider_parent) = collider_parents.get(entity) else {
+            return None;
+        };
+        entity = collider_parent.parent();
+    }
 }
 
 fn play_gunshot(mouse_button: Res<ButtonInput<MouseButton>>, gunshot_sound: Res<GunshotSound>, mut commands: Commands) {

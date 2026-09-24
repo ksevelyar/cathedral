@@ -1,29 +1,19 @@
 use avian3d::prelude::*;
-use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetEvent;
 use bevy::ecs::message::Messages;
 use bevy::ecs::system::RunSystemOnce;
-use bevy::gltf::GltfPlugin;
-use bevy::image::Image;
-use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
-use bevy::time::TimeUpdateStrategy;
-use bevy::world_serialization::WorldSerializationPlugin;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
-use cathedral::enemies::{EnemiesPlugin, Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
+use cathedral::app::build_headless_app;
+use cathedral::enemies::{Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
+use cathedral::maps::CurrentMap;
 use cathedral::player::Player;
-use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart, RagdollPlugin};
+use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart};
 use cathedral::shooting::shoot;
-use cathedral::state::GameStatePlugin;
 use std::time::Duration;
 
-const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
-const ASSET_LOAD_ATTEMPTS: usize = 10_000;
 const EXPECTED_RAGDOLL_BODIES: usize = 14;
-const WALKING_UPDATES: usize = 512;
-const CLOUD_RADIUS: f32 = 5.0;
 const MAX_KICK_SPEED: f32 = 12.0;
-const TEST_RAGDOLL_GROUP: u32 = 0b10;
 
 #[derive(Resource, Clone)]
 struct TestEnemyKind(EnemyKind);
@@ -38,41 +28,13 @@ fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind
     );
 }
 
-fn spawn_floor(mut commands: Commands) {
-    commands.spawn((
-        RigidBody::Static,
-        Collider::cuboid(60.0, 0.1, 60.0),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-    ));
-}
-
 fn create_test_app(kind: EnemyKind) -> App {
-    let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        TransformPlugin,
-        AssetPlugin::default(),
-        bevy::input::InputPlugin,
-        WorldSerializationPlugin,
-        MeshPlugin,
-        AnimationPlugin,
-        GltfPlugin::default(),
-        PhysicsPlugins::default(),
-        bevy::state::app::StatesPlugin,
-        GameStatePlugin,
-        EnemiesPlugin,
-        RagdollPlugin,
-    ))
-    .init_asset::<Image>()
-    .insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
-    .insert_resource(TimeUpdateStrategy::ManualDuration(fixed_timestep))
-    .insert_resource(bevy::prelude::GizmoConfigStore::default())
-    .insert_resource(TestEnemyKind(kind))
-    .add_systems(Startup, (spawn_test_enemy, spawn_floor))
-    .add_systems(Update, shoot);
-    app.finish();
-    app.cleanup();
+    let fixed_timestep = Duration::from_secs_f64(1.0 / 64.0);
+    let player_start_position = Vec3::new(5.0, 0.5, 0.0);
+    let mut app = build_headless_app(CurrentMap::FlatFloor, Some(player_start_position));
+    app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
+        .insert_resource(TestEnemyKind(kind))
+        .add_systems(Startup, spawn_test_enemy);
     app
 }
 
@@ -84,7 +46,8 @@ fn count_ragdoll_bodies(world: &mut World) -> usize {
 }
 
 fn wait_for_inert_ragdoll(app: &mut App) {
-    for _ in 0..ASSET_LOAD_ATTEMPTS {
+    let asset_load_attempts = 10_000;
+    for _ in 0..asset_load_attempts {
         app.update();
         if count_ragdoll_bodies(app.world_mut()) == EXPECTED_RAGDOLL_BODIES {
             let inert_body_count = app
@@ -103,14 +66,14 @@ fn wait_for_inert_ragdoll(app: &mut App) {
 
 fn spawn_walking_enemy_with_player(kind: EnemyKind) -> (App, Entity) {
     let mut app = create_test_app(kind);
-    app.world_mut().spawn((Player, Transform::from_xyz(5.0, 0.5, 0.0)));
     wait_for_inert_ragdoll(&mut app);
     let enemy = app
         .world_mut()
         .query_filtered::<Entity, With<Enemy>>()
         .single(app.world())
         .expect("one enemy should spawn");
-    for _ in 0..WALKING_UPDATES {
+    let walking_updates = 512;
+    for _ in 0..walking_updates {
         app.update();
     }
     (app, enemy)
@@ -118,16 +81,10 @@ fn spawn_walking_enemy_with_player(kind: EnemyKind) -> (App, Entity) {
 
 fn find_ragdoll_body(app: &mut App, enemy: Entity, part: RagdollBodyPart) -> (Entity, Vec3) {
     app.world_mut()
-        .query_filtered::<(Entity, &Position, &RagdollBodyPart), With<OwnedByEnemy>>()
+        .query_filtered::<(Entity, &OwnedByEnemy, &Position, &RagdollBodyPart), ()>()
         .iter(app.world())
-        .find(|(entity, _, body_part)| {
-            **body_part == part
-                && app
-                    .world()
-                    .get::<OwnedByEnemy>(*entity)
-                    .is_some_and(|owner| owner.0 == enemy)
-        })
-        .map(|(entity, position, _)| (entity, position.0))
+        .find(|(_, owner, _, body_part)| owner.0 == enemy && **body_part == part)
+        .map(|(entity, _, position, _)| (entity, position.0))
         .unwrap_or_else(|| panic!("ragdoll should have {part:?}"))
 }
 
@@ -138,6 +95,7 @@ fn aim_gun_at_body(
     spatial_query: SpatialQuery,
     owners: Query<&OwnedByEnemy>,
 ) -> Vec3 {
+    let test_ragdoll_group = 0b10;
     let target_position = positions.get(target.0).expect("target body position").0;
     let offsets = [
         Vec3::Z * 2.0,
@@ -157,7 +115,7 @@ fn aim_gun_at_body(
                 direction,
                 100.0,
                 true,
-                &SpatialQueryFilter::from_mask(TEST_RAGDOLL_GROUP),
+                &SpatialQueryFilter::from_mask(test_ragdoll_group),
             )
             .is_some_and(|hit| hit.entity == target.0 && owners.get(hit.entity).is_ok())
         {
@@ -180,90 +138,6 @@ fn fire_gun(app: &mut App) {
     app.update();
 }
 
-fn print_ragdoll_metrics(app: &mut App, enemy: Entity, phase: &str) {
-    let bodies = app
-        .world_mut()
-        .query::<(
-            Entity,
-            &OwnedByEnemy,
-            &RagdollBodyPart,
-            &Position,
-            &LinearVelocity,
-            Option<&ComputedMass>,
-        )>()
-        .iter(app.world())
-        .filter(|(_, owner, ..)| owner.0 == enemy)
-        .map(|(entity, _, part, position, velocity, mass)| {
-            let mass = mass.map(|mass| 1.0 / mass.inverse()).unwrap_or_default();
-            (entity, *part, position.0, velocity.0, mass)
-        })
-        .collect::<Vec<_>>();
-    let total_momentum = bodies
-        .iter()
-        .map(|(_, _, _, velocity, mass)| *velocity * *mass)
-        .sum::<Vec3>();
-    let total_energy = bodies
-        .iter()
-        .map(|(_, _, _, velocity, mass)| 0.5 * *mass * velocity.length_squared())
-        .sum::<f32>();
-    let (max_speed, max_speed_part) = bodies
-        .iter()
-        .map(|(_, part, _, velocity, _)| (velocity.length(), *part))
-        .max_by(|left, right| left.0.total_cmp(&right.0))
-        .unwrap_or((0.0, RagdollBodyPart::Torso));
-
-    let mut joints = app
-        .world_mut()
-        .query::<(Entity, &OwnedByEnemy, &SphericalJoint)>()
-        .iter(app.world())
-        .filter(|(_, owner, _)| owner.0 == enemy)
-        .map(|(entity, _, joint)| (entity, joint.body1, joint.body2, joint.frame1, joint.frame2))
-        .collect::<Vec<_>>();
-    joints.extend(
-        app.world_mut()
-            .query::<(Entity, &OwnedByEnemy, &RevoluteJoint)>()
-            .iter(app.world())
-            .filter(|(_, owner, _)| owner.0 == enemy)
-            .map(|(entity, _, joint)| (entity, joint.body1, joint.body2, joint.frame1, joint.frame2)),
-    );
-    let mut max_anchor_error = 0.0;
-    let mut worst_joint = Entity::PLACEHOLDER;
-    for (joint, body1, body2, frame1, frame2) in joints {
-        let Some((_, _, position1, _, _)) = bodies.iter().find(|(entity, ..)| *entity == body1) else {
-            continue;
-        };
-        let Some((_, _, position2, _, _)) = bodies.iter().find(|(entity, ..)| *entity == body2) else {
-            continue;
-        };
-        let rotation1 = app
-            .world()
-            .get::<Rotation>(body1)
-            .map_or(Quat::IDENTITY, |rotation| rotation.0);
-        let rotation2 = app
-            .world()
-            .get::<Rotation>(body2)
-            .map_or(Quat::IDENTITY, |rotation| rotation.0);
-        let anchor1 = match frame1.anchor {
-            JointAnchor::Local(anchor) => *position1 + rotation1 * anchor,
-            JointAnchor::FromGlobal(anchor) => anchor,
-        };
-        let anchor2 = match frame2.anchor {
-            JointAnchor::Local(anchor) => *position2 + rotation2 * anchor,
-            JointAnchor::FromGlobal(anchor) => anchor,
-        };
-        let error = anchor1.distance(anchor2);
-        if error > max_anchor_error {
-            max_anchor_error = error;
-            worst_joint = joint;
-        }
-    }
-
-    println!(
-        "RAGDOLL_METRIC phase={phase} bodies={} max_speed={max_speed:.4} max_speed_part={max_speed_part:?} momentum={total_momentum:?} energy={total_energy:.4} max_anchor_error={max_anchor_error:.6} worst_joint={worst_joint:?}",
-        bodies.len(),
-    );
-}
-
 fn respawn_scene_instance(app: &mut App, enemy: Entity) {
     let scene_handle = app
         .world()
@@ -280,6 +154,22 @@ fn respawn_scene_instance(app: &mut App, enemy: Entity) {
 }
 
 fn assert_ragdoll_settled(app: &mut App, enemy: Entity, kill_position: Vec3) {
+    let fixed_timestep_seconds = 1.0 / 64.0;
+    let settling_deadline_seconds = 10.0;
+    let settling_steps = (settling_deadline_seconds / fixed_timestep_seconds) as usize;
+    for _ in 0..settling_steps {
+        app.update();
+        if list_awake_ragdoll_bodies(app, enemy).is_empty() {
+            break;
+        }
+    }
+    let still_awake_bodies = list_awake_ragdoll_bodies(app, enemy);
+    assert!(
+        still_awake_bodies.is_empty(),
+        "ragdoll bodies did not sleep within {settling_deadline_seconds} seconds:\n{}",
+        still_awake_bodies.join("\n")
+    );
+    let cloud_radius = 5.0;
     let bodies = app
         .world_mut()
         .query::<(
@@ -288,25 +178,48 @@ fn assert_ragdoll_settled(app: &mut App, enemy: Entity, kill_position: Vec3) {
             &Position,
             &LinearVelocity,
             Has<RigidBodyDisabled>,
+            Has<Sleeping>,
         )>()
         .iter(app.world())
         .filter(|(owner, ..)| owner.0 == enemy)
-        .map(|(_, _, position, velocity, disabled)| (position.0, velocity.0, disabled))
+        .map(|(_, _, position, velocity, disabled, sleeping)| (position.0, velocity.0, disabled, sleeping))
         .collect::<Vec<_>>();
     assert_eq!(bodies.len(), EXPECTED_RAGDOLL_BODIES);
-    for (position, velocity, disabled) in &bodies {
+    for (position, velocity, disabled, sleeping) in &bodies {
         assert!(!*disabled, "ragdoll body should be dynamic after the kill");
         assert!(position.is_finite() && velocity.is_finite());
         assert!(
-            position.distance(kill_position) < CLOUD_RADIUS,
+            position.distance(kill_position) < cloud_radius,
             "body scattered from kill position {kill_position:?} to {position:?}"
         );
         assert!(
-            velocity.length() < MAX_KICK_SPEED,
+            *sleeping,
             "body still moving at {} m/s, the ragdoll never settles",
             velocity.length()
         );
     }
+}
+
+fn list_awake_ragdoll_bodies(app: &mut App, enemy: Entity) -> Vec<String> {
+    app.world_mut()
+        .query::<(
+            &OwnedByEnemy,
+            &RagdollBodyPart,
+            &RigidBody,
+            &LinearVelocity,
+            &AngularVelocity,
+            Has<Sleeping>,
+        )>()
+        .iter(app.world())
+        .filter(|(owner, _, body, _, _, sleeping)| owner.0 == enemy && **body == RigidBody::Dynamic && !sleeping)
+        .map(|(_, part, _, velocity, angular_velocity, _)| {
+            format!(
+                "{part:?}: linear_speed={:.6}, angular_speed={:.6}",
+                velocity.length(),
+                angular_velocity.length()
+            )
+        })
+        .collect()
 }
 
 fn assert_body_received_bounded_kick(world: &World, body: Entity, shot_direction: Vec3) {
@@ -334,10 +247,8 @@ fn head_shot_kills_fighter_without_scattering_ragdoll() {
         .world_mut()
         .run_system_once(aim_gun_at_body)
         .expect("target body should be aimable");
-    print_ragdoll_metrics(&mut app, enemy, "before_shot");
 
     fire_gun(&mut app);
-    print_ragdoll_metrics(&mut app, enemy, "after_first_step");
 
     assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
     assert_body_received_bounded_kick(app.world(), hit_body, shot_direction);
@@ -355,10 +266,8 @@ fn head_shot_kills_gunner_without_scattering_ragdoll() {
         .world_mut()
         .run_system_once(aim_gun_at_body)
         .expect("target body should be aimable");
-    print_ragdoll_metrics(&mut app, enemy, "before_shot");
 
     fire_gun(&mut app);
-    print_ragdoll_metrics(&mut app, enemy, "after_first_step");
 
     assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
     assert_body_received_bounded_kick(app.world(), hit_body, shot_direction);
@@ -376,10 +285,8 @@ fn hand_shot_kills_fighter_without_scattering_ragdoll() {
         .world_mut()
         .run_system_once(aim_gun_at_body)
         .expect("target body should be aimable");
-    print_ragdoll_metrics(&mut app, enemy, "before_shot");
 
     fire_gun(&mut app);
-    print_ragdoll_metrics(&mut app, enemy, "after_first_step");
 
     assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
     assert_body_received_bounded_kick(app.world(), hit_body, shot_direction);
@@ -397,10 +304,8 @@ fn hand_shot_kills_gunner_without_scattering_ragdoll() {
         .world_mut()
         .run_system_once(aim_gun_at_body)
         .expect("target body should be aimable");
-    print_ragdoll_metrics(&mut app, enemy, "before_shot");
 
     fire_gun(&mut app);
-    print_ragdoll_metrics(&mut app, enemy, "after_first_step");
 
     assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
     assert_body_received_bounded_kick(app.world(), hit_body, shot_direction);

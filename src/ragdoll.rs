@@ -7,6 +7,7 @@ use bevy::world_serialization::WorldInstanceReady;
 use std::collections::HashMap;
 
 pub(crate) const RAGDOLL_GROUP: u32 = 0b10;
+pub(crate) const OBJECTS_GROUP: u32 = 0b100;
 pub(crate) const WORLD_GROUP: u32 = 0b01;
 
 pub struct RagdollPlugin;
@@ -66,7 +67,7 @@ impl BoneMap {
         self.0.get(name).copied()
     }
 
-    pub(crate) fn entities(&self) -> impl Iterator<Item = Entity> + '_ {
+    pub(crate) fn list_ragdoll_entities(&self) -> impl Iterator<Item = Entity> + '_ {
         self.0.values().copied()
     }
 }
@@ -184,7 +185,7 @@ struct Segment {
 }
 
 impl Segment {
-    fn between(start: Vec3, end: Vec3) -> Option<Self> {
+    fn create_between(start: Vec3, end: Vec3) -> Option<Self> {
         let direction = (end - start).try_normalize()?;
         Some(Self {
             start,
@@ -230,24 +231,24 @@ struct LimbSpec {
 }
 
 impl LimbSpec {
-    fn bone_names(&self) -> Vec<&'static str> {
+    fn list_bone_names(&self) -> Vec<&'static str> {
         let mut names = Vec::new();
         match self.start {
             BonePoint::Joint(name) => names.push(name),
-            BonePoint::First(bone_names) => names.extend_from_slice(bone_names),
+            BonePoint::First(list_bone_names) => names.extend_from_slice(list_bone_names),
             BonePoint::Raised { bone, .. } => names.push(bone),
             BonePoint::Extended { toward, .. } => names.push(toward),
         }
         match self.end {
             BonePoint::Joint(name) => names.push(name),
-            BonePoint::First(bone_names) => names.extend_from_slice(bone_names),
+            BonePoint::First(list_bone_names) => names.extend_from_slice(list_bone_names),
             BonePoint::Raised { bone, .. } => names.push(bone),
             BonePoint::Extended { toward, .. } => names.push(toward),
         }
         names
     }
 
-    fn driven_bones(&self) -> Vec<&'static str> {
+    fn list_driven_bones(&self) -> Vec<&'static str> {
         let mut names = Vec::new();
         if let BonePoint::Joint(name) = self.start {
             names.push(name);
@@ -435,7 +436,7 @@ const LIMBS: &[LimbSpec] = &[
     },
 ];
 
-fn bone_position(name: &str, bones: &BoneMap, transforms: &Query<&GlobalTransform>) -> Option<Vec3> {
+fn get_bone_position(name: &str, bones: &BoneMap, transforms: &Query<&GlobalTransform>) -> Option<Vec3> {
     let entity = bones.get(name)?;
     transforms.get(entity).ok().map(|transform| transform.translation())
 }
@@ -447,13 +448,13 @@ fn measure_point(
     transforms: &Query<&GlobalTransform>,
 ) -> Option<Vec3> {
     match point {
-        BonePoint::Joint(name) => bone_position(name, bones, transforms),
-        BonePoint::First(bone_names) => bone_names
+        BonePoint::Joint(name) => get_bone_position(name, bones, transforms),
+        BonePoint::First(list_bone_names) => list_bone_names
             .iter()
-            .find_map(|name| bone_position(name, bones, transforms)),
-        BonePoint::Raised { bone, offset } => Some(bone_position(bone, bones, transforms)? + offset),
+            .find_map(|name| get_bone_position(name, bones, transforms)),
+        BonePoint::Raised { bone, offset } => Some(get_bone_position(bone, bones, transforms)? + offset),
         BonePoint::Extended { toward, length } => {
-            let toward_position = bone_position(toward, bones, transforms)?;
+            let toward_position = get_bone_position(toward, bones, transforms)?;
             let direction = (toward_position - start_position).try_normalize()?;
             Some(start_position + direction * length)
         }
@@ -468,7 +469,7 @@ fn measure_limb(
     let start = measure_point(spec.start, Vec3::ZERO, bones, transforms)?;
     let end = measure_point(spec.end, start, bones, transforms)?;
     let segment = match spec.shape {
-        Shape::Capsule { .. } => Some(Segment::between(start, end)?),
+        Shape::Capsule { .. } => Some(Segment::create_between(start, end)?),
         Shape::Sphere { .. } => None,
     };
     let transform = segment
@@ -516,7 +517,7 @@ fn spawn_revolute_joint(
     bodies: JointBodies,
     parent_segment: Segment,
     child_segment: Segment,
-    hinge_axis: Vec3,
+    compute_hinge_axis: Vec3,
     angle_limits: (f32, f32),
 ) -> Entity {
     commands
@@ -528,7 +529,7 @@ fn spawn_revolute_joint(
                 bodies.child,
                 parent_segment,
                 child_segment,
-                hinge_axis,
+                compute_hinge_axis,
                 angle_limits,
             ),
             JointDamping {
@@ -545,15 +546,15 @@ fn make_revolute_joint(
     child: Entity,
     parent_segment: Segment,
     child_segment: Segment,
-    hinge_axis: Vec3,
+    compute_hinge_axis: Vec3,
     angle_limits: (f32, f32),
 ) -> RevoluteJoint {
     let parent_axis = parent_segment.rotation * Vec3::Y;
-    let joint_x_axis = (parent_axis - hinge_axis * parent_axis.dot(hinge_axis))
+    let joint_x_axis = (parent_axis - compute_hinge_axis * parent_axis.dot(compute_hinge_axis))
         .try_normalize()
         .unwrap_or(Vec3::X);
-    let joint_y_axis = hinge_axis.cross(joint_x_axis);
-    let world_joint_basis = Quat::from_mat3(&Mat3::from_cols(joint_x_axis, joint_y_axis, hinge_axis));
+    let joint_y_axis = compute_hinge_axis.cross(joint_x_axis);
+    let world_joint_basis = Quat::from_mat3(&Mat3::from_cols(joint_x_axis, joint_y_axis, compute_hinge_axis));
     let anchor = child_segment.start;
 
     RevoluteJoint::new(parent, child)
@@ -602,7 +603,7 @@ fn spawn_body(
     body.id()
 }
 
-fn hinge_axis(limbs: &HashMap<RagdollBodyPart, MeasuredLimb>) -> Vec3 {
+fn compute_hinge_axis(limbs: &HashMap<RagdollBodyPart, MeasuredLimb>) -> Vec3 {
     let left_shoulder = limbs[&RagdollBodyPart::LeftUpperArm].anchor;
     let right_shoulder = limbs[&RagdollBodyPart::RightUpperArm].anchor;
     let shoulder_axis = (left_shoulder - right_shoulder).try_normalize().unwrap_or(Vec3::X);
@@ -610,7 +611,7 @@ fn hinge_axis(limbs: &HashMap<RagdollBodyPart, MeasuredLimb>) -> Vec3 {
     shoulder_axis.cross(torso_axis).try_normalize().unwrap_or(Vec3::Z)
 }
 
-fn nearest_driver(
+fn find_nearest_driver(
     entity: Entity,
     drivers: &HashMap<Entity, Entity>,
     parents: &Query<&ChildOf>,
@@ -654,7 +655,7 @@ fn spawn_ragdoll_bodies(
 
         let missing_bone = LIMBS
             .iter()
-            .flat_map(LimbSpec::bone_names)
+            .flat_map(LimbSpec::list_bone_names)
             .find(|name| bones.get(name).is_none());
         if let Some(name) = missing_bone {
             warn!("Cannot create ragdoll for {root:?}: missing bone {name}");
@@ -781,7 +782,7 @@ fn spawn_joint(
                 },
                 limbs[&parent_part].segment.unwrap(),
                 child_measured.segment.unwrap(),
-                hinge_axis(limbs),
+                compute_hinge_axis(limbs),
                 angle_limits,
             );
         }
@@ -798,7 +799,7 @@ fn assign_drivers(
     let mut drivers: HashMap<Entity, Entity> = HashMap::new();
     for spec in LIMBS {
         let part_entity = part_entities[&spec.part];
-        for name in spec.driven_bones() {
+        for name in spec.list_driven_bones() {
             if let Some(bone_entity) = bones.get(name) {
                 drivers.insert(bone_entity, part_entity);
             }
@@ -806,11 +807,11 @@ fn assign_drivers(
     }
 
     let mut bones_by_part: HashMap<Entity, Vec<(Entity, GlobalTransform)>> = HashMap::new();
-    for bone_entity in bones.entities() {
+    for bone_entity in bones.list_ragdoll_entities() {
         let Ok(transform) = transforms.get(bone_entity).copied() else {
             continue;
         };
-        let part = nearest_driver(bone_entity, &drivers, parents, torso_entity);
+        let part = find_nearest_driver(bone_entity, &drivers, parents, torso_entity);
         bones_by_part.entry(part).or_default().push((bone_entity, transform));
     }
     bones_by_part

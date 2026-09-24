@@ -1,49 +1,43 @@
-use avian3d::prelude::{Collider, RigidBody};
-use bevy::input::mouse::AccumulatedMouseMotion;
-use bevy::mesh::MeshPlugin;
+use bevy::input::ButtonState;
+use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
+use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
-use cathedral::player::{CameraState, Player, mouse_look, move_player, settle_player_on_startup, setup_player};
-use cathedral::state::GameState;
-use std::time::Duration;
-
-fn spawn_floor(mut commands: Commands) {
-    commands.spawn((
-        RigidBody::Static,
-        Collider::cuboid(60.0, 0.1, 60.0),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-    ));
-}
+use cathedral::app::build_headless_app;
+use cathedral::maps::CurrentMap;
+use cathedral::player::{CameraState, Player};
 
 fn create_test_app() -> App {
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        TransformPlugin,
-        AssetPlugin::default(),
-        MeshPlugin,
-        avian3d::prelude::PhysicsPlugins::default(),
-    ));
-    app.add_plugins(bevy::state::app::StatesPlugin);
-    app.init_state::<GameState>();
-    app.insert_resource(ButtonInput::<KeyCode>::default());
-    app.insert_resource(AccumulatedMouseMotion::default());
-    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-        16,
-    )));
-    app.insert_resource(Assets::<Mesh>::default());
-    app.insert_resource(Assets::<StandardMaterial>::default());
-    app.add_systems(Startup, (setup_player, spawn_floor));
-    app.add_systems(
-        Update,
-        (mouse_look, settle_player_on_startup, move_player).run_if(in_state(GameState::Playing)),
-    );
-    app.finish();
-    app.cleanup();
-    app
+    build_headless_app(CurrentMap::FlatFloor, None)
+}
+
+fn find_player_entity(app: &mut App) -> Entity {
+    app.world_mut()
+        .query_filtered::<Entity, With<Player>>()
+        .single(app.world_mut())
+        .expect("one player should spawn")
+}
+
+fn send_mouse_motion(app: &mut App, delta: Vec2) {
+    app.world_mut()
+        .resource_mut::<Messages<MouseMotion>>()
+        .write(MouseMotion { delta });
+}
+
+fn send_key(app: &mut App, key_code: KeyCode, state: ButtonState) {
+    app.world_mut()
+        .resource_mut::<Messages<KeyboardInput>>()
+        .write(KeyboardInput {
+            key_code,
+            logical_key: Key::Unidentified(NativeKey::Unidentified),
+            state,
+            text: None,
+            repeat: false,
+            window: Entity::PLACEHOLDER,
+        });
 }
 
 #[test]
-fn setup_spawns_player_camera() {
+fn starting_the_game_spawns_the_player_camera() {
     let mut app = create_test_app();
     app.update();
     app.update();
@@ -63,13 +57,9 @@ fn mouse_motion_rotates_yaw() {
     let mut app = create_test_app();
     app.update();
 
-    let player = app
-        .world_mut()
-        .query_filtered::<Entity, With<Player>>()
-        .single(app.world())
-        .unwrap();
+    let player = find_player_entity(&mut app);
 
-    app.world_mut().resource_mut::<AccumulatedMouseMotion>().delta = Vec2::new(100.0, 0.0);
+    send_mouse_motion(&mut app, Vec2::new(100.0, 0.0));
 
     app.update();
 
@@ -82,13 +72,9 @@ fn mouse_motion_rotates_pitch() {
     let mut app = create_test_app();
     app.update();
 
-    let player = app
-        .world_mut()
-        .query_filtered::<Entity, With<Player>>()
-        .single(app.world())
-        .unwrap();
+    let player = find_player_entity(&mut app);
 
-    app.world_mut().resource_mut::<AccumulatedMouseMotion>().delta = Vec2::new(0.0, 50.0);
+    send_mouse_motion(&mut app, Vec2::new(0.0, 50.0));
 
     app.update();
 
@@ -101,14 +87,10 @@ fn pitch_is_clamped() {
     let mut app = create_test_app();
     app.update();
 
-    let player = app
-        .world_mut()
-        .query_filtered::<Entity, With<Player>>()
-        .single(app.world())
-        .unwrap();
+    let player = find_player_entity(&mut app);
 
     for _ in 0..100 {
-        app.world_mut().resource_mut::<AccumulatedMouseMotion>().delta = Vec2::new(0.0, 1000.0);
+        send_mouse_motion(&mut app, Vec2::new(0.0, 1000.0));
         app.update();
     }
 
@@ -128,17 +110,11 @@ fn w_moves_forward() {
     let mut app = create_test_app();
     app.update();
 
-    let player = app
-        .world_mut()
-        .query_filtered::<Entity, With<Player>>()
-        .single(app.world())
-        .unwrap();
+    let player = find_player_entity(&mut app);
 
     let initial_z = app.world().get::<Transform>(player).unwrap().translation.z;
 
-    app.world_mut()
-        .resource_mut::<ButtonInput<KeyCode>>()
-        .press(KeyCode::KeyW);
+    send_key(&mut app, KeyCode::KeyW, ButtonState::Pressed);
     app.update();
 
     let z = app.world().get::<Transform>(player).unwrap().translation.z;
@@ -150,20 +126,12 @@ fn movement_is_on_xz_plane() {
     let mut app = create_test_app();
     app.update();
 
-    let player = app
-        .world_mut()
-        .query_filtered::<Entity, With<Player>>()
-        .single(app.world())
-        .unwrap();
+    let player = find_player_entity(&mut app);
 
     let initial_y = app.world().get::<Transform>(player).unwrap().translation.y;
 
-    app.world_mut()
-        .resource_mut::<ButtonInput<KeyCode>>()
-        .press(KeyCode::KeyW);
-    app.world_mut()
-        .resource_mut::<ButtonInput<KeyCode>>()
-        .press(KeyCode::KeyD);
+    send_key(&mut app, KeyCode::KeyW, ButtonState::Pressed);
+    send_key(&mut app, KeyCode::KeyD, ButtonState::Pressed);
     app.update();
     app.update();
 
