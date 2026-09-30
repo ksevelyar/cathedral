@@ -1,20 +1,11 @@
 use avian3d::prelude::*;
-use bevy::animation::AnimationPlugin;
-use bevy::asset::AssetPlugin;
-use bevy::audio::AudioPlugin;
 use bevy::ecs::system::RunSystemOnce;
-use bevy::gltf::GltfPlugin;
-use bevy::input::InputPlugin;
-use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
-use bevy::time::TimeUpdateStrategy;
-use bevy::world_serialization::WorldSerializationPlugin;
-use cathedral::enemies::{Dying, EnemiesPlugin, Enemy};
-use cathedral::maps::MapsPlugin;
-use cathedral::player::{Player, PlayerPlugin};
-use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart, RagdollPlugin};
-use cathedral::shooting::ShootingPlugin;
-use cathedral::state::GameStatePlugin;
+use cathedral::app::build_headless_app;
+use cathedral::enemies::{Dying, Enemy};
+use cathedral::maps::CurrentMap;
+use cathedral::player::Player;
+use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart};
 use std::time::Duration;
 
 const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
@@ -30,37 +21,9 @@ struct SpawnedEnemy;
 
 fn create_map_test_app() -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        TransformPlugin,
-        AssetPlugin::default(),
-        InputPlugin,
-        AudioPlugin::default(),
-        WorldSerializationPlugin,
-        MeshPlugin,
-        AnimationPlugin,
-        GltfPlugin::default(),
-        PhysicsPlugins::default(),
-    ));
-    app.add_plugins((
-        bevy::state::app::StatesPlugin,
-        GameStatePlugin,
-        MapsPlugin,
-        PlayerPlugin,
-        EnemiesPlugin,
-        RagdollPlugin,
-        ShootingPlugin,
-    ))
-    .init_asset::<StandardMaterial>()
-    .init_asset::<Image>()
-    .insert_resource(bevy::prelude::GizmoConfigStore::default())
-    .add_systems(Startup, cathedral::player::setup_player)
-    .insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
-    .insert_resource(TimeUpdateStrategy::ManualDuration(fixed_timestep))
-    .add_systems(Update, tag_spawned_enemies);
-    app.finish();
-    app.cleanup();
+    let mut app = build_headless_app(CurrentMap::Map01, None);
+    app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
+        .add_systems(Update, tag_spawned_enemies);
     app
 }
 

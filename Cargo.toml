@@ -41,6 +41,7 @@ features = [
   "bevy_world_serialization",
   "default_font",
   "gltf_animation",
+  "jpeg",
   "ktx2",
   "mp3",
   "multi_threaded",

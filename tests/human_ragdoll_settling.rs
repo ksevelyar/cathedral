@@ -1,13 +1,8 @@
 use avian3d::prelude::*;
-use bevy::animation::AnimationPlugin;
-use bevy::gltf::GltfPlugin;
-use bevy::image::Image;
-use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
-use bevy::time::TimeUpdateStrategy;
-use bevy::world_serialization::WorldSerializationPlugin;
+use cathedral::app::build_headless_app;
 use cathedral::enemies::{EnemyKind, Fighter, Gunner, spawn_enemy};
-use cathedral::ragdoll::RagdollPlugin;
+use cathedral::maps::CurrentMap;
 use std::time::Duration;
 
 const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
@@ -30,33 +25,12 @@ fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind
 
 fn create_test_app(kind: EnemyKind) -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        TransformPlugin,
-        AssetPlugin::default(),
-        WorldSerializationPlugin,
-        MeshPlugin,
-        AnimationPlugin,
-        GltfPlugin::default(),
-        PhysicsPlugins::default(),
-        RagdollPlugin,
-    ))
-    .insert_resource(TestEnemyKind(kind))
-    .add_systems(Startup, spawn_test_enemy)
-    .init_asset::<Image>()
-    .insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
-    .insert_resource(TimeUpdateStrategy::ManualDuration(fixed_timestep))
-    .insert_resource(SubstepCount(6));
-    app.finish();
-    app.cleanup();
+    let mut app = build_headless_app(CurrentMap::FlatFloor, None);
+    app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
+        .insert_resource(SubstepCount(6))
+        .insert_resource(TestEnemyKind(kind))
+        .add_systems(Startup, spawn_test_enemy);
     app.world_mut().resource_mut::<Time<Physics>>().pause();
-    app.world_mut().spawn((
-        Name::new("floor"),
-        RigidBody::Static,
-        Collider::cuboid(20.0, 0.2, 20.0),
-        Transform::from_xyz(0.0, -0.1, 0.0),
-    ));
     app
 }
 

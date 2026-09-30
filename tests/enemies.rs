@@ -1,26 +1,22 @@
 use avian3d::prelude::*;
-use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetEvent;
 use bevy::ecs::message::Messages;
 use bevy::ecs::system::RunSystemOnce;
-use bevy::gltf::GltfPlugin;
-use bevy::image::Image;
-use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
-use bevy::time::TimeUpdateStrategy;
-use bevy::world_serialization::WorldSerializationPlugin;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
-use cathedral::enemies::{EnemiesPlugin, Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
+use cathedral::app::build_headless_app;
+use cathedral::enemies::{Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
+use cathedral::maps::CurrentMap;
 use cathedral::player::Player;
-use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart, RagdollPlugin};
+use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart};
 use cathedral::shooting::shoot;
-use cathedral::state::GameStatePlugin;
 use std::time::Duration;
 
 const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
 const ASSET_LOAD_ATTEMPTS: usize = 10_000;
 const EXPECTED_RAGDOLL_BODIES: usize = 14;
 const WALKING_UPDATES: usize = 512;
+const PLAYER_START_POSITION: Vec3 = Vec3::new(5.0, 0.5, 0.0);
 const CLOUD_RADIUS: f32 = 5.0;
 const MAX_KICK_SPEED: f32 = 12.0;
 const TEST_RAGDOLL_GROUP: u32 = 0b10;
@@ -38,41 +34,12 @@ fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind
     );
 }
 
-fn spawn_floor(mut commands: Commands) {
-    commands.spawn((
-        RigidBody::Static,
-        Collider::cuboid(60.0, 0.1, 60.0),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-    ));
-}
-
 fn create_test_app(kind: EnemyKind) -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        TransformPlugin,
-        AssetPlugin::default(),
-        bevy::input::InputPlugin,
-        WorldSerializationPlugin,
-        MeshPlugin,
-        AnimationPlugin,
-        GltfPlugin::default(),
-        PhysicsPlugins::default(),
-        bevy::state::app::StatesPlugin,
-        GameStatePlugin,
-        EnemiesPlugin,
-        RagdollPlugin,
-    ))
-    .init_asset::<Image>()
-    .insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
-    .insert_resource(TimeUpdateStrategy::ManualDuration(fixed_timestep))
-    .insert_resource(bevy::prelude::GizmoConfigStore::default())
-    .insert_resource(TestEnemyKind(kind))
-    .add_systems(Startup, (spawn_test_enemy, spawn_floor))
-    .add_systems(Update, shoot);
-    app.finish();
-    app.cleanup();
+    let mut app = build_headless_app(CurrentMap::FlatFloor, Some(PLAYER_START_POSITION));
+    app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
+        .insert_resource(TestEnemyKind(kind))
+        .add_systems(Startup, spawn_test_enemy);
     app
 }
 
@@ -103,7 +70,6 @@ fn wait_for_inert_ragdoll(app: &mut App) {
 
 fn spawn_walking_enemy_with_player(kind: EnemyKind) -> (App, Entity) {
     let mut app = create_test_app(kind);
-    app.world_mut().spawn((Player, Transform::from_xyz(5.0, 0.5, 0.0)));
     wait_for_inert_ragdoll(&mut app);
     let enemy = app
         .world_mut()

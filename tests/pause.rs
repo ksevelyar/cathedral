@@ -1,43 +1,14 @@
-use avian3d::prelude::{Collider, PhysicsPlugins, RigidBody};
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
-use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
-use cathedral::player::setup_player;
-use cathedral::state::{GameState, toggle_pause};
+use cathedral::app::build_headless_app;
+use cathedral::maps::CurrentMap;
+use cathedral::state::GameState;
 use cathedral::ui::setup_pause_menu;
-use std::time::Duration;
-
-fn spawn_floor(mut commands: Commands) {
-    commands.spawn((
-        RigidBody::Static,
-        Collider::cuboid(60.0, 0.1, 60.0),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-    ));
-}
 
 fn create_test_app() -> App {
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        TransformPlugin,
-        AssetPlugin::default(),
-        MeshPlugin,
-        PhysicsPlugins::default(),
-    ));
-    app.add_plugins(bevy::state::app::StatesPlugin);
-    app.add_plugins(bevy::input::InputPlugin);
-    app.init_state::<GameState>();
-    app.insert_resource(bevy::time::TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-        16,
-    )));
-    app.insert_resource(Assets::<Mesh>::default());
-    app.insert_resource(Assets::<StandardMaterial>::default());
-    app.add_systems(Startup, (setup_player, spawn_floor));
-    app.add_systems(Update, toggle_pause);
+    let mut app = build_headless_app(CurrentMap::FlatFloor, None);
     app.add_systems(OnEnter(GameState::Paused), setup_pause_menu);
-    app.finish();
-    app.cleanup();
     app
 }
 
@@ -66,13 +37,13 @@ fn press_escape(app: &mut App) {
 }
 
 #[test]
-fn starts_in_playing_state() {
+fn the_game_starts_in_playing_state() {
     let app = create_test_app();
     assert_eq!(current_state(&app), GameState::Playing);
 }
 
 #[test]
-fn esc_toggles_to_paused() {
+fn pressing_escape_pauses_the_game() {
     let mut app = create_test_app();
     app.update();
 
@@ -82,7 +53,7 @@ fn esc_toggles_to_paused() {
 }
 
 #[test]
-fn esc_toggles_back_to_playing() {
+fn pressing_escape_twice_resumes_the_game() {
     let mut app = create_test_app();
     app.update();
 
@@ -94,7 +65,7 @@ fn esc_toggles_back_to_playing() {
 }
 
 #[test]
-fn pause_menu_spawns_on_paused() {
+fn pausing_spawns_the_pause_menu() {
     let mut app = create_test_app();
     app.update();
 
@@ -102,14 +73,14 @@ fn pause_menu_spawns_on_paused() {
 
     let menus = app
         .world_mut()
-        .query_filtered::<Entity, With<Node>>()
+        .query_filtered::<Entity, With<DespawnOnExit<GameState>>>()
         .iter(app.world())
         .count();
     assert!(menus >= 1, "pause menu node should exist");
 }
 
 #[test]
-fn pause_menu_despawns_on_resume() {
+fn resuming_despawns_the_pause_menu() {
     let mut app = create_test_app();
     app.update();
 
@@ -121,7 +92,7 @@ fn pause_menu_despawns_on_resume() {
 
     let menus = app
         .world_mut()
-        .query_filtered::<Entity, With<Node>>()
+        .query_filtered::<Entity, With<DespawnOnExit<GameState>>>()
         .iter(app.world())
         .count();
     assert_eq!(menus, 0, "pause menu should be despawned");
