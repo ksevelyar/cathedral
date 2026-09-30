@@ -1,6 +1,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
+pub mod app;
 pub(crate) mod collision;
 pub mod enemies;
 pub mod maps;

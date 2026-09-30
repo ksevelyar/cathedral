@@ -1,4 +1,5 @@
 use avian3d::prelude::{Gravity, LinearVelocity, MoveAndSlide, SpatialQueryFilter};
+use bevy::camera::Exposure;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 
@@ -12,7 +13,8 @@ impl Plugin for PlayerPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(ClearColor(Color::srgb(0.05, 0.05, 0.05)))
             .insert_resource(GlobalAmbientLight {
-                brightness: 0.0,
+                color: Color::srgb(0.6, 0.65, 0.7),
+                brightness: 0.15,
                 ..default()
             })
             .add_systems(
@@ -51,6 +53,7 @@ const PLAYER_EYE_HEIGHT: f32 = 1.8;
 pub fn setup_player(mut commands: Commands, start_position: Option<Res<PlayerStartPosition>>) {
     commands.spawn((
         Camera3d::default(),
+        Exposure::INDOOR,
         Transform::from_translation(
             start_position
                 .map(|start_position| start_position.position)
