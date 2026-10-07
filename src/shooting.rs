@@ -121,7 +121,12 @@ fn setup_gun(
 }
 
 const SHOT_DISTANCE: f32 = 100.0;
-const SHOT_IMPULSE: f32 = 100.0;
+const BULLET_MASS: f32 = 0.019;
+const BULLET_SPEED: f32 = 470.0;
+
+fn compute_bullet_momentum() -> f32 {
+    BULLET_MASS * BULLET_SPEED
+}
 
 pub fn shoot(
     mouse_button: Res<ButtonInput<MouseButton>>,
@@ -156,17 +161,18 @@ pub fn shoot(
         commands.entity(owner.0).trigger(|entity| EnemyHit {
             entity,
             body: hit.entity,
-            impulse: direction.as_vec3() * SHOT_IMPULSE,
+            impulse: direction.as_vec3() * compute_bullet_momentum(),
             point: origin + direction.as_vec3() * hit.distance,
         });
         return;
     }
 
-    let impulse = direction.as_vec3() * SHOT_IMPULSE;
     let point = origin + direction.as_vec3() * hit.distance;
     if let Some(body_entity) = find_dynamic_body_ancestor(hit.entity, &collider_parents, &prop_bodies)
         && let Ok(mut forces) = prop_bodies.get_mut(body_entity)
     {
+        let bullet_momentum = compute_bullet_momentum();
+        let impulse = direction.as_vec3() * bullet_momentum;
         forces.apply_linear_impulse_at_point(impulse, point);
     }
 }

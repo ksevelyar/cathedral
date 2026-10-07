@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::pieces::{FLOOR_MATERIAL, Piece, WALL_MATERIAL, build_cuboid};
+use super::pieces::{Piece, build_default_cuboid};
 use super::{CurrentMap, Map, PlayerPosition};
 
 pub const TEST_FLOOR_SIZE: Vec3 = Vec3::new(60.0, 0.1, 60.0);
@@ -37,11 +37,11 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
 }
 
 fn build_floor() -> Piece {
-    build_cuboid(Vec3::ZERO, TEST_FLOOR_SIZE, FLOOR_MATERIAL)
+    build_default_cuboid(Vec3::ZERO, TEST_FLOOR_SIZE)
 }
 
 fn spawn_tall_pillar() -> Piece {
-    build_cuboid(TALL_PILLAR_POSITION, TALL_PILLAR_SIZE, WALL_MATERIAL)
+    build_default_cuboid(TALL_PILLAR_POSITION, TALL_PILLAR_SIZE)
 }
 
 fn spawn_staircase_pieces() -> Vec<Piece> {
@@ -51,17 +51,12 @@ fn spawn_staircase_pieces() -> Vec<Piece> {
         let up_z = 4.5 - step_index as f32;
         let down_z = -4.5 + step_index as f32;
         for step_z in [up_z, down_z] {
-            pieces.push(build_cuboid(
+            pieces.push(build_default_cuboid(
                 Vec3::new(0.0, step_center_height, step_z),
                 Vec3::new(4.0, 0.5, 1.0),
-                WALL_MATERIAL,
             ));
         }
     }
-    pieces.push(build_cuboid(
-        STAIRCASE_APEX_POSITION,
-        STAIRCASE_APEX_SIZE,
-        WALL_MATERIAL,
-    ));
+    pieces.push(build_default_cuboid(STAIRCASE_APEX_POSITION, STAIRCASE_APEX_SIZE));
     pieces
 }
