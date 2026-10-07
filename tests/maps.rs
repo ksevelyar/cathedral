@@ -1,19 +1,18 @@
 use avian3d::prelude::*;
-use bevy::ecs::system::RunSystemOnce;
 use bevy::prelude::*;
 use cathedral::app::build_headless_app;
 use cathedral::enemies::{Dying, Enemy};
 use cathedral::maps::CurrentMap;
-use cathedral::player::Player;
 use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart};
 use std::time::Duration;
+
+mod support;
 
 const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
 const ADVANCE_ATTEMPTS: usize = 600;
 const MAP01_ENEMY_COUNT: usize = 3;
 const MAP02_ENEMY_COUNT: usize = 4;
 const BODIES_PER_ENEMY: usize = 14;
-const AIM_DISTANCE: f32 = 2.0;
 const SETTLE_FRAMES: usize = 4;
 
 #[derive(Component)]
@@ -59,53 +58,23 @@ fn check_all_bodies_spawned(world: &mut World, enemies: &[Entity]) -> bool {
         .all(|enemy| bodies.iter(world).filter(|(owner, _)| owner.0 == *enemy).count() == BODIES_PER_ENEMY)
 }
 
-fn get_head_body_position(world: &mut World, enemy: Entity) -> Vec3 {
+fn find_head_body(world: &mut World, enemy: Entity) -> (Entity, Vec3) {
     world
-        .query::<(&Position, &RagdollBodyPart, &OwnedByEnemy)>()
+        .query::<(Entity, &Position, &RagdollBodyPart, &OwnedByEnemy)>()
         .iter(world)
-        .find(|(_, part, owner)| **part == RagdollBodyPart::Head && owner.0 == enemy)
-        .map(|(position, ..)| position.0)
+        .find(|(_, _, part, owner)| **part == RagdollBodyPart::Head && owner.0 == enemy)
+        .map(|(entity, position, ..)| (entity, position.0))
         .unwrap_or_else(|| panic!("enemy {enemy:?} should have a head body"))
 }
 
-fn aim_player_at_head_of(app: &mut App, enemy: Entity) {
-    let head = get_head_body_position(app.world_mut(), enemy);
-    let camera_transform = Transform::from_translation(head + Vec3::Z * AIM_DISTANCE).looking_at(head, Vec3::Y);
-    let player = app
-        .world_mut()
-        .query_filtered::<Entity, With<Player>>()
-        .single(app.world_mut())
-        .expect("one player should spawn");
-    app.world_mut().entity_mut(player).insert((
-        Transform::from_translation(camera_transform.translation).with_rotation(camera_transform.rotation),
-        LinearVelocity::default(),
-    ));
-}
-
-fn fire(app: &mut App) {
-    app.world_mut()
-        .resource_mut::<ButtonInput<MouseButton>>()
-        .press(MouseButton::Left);
-    app.world_mut()
-        .run_system_once(cathedral::shooting::shoot)
-        .expect("shoot should run");
-    app.update();
-    app.world_mut()
-        .resource_mut::<ButtonInput<MouseButton>>()
-        .release(MouseButton::Left);
+fn shoot_enemy_head(app: &mut App, enemy: Entity) -> Option<Entity> {
+    let (head_entity, _) = find_head_body(app.world_mut(), enemy);
+    support::shoot_entity(app, head_entity);
+    Some(head_entity)
 }
 
 fn is_dying(world: &mut World, enemy: Entity) -> bool {
     world.entity(enemy).contains::<Dying>()
-}
-
-fn collect_owned_bodies(app: &mut App, enemy: Entity) -> Vec<Entity> {
-    app.world_mut()
-        .query::<(Entity, &OwnedByEnemy)>()
-        .iter(app.world_mut())
-        .filter(|(_, owner)| owner.0 == enemy)
-        .map(|(entity, _)| entity)
-        .collect()
 }
 
 fn wait_for_dying(app: &mut App, enemy: Entity) {
@@ -113,17 +82,16 @@ fn wait_for_dying(app: &mut App, enemy: Entity) {
         if app.world().get_entity(enemy).is_err() {
             return;
         }
-        aim_player_at_head_of(app, enemy);
-        fire(app);
+        let head_entity = shoot_enemy_head(app, enemy);
         if app.world().get_entity(enemy).is_err() {
             return;
         }
-        eprintln!(
-            "MARK fired {enemy:?} dying={} bodies={:?}",
-            is_dying(app.world_mut(), enemy),
-            collect_owned_bodies(app, enemy)
-        );
         if is_dying(app.world_mut(), enemy) {
+            if let Some(head_entity) = head_entity {
+                support::assert_received_kick(app, head_entity);
+                let settling_duration = 10.0;
+                support::assert_settles(app, head_entity, settling_duration);
+            }
             return;
         }
     }

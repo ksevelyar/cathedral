@@ -28,6 +28,7 @@ impl Plugin for GamePlugin {
             shooting::ShootingPlugin,
             ui::UiPlugin,
         ))
+        .insert_resource(SubstepCount(30))
         .add_systems(Startup, player::setup_player)
         .insert_gizmo_config(
             PhysicsGizmos::default(),

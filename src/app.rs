@@ -4,6 +4,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
 use avian3d::prelude::PhysicsPlugins;
+use avian3d::prelude::SubstepCount;
 use bevy::app::{PluginGroup, SubApps};
 use bevy::asset::RenderAssetUsages;
 use bevy::audio::AudioPlugin;
@@ -156,6 +157,7 @@ pub fn build_headless_app(map: CurrentMap, player_position: Option<PlayerPositio
         PhysicsPlugins::default(),
         StatesPlugin,
     ));
+    app.insert_resource(SubstepCount(30));
     app.add_plugins((
         GameStatePlugin,
         MapsPlugin,

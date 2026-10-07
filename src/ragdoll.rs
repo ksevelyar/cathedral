@@ -43,7 +43,6 @@ const NECK_ANGULAR_DAMPING: f32 = 64.0;
 const HIP_ANGULAR_DAMPING: f32 = 15.0;
 const ANKLE_ANGULAR_DAMPING: f32 = 64.0;
 const RAGDOLL_ANGULAR_SLEEP_THRESHOLD: f32 = 0.6;
-const MAX_HIT_SPEED: f32 = 11.0;
 
 const TORSO_RADIUS: f32 = 0.18;
 const HEAD_RADIUS: f32 = 0.12;
@@ -858,7 +857,6 @@ fn synchronize_ragdoll_bodies(
 fn activate_ragdoll_on_death(
     mut commands: Commands,
     pending: Query<(Entity, &PendingRagdollImpactRequest, &RagdollData)>,
-    body_masses: Query<(Entity, Option<&ComputedMass>)>,
 ) {
     for (root, impact, ragdoll) in &pending {
         if ragdoll.limbs.len() != LIMBS.len() {
@@ -878,15 +876,8 @@ fn activate_ragdoll_on_death(
         let Some(&body) = part_entities.get(&impact.body_part) else {
             continue;
         };
-        let hit_mass = body_masses
-            .get(body)
-            .ok()
-            .and_then(|(_, mass)| mass)
-            .map(|mass| 1.0 / mass.inverse())
-            .filter(|mass| mass.is_finite() && *mass > 0.0)
-            .unwrap_or_default();
         commands.entity(body).insert(PendingRagdollImpact {
-            impulse: impact.impulse.normalize_or_zero() * (MAX_HIT_SPEED * hit_mass),
+            impulse: impact.impulse,
             point: impact.point,
         });
         commands.entity(root).remove::<PendingRagdollImpactRequest>();

@@ -1,10 +1,11 @@
 mod map01;
 mod map02;
 mod meshes;
-pub(crate) mod pieces;
+pub mod pieces;
 pub mod test_maps;
 
 use bevy::prelude::*;
+use bevy::transform::TransformSystems;
 
 use crate::enemies::{Dying, Enemy, EnemyKind, spawn_enemy};
 use crate::player;
@@ -17,7 +18,11 @@ impl Plugin for MapsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CurrentMap>()
             .add_systems(Startup, load_current_map.before(player::setup_player))
-            .add_systems(Update, advance_map);
+            .add_systems(Update, advance_map)
+            .add_systems(
+                FixedPostUpdate,
+                pieces::update_lamp_wires.after(TransformSystems::Propagate),
+            );
     }
 }
 
