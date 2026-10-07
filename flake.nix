@@ -26,6 +26,8 @@
               alsa-lib
               vulkan-loader
               vulkan-tools
+              mesa
+              libGL
               libudev-zero
               wayland
               libxkbcommon
@@ -63,6 +65,24 @@
               libudev-zero
               wayland
               libxkbcommon
+              mesa
+              libGL
+            ];
+          };
+
+          devShells.ci-vulkan = mkShell {
+            buildInputs = [alsa-lib vulkan-loader libudev-zero wayland libxkbcommon mesa libGL pkg-config];
+
+            WGPU_BACKEND = "vulkan";
+            VK_DRIVER_FILES = "${mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json";
+            LD_LIBRARY_PATH = lib.makeLibraryPath [
+              alsa-lib
+              vulkan-loader
+              libudev-zero
+              wayland
+              libxkbcommon
+              mesa
+              libGL
             ];
           };
         }

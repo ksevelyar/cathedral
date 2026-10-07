@@ -7,7 +7,7 @@ use avian3d::prelude::PhysicsPlugins;
 use bevy::app::{PluginGroup, SubApps};
 use bevy::asset::RenderAssetUsages;
 use bevy::audio::AudioPlugin;
-use bevy::camera::{Exposure, RenderTarget};
+use bevy::camera::RenderTarget;
 use bevy::diagnostic::FrameCount;
 use bevy::gltf::GltfPlugin;
 use bevy::image::{Image, ImageAddressMode, ImageSamplerDescriptor};
@@ -95,7 +95,7 @@ use bevy::render::{
     RenderPlugin,
     render_resource::{Extent3d, PollType, TextureDimension, TextureFormat, TextureUsages},
     renderer::RenderDevice,
-    view::screenshot::{Screenshot, save_to_disk},
+    view::screenshot::{Screenshot, ScreenshotCaptured, save_to_disk},
 };
 use bevy::state::app::StatesPlugin;
 use bevy::time::TimeUpdateStrategy;
@@ -106,15 +106,14 @@ use bevy::world_serialization::WorldSerializationPlugin;
 use crate::{
     GamePlugin,
     enemies::EnemiesPlugin,
-    maps::{CurrentMap, MapsPlugin, PlayerStartOverride},
-    player::PlayerPlugin,
+    maps::{CurrentMap, MapsPlugin, PlayerPosition},
+    player::{CameraState, Player, PlayerPlugin},
     ragdoll::RagdollPlugin,
     shooting::ShootingPlugin,
     state::GameStatePlugin,
 };
 
 const FIRST_CAPTURE_FRAME: u32 = 16;
-const FRAMES_BETWEEN_CAPTURES: u32 = 3;
 
 fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
     ImageSamplerDescriptor {
@@ -126,7 +125,7 @@ fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
     .clone()
 }
 
-pub fn build_game_app() -> App {
+pub fn build_app() -> App {
     initialize_logging();
     let mut app = App::new();
     app.add_plugins((
@@ -138,11 +137,11 @@ pub fn build_game_app() -> App {
     app
 }
 
-pub fn build_headless_app(map: CurrentMap, player_start: Option<Vec3>) -> App {
+pub fn build_headless_app(map: CurrentMap, player_position: Option<PlayerPosition>) -> App {
     let mut app = App::new();
     app.insert_resource(map);
-    if let Some(player_start) = player_start {
-        app.insert_resource(PlayerStartOverride(player_start));
+    if let Some(player_position) = player_position {
+        app.insert_resource(player_position);
     }
     app.add_plugins((
         MinimalPlugins,
@@ -175,9 +174,20 @@ pub fn build_headless_app(map: CurrentMap, player_start: Option<Vec3>) -> App {
     app
 }
 
-pub struct ScreenshotApp(SubApps);
+pub struct ScreenshotApp(pub SubApps);
 
-pub fn build_screenshot_app(viewpoints: Vec<(Vec3, Vec3)>) -> ScreenshotApp {
+#[derive(Resource)]
+struct ScreenshotDir(String);
+
+#[derive(Resource, Default)]
+pub struct CapturedScreenshots(pub Vec<Image>);
+
+pub fn build_headless_screenshot_app(
+    viewpoint: Option<(Vec3, Vec3)>,
+    render_width: u32,
+    render_height: u32,
+    screenshot_dir: String,
+) -> ScreenshotApp {
     let render_plugin = RenderPlugin {
         synchronous_pipeline_compilation: true,
         ..default()
@@ -201,8 +211,12 @@ pub fn build_screenshot_app(viewpoints: Vec<(Vec3, Vec3)>) -> ScreenshotApp {
             }),
     )
     .add_plugins(GamePlugin)
-    .insert_resource(Viewpoints(viewpoints))
-    .add_systems(Update, (aim_camera, capture_screenshots));
+    .insert_resource(ScreenshotDir(screenshot_dir))
+    .insert_resource(CapturedScreenshots::default())
+    .insert_resource(Viewpoint(viewpoint))
+    .add_systems(Update, (attach_screenshot_camera, capture_screenshots));
+    let render_target = create_render_target(&mut app, render_width, render_height);
+    app.insert_resource(ScreenshotRenderTarget(render_target));
 
     app.finish();
     app.cleanup();
@@ -210,39 +224,47 @@ pub fn build_screenshot_app(viewpoints: Vec<(Vec3, Vec3)>) -> ScreenshotApp {
     ScreenshotApp(std::mem::take(app.sub_apps_mut()))
 }
 
+fn create_render_target(app: &mut App, render_width: u32, render_height: u32) -> Handle<Image> {
+    let mut target = Image::new_uninit(
+        Extent3d {
+            width: render_width,
+            height: render_height,
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
+    app.world_mut().resource_mut::<Assets<Image>>().add(target)
+}
+
+#[derive(Resource)]
+struct ScreenshotRenderTarget(Handle<Image>);
+
+fn attach_screenshot_camera(
+    screenshot_target: Res<ScreenshotRenderTarget>,
+    viewpoint: Res<Viewpoint>,
+    player_camera: Query<Entity, (With<Player>, Without<ScreenshotCamera>)>,
+    mut commands: Commands,
+) {
+    let Ok(player_camera) = player_camera.single() else {
+        return;
+    };
+    commands
+        .entity(player_camera)
+        .insert((ScreenshotCamera, RenderTarget::from(screenshot_target.0.clone())));
+    if let Some((eye, look_target)) = viewpoint.0 {
+        let direction = (look_target - eye).normalize();
+        let pitch = direction.y.asin();
+        let yaw = (-direction.x).atan2(-direction.z);
+        commands
+            .entity(player_camera)
+            .insert((CameraState { yaw, pitch }, Transform::from_translation(eye)));
+    }
+}
+
 impl ScreenshotApp {
-    pub fn create_render_target(&mut self, width: u32, height: u32) -> RenderTarget {
-        let mut target = Image::new_uninit(
-            Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
-            TextureDimension::D2,
-            TextureFormat::Rgba8UnormSrgb,
-            RenderAssetUsages::RENDER_WORLD,
-        );
-        target.texture_descriptor.usage |= TextureUsages::RENDER_ATTACHMENT;
-        self.0
-            .main
-            .world_mut()
-            .resource_mut::<Assets<Image>>()
-            .add(target)
-            .into()
-    }
-
-    pub fn spawn_camera(&mut self, target: RenderTarget) {
-        let image_handle = target.as_image().unwrap().clone();
-        self.0.main.world_mut().spawn((
-            ScreenshotCamera,
-            Camera3d::default(),
-            Exposure::INDOOR,
-            target,
-            Transform::from_xyz(0.0, 1.9, 6.0),
-        ));
-        self.0.main.world_mut().insert_resource(CaptureTarget(image_handle));
-    }
-
     pub fn update(&mut self) {
         self.0.update();
         self.0
@@ -259,58 +281,30 @@ impl ScreenshotApp {
 }
 
 #[derive(Resource)]
-struct Viewpoints(Vec<(Vec3, Vec3)>);
-
-#[derive(Resource)]
-struct CaptureTarget(Handle<Image>);
+struct Viewpoint(Option<(Vec3, Vec3)>);
 
 #[derive(Component)]
 struct ScreenshotCamera;
 
-fn aim_camera(
-    frame_count: Res<FrameCount>,
-    viewpoints: Res<Viewpoints>,
-    mut camera: Query<&mut Transform, (With<Camera3d>, With<ScreenshotCamera>)>,
-) {
-    let Ok(mut transform) = camera.single_mut() else {
-        return;
-    };
-    let Some((eye, look_target)) = compute_viewpoint(&viewpoints, frame_count.0) else {
-        return;
-    };
-    eprintln!("aiming frame {} at {eye:?} -> {look_target:?}", frame_count.0);
-    *transform = Transform::from_translation(eye).looking_at(look_target, Vec3::Y);
-}
-
 fn capture_screenshots(
     frame_count: Res<FrameCount>,
-    viewpoints: Res<Viewpoints>,
-    capture_target: Res<CaptureTarget>,
+    screenshot_dir: Res<ScreenshotDir>,
+    screenshot_target: Res<ScreenshotRenderTarget>,
     mut commands: Commands,
 ) {
-    let Some(capture_index) = frame_count
-        .0
-        .checked_sub(FIRST_CAPTURE_FRAME)
-        .and_then(|frame| frame.checked_div(FRAMES_BETWEEN_CAPTURES))
-    else {
-        return;
-    };
-    if frame_count.0 % FRAMES_BETWEEN_CAPTURES != FIRST_CAPTURE_FRAME % FRAMES_BETWEEN_CAPTURES
-        || capture_index >= viewpoints.0.len() as u32
-    {
+    if frame_count.0 != FIRST_CAPTURE_FRAME {
         return;
     }
-    eprintln!("scheduling screenshot {capture_index}");
     commands
-        .spawn(Screenshot::image(capture_target.0.clone()))
-        .observe(save_to_disk(format!("/tmp/cathedral_view{capture_index}.png")));
+        .spawn(Screenshot::image(screenshot_target.0.clone()))
+        .observe(save_to_disk(format!(
+            "{}/{}-map01.png",
+            screenshot_dir.0,
+            env!("CARGO_PKG_VERSION")
+        )))
+        .observe(collect_captured_screenshot);
 }
 
-fn compute_viewpoint(viewpoints: &Viewpoints, frame: u32) -> Option<(Vec3, Vec3)> {
-    if frame + 1 < FIRST_CAPTURE_FRAME {
-        return None;
-    }
-    let frame_after_warmup = frame.checked_sub(FIRST_CAPTURE_FRAME - 1)?;
-    let viewpoint_index = frame_after_warmup / FRAMES_BETWEEN_CAPTURES;
-    viewpoints.0.get(viewpoint_index as usize).copied()
+fn collect_captured_screenshot(screenshot_captured: On<ScreenshotCaptured>, mut captured: ResMut<CapturedScreenshots>) {
+    captured.0.push(screenshot_captured.image.clone());
 }

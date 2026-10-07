@@ -31,12 +31,19 @@ pub enum CurrentMap {
     Staircase,
 }
 
-#[derive(Resource)]
-pub(crate) struct PlayerStartOverride(pub Vec3);
-
-#[derive(Resource)]
-pub struct PlayerStartPosition {
+#[derive(Resource, Clone, Copy)]
+pub struct PlayerPosition {
     pub position: Vec3,
+    pub look_at: Vec3,
+}
+
+impl PlayerPosition {
+    pub fn new(position: Vec3) -> Self {
+        Self {
+            position,
+            look_at: position + Vec3::NEG_Z,
+        }
+    }
 }
 
 #[derive(Component)]
@@ -45,7 +52,7 @@ pub(super) struct Arena;
 struct Map {
     ambient: GlobalAmbientLight,
     clear_color: ClearColor,
-    player_start: Vec3,
+    player_position: PlayerPosition,
     enemies: Vec<EnemySpawn>,
     pieces: Vec<Piece>,
 }
@@ -65,16 +72,16 @@ fn build_map(map: &CurrentMap) -> Map {
 
 fn load_current_map(
     current: Res<CurrentMap>,
-    player_start_override: Option<Res<PlayerStartOverride>>,
+    player_position: Option<Res<PlayerPosition>>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let player_start_override = player_start_override.map(|override_position| override_position.0);
+    let override_position = player_position.map(|player_position| *player_position);
     spawn_map(
         &current,
-        player_start_override,
+        override_position,
         &mut commands,
         &asset_server,
         &mut meshes,
@@ -84,21 +91,16 @@ fn load_current_map(
 
 fn spawn_map(
     current: &CurrentMap,
-    player_start_override: Option<Vec3>,
+    override_position: Option<PlayerPosition>,
     commands: &mut Commands,
     asset_server: &AssetServer,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
 ) {
-    let mut map = build_map(current);
-    if let Some(player_start) = player_start_override {
-        map.player_start = player_start;
-    }
+    let map = build_map(current);
+    commands.insert_resource(override_position.unwrap_or(map.player_position));
     commands.insert_resource(map.ambient);
     commands.insert_resource(map.clear_color);
-    commands.insert_resource(PlayerStartPosition {
-        position: map.player_start,
-    });
     let mut material_cache = Vec::new();
     let mut piece_context = PieceSpawnContext::new(commands, asset_server, meshes, materials, &mut material_cache);
     for map_piece in &map.pieces {
@@ -152,14 +154,12 @@ fn advance_map(
 
 pub(crate) fn restart(
     current: &mut CurrentMap,
-    player_start: &mut PlayerStartPosition,
+    player_position: &mut PlayerPosition,
     commands: &mut Commands,
     asset_server: &AssetServer,
 ) {
     *current = CurrentMap::Map01;
     let map = build_map(current);
-    *player_start = PlayerStartPosition {
-        position: map.player_start,
-    };
+    *player_position = map.player_position;
     spawn_enemies(commands, asset_server, &map.enemies);
 }

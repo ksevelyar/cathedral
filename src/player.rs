@@ -3,7 +3,7 @@ use bevy::camera::Exposure;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 
-use crate::maps::PlayerStartPosition;
+use crate::maps::PlayerPosition;
 use crate::movement::PhysicsWorld;
 use crate::state::GameState;
 
@@ -44,33 +44,44 @@ const CAMERA_PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 const PLAYER_COLLISION_RADIUS: f32 = 0.4;
 const PLAYER_EYE_HEIGHT: f32 = 1.8;
 
-pub fn setup_player(mut commands: Commands, start_position: Option<Res<PlayerStartPosition>>) {
+pub fn setup_player(mut commands: Commands, start_position: Option<Res<PlayerPosition>>) {
+    let player_position = start_position
+        .map(|start_position| *start_position)
+        .unwrap_or_else(|| PlayerPosition::new(Vec3::ZERO));
+    let (yaw, pitch) = compute_look_angles(player_position.position, player_position.look_at);
     commands.spawn((
         Camera3d::default(),
         Exposure::INDOOR,
-        Transform::from_translation(
-            start_position
-                .map(|start_position| start_position.position)
-                .unwrap_or(Vec3::ZERO),
-        ),
-        CameraState::default(),
+        Transform::from_translation(player_position.position).with_rotation(Quat::from_euler(
+            EulerRot::YXZ,
+            yaw,
+            pitch,
+            0.0,
+        )),
+        CameraState { yaw, pitch },
         LinearVelocity::default(),
         Player,
     ));
 }
 
+pub fn compute_look_angles(eye: Vec3, look_at: Vec3) -> (f32, f32) {
+    let direction = (look_at - eye).normalize();
+    ((-direction.x).atan2(-direction.z), direction.y.asin())
+}
+
 pub fn reset_player(
     mut player_query: Query<(&mut Transform, &mut CameraState), With<Player>>,
-    start_position: &PlayerStartPosition,
+    start_position: &PlayerPosition,
 ) {
     let Ok((mut transform, mut camera_state)) = player_query.single_mut() else {
         return;
     };
 
+    let (yaw, pitch) = compute_look_angles(start_position.position, start_position.look_at);
     transform.translation = start_position.position;
-    camera_state.yaw = 0.0;
-    camera_state.pitch = 0.0;
-    transform.rotation = Quat::IDENTITY;
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+    camera_state.yaw = yaw;
+    camera_state.pitch = pitch;
 }
 
 pub fn settle_player_on_startup(

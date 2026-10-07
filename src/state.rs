@@ -3,7 +3,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 use crate::enemies::Enemy;
-use crate::maps::{self, CurrentMap, PlayerStartPosition};
+use crate::maps::{self, CurrentMap, PlayerPosition};
 use crate::player::{self, CameraState, Player};
 
 pub struct GameStatePlugin;
@@ -64,7 +64,7 @@ struct GameRestartContext<'w, 's> {
     commands: Commands<'w, 's>,
     enemy_query: Query<'w, 's, Entity, With<Enemy>>,
     current_map: ResMut<'w, CurrentMap>,
-    player_start: ResMut<'w, PlayerStartPosition>,
+    player_position: ResMut<'w, PlayerPosition>,
     asset_server: Res<'w, AssetServer>,
 }
 
@@ -84,10 +84,10 @@ fn restart_game(
 
     maps::restart(
         &mut restart_context.current_map,
-        &mut restart_context.player_start,
+        &mut restart_context.player_position,
         &mut restart_context.commands,
         &restart_context.asset_server,
     );
-    player::reset_player(player_query, &restart_context.player_start);
+    player::reset_player(player_query, &restart_context.player_position);
     next_state.set(GameState::Playing);
 }
