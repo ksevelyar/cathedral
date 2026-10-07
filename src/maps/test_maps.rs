@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use super::pieces::{FLOOR_MATERIAL, Piece, WALL_MATERIAL, build_cuboid};
-use super::{CurrentMap, Map};
+use super::{CurrentMap, Map, PlayerPosition};
 
 pub const TEST_FLOOR_SIZE: Vec3 = Vec3::new(60.0, 0.1, 60.0);
 pub const TALL_PILLAR_POSITION: Vec3 = Vec3::new(0.0, 10.0, 0.0);
@@ -14,21 +14,21 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
         CurrentMap::FlatFloor => Map {
             ambient: GlobalAmbientLight::NONE,
             clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
-            player_start: Vec3::new(0.0, 0.5, 0.0),
+            player_position: PlayerPosition::new(Vec3::new(0.0, 0.5, 0.0)),
             enemies: vec![],
             pieces: vec![build_floor()],
         },
         CurrentMap::TallPillar => Map {
             ambient: GlobalAmbientLight::NONE,
             clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
-            player_start: Vec3::new(-6.0, 1.5, 0.0),
+            player_position: PlayerPosition::new(Vec3::new(-6.0, 1.5, 0.0)),
             enemies: vec![],
             pieces: vec![build_floor(), spawn_tall_pillar()],
         },
         CurrentMap::Staircase => Map {
             ambient: GlobalAmbientLight::NONE,
             clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
-            player_start: Vec3::new(0.0, 1.5, 12.0),
+            player_position: PlayerPosition::new(Vec3::new(0.0, 1.5, 12.0)),
             enemies: vec![],
             pieces: spawn_staircase_pieces(),
         },

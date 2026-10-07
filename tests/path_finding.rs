@@ -4,8 +4,8 @@ use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
 use cathedral::app::build_headless_app;
 use cathedral::enemies::{AnimationState, EnemyActivity, EnemyKind, Fighter, spawn_enemy};
-use cathedral::maps::CurrentMap;
 use cathedral::maps::test_maps::{TALL_PILLAR_POSITION, TALL_PILLAR_SIZE};
+use cathedral::maps::{CurrentMap, PlayerPosition};
 use cathedral::player::{CameraState, Player};
 use std::time::Duration;
 
@@ -24,9 +24,9 @@ const REACH_MARGIN: f32 = 0.5;
 const MINIMUM_PROGRESS: f32 = 0.5;
 const STAIR_CROSSING_POSITION: f32 = -1.0;
 
-fn create_test_app(map: CurrentMap, player_start: Option<Vec3>) -> App {
+fn create_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
-    let mut app = build_headless_app(map, player_start);
+    let mut app = build_headless_app(map, player_position);
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
     app.update();
     app
@@ -88,7 +88,10 @@ fn press_forward(app: &mut App) {
 
 #[test]
 fn player_pressing_w_is_blocked_by_pillar() {
-    let mut app = create_test_app(CurrentMap::TallPillar, Some(BLOCKED_PLAYER_START_POSITION));
+    let mut app = create_test_app(
+        CurrentMap::TallPillar,
+        Some(PlayerPosition::new(BLOCKED_PLAYER_START_POSITION)),
+    );
     aim_player_yaw(&mut app, -std::f32::consts::FRAC_PI_2);
     press_forward(&mut app);
 
@@ -109,7 +112,10 @@ fn player_pressing_w_is_blocked_by_pillar() {
 
 #[test]
 fn player_pressing_w_is_stopped_by_the_pillar_south_face() {
-    let mut app = create_test_app(CurrentMap::TallPillar, Some(SOUTH_FACE_PLAYER_START_POSITION));
+    let mut app = create_test_app(
+        CurrentMap::TallPillar,
+        Some(PlayerPosition::new(SOUTH_FACE_PLAYER_START_POSITION)),
+    );
     press_forward(&mut app);
 
     for _ in 0..PLAYER_BLOCKER_UPDATES {
@@ -126,7 +132,10 @@ fn player_pressing_w_is_stopped_by_the_pillar_south_face() {
 
 #[test]
 fn player_walks_over_the_staircase() {
-    let mut app = create_test_app(CurrentMap::Staircase, Some(STAIR_PLAYER_START_POSITION));
+    let mut app = create_test_app(
+        CurrentMap::Staircase,
+        Some(PlayerPosition::new(STAIR_PLAYER_START_POSITION)),
+    );
     press_forward(&mut app);
 
     let player = find_player_entity(&mut app);
@@ -150,7 +159,10 @@ fn player_walks_over_the_staircase() {
 
 #[test]
 fn fighter_walks_over_the_staircase_to_player() {
-    let mut app = create_test_app(CurrentMap::Staircase, Some(STAIR_PLAYER_WAITING_POSITION));
+    let mut app = create_test_app(
+        CurrentMap::Staircase,
+        Some(PlayerPosition::new(STAIR_PLAYER_WAITING_POSITION)),
+    );
     let enemy = app
         .world_mut()
         .run_system_once(spawn_fighter_on_staircase)
@@ -184,7 +196,7 @@ fn fighter_walks_over_the_staircase_to_player() {
 
 #[test]
 fn fighter_walks_around_pillar_to_reach_player() {
-    let mut app = create_test_app(CurrentMap::TallPillar, Some(PLAYER_START_POSITION));
+    let mut app = create_test_app(CurrentMap::TallPillar, Some(PlayerPosition::new(PLAYER_START_POSITION)));
     let enemy = app
         .world_mut()
         .run_system_once(spawn_fighter)

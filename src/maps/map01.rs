@@ -1,13 +1,16 @@
 use bevy::prelude::*;
 
-use super::Map;
 use super::pieces::{Piece, build_cuboid, build_hanging_lamp, make_concrete_material};
+use super::{Map, PlayerPosition};
 
 pub(super) fn build_map() -> Map {
     Map {
         ambient: GlobalAmbientLight::NONE,
         clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
-        player_start: Vec3::new(0.0, 1.85, 6.0),
+        player_position: PlayerPosition {
+            position: Vec3::new(10.0, 1.9, 7.0),
+            look_at: Vec3::new(-6.0, 2.0, -2.0),
+        },
         enemies: vec![],
         pieces: spawn_control_room_pieces(),
     }

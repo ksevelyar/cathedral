@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldAssetRoot};
 use cathedral::app::build_headless_app;
 use cathedral::enemies::{Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
-use cathedral::maps::CurrentMap;
+use cathedral::maps::{CurrentMap, PlayerPosition};
 use cathedral::player::Player;
 use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart};
 use cathedral::shooting::shoot;
@@ -30,8 +30,8 @@ fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind
 
 fn create_test_app(kind: EnemyKind) -> App {
     let fixed_timestep = Duration::from_secs_f64(1.0 / 64.0);
-    let player_start_position = Vec3::new(5.0, 0.5, 0.0);
-    let mut app = build_headless_app(CurrentMap::FlatFloor, Some(player_start_position));
+    let player_position = PlayerPosition::new(Vec3::new(5.0, 0.5, 0.0));
+    let mut app = build_headless_app(CurrentMap::FlatFloor, Some(player_position));
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
         .insert_resource(TestEnemyKind(kind))
         .add_systems(Startup, spawn_test_enemy);

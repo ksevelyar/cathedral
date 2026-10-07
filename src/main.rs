@@ -1,3 +1,3 @@
 fn main() {
-    cathedral::app::build_game_app().run();
+    cathedral::app::build_app().run();
 }

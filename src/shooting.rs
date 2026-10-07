@@ -11,10 +11,10 @@ pub struct ShootingPlugin;
 impl Plugin for ShootingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<GunshotSound>()
-            .add_systems(Startup, (setup_gun, setup_crosshair))
+            .add_systems(Startup, (setup_gun, setup_crosshair).after(crate::player::setup_player))
             .add_systems(
                 Update,
-                (position_gun, shoot, play_gunshot)
+                (shoot, play_gunshot)
                     .run_if(in_state(GameState::Playing))
                     .after(crate::player::apply_mouse_look)
                     .after(crate::player::move_player),
@@ -98,30 +98,26 @@ const GUN_BASE_ROTATION: Quat = Quat::from_xyzw(
     std::f32::consts::FRAC_1_SQRT_2,
 );
 
-fn setup_gun(mut commands: Commands, asset_server: Res<AssetServer>) {
-    commands.spawn((
-        Gun,
-        WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("weapon/pistol.glb"))),
-        Transform {
-            scale: Vec3::splat(0.15),
-            rotation: GUN_BASE_ROTATION,
-            ..default()
-        },
-    ));
-}
-
-fn position_gun(
-    camera_query: Query<&Transform, (With<Player>, Without<Gun>)>,
-    mut gun_query: Query<&mut Transform, (With<Gun>, Without<Player>)>,
+fn setup_gun(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    player_camera: Query<Entity, (With<Player>, With<Camera3d>)>,
 ) {
-    let Ok(camera_transform) = camera_query.single() else {
+    let Ok(player_camera) = player_camera.single() else {
         return;
     };
-    let Ok(mut gun_transform) = gun_query.single_mut() else {
-        return;
-    };
-    gun_transform.translation = camera_transform.translation + camera_transform.rotation * GUN_OFFSET;
-    gun_transform.rotation = camera_transform.rotation * GUN_BASE_ROTATION;
+    let gun = commands
+        .spawn((
+            Gun,
+            WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset("weapon/pistol.glb"))),
+            Transform {
+                translation: GUN_OFFSET,
+                scale: Vec3::splat(0.15),
+                rotation: GUN_BASE_ROTATION,
+            },
+        ))
+        .id();
+    commands.entity(player_camera).add_children(&[gun]);
 }
 
 const SHOT_DISTANCE: f32 = 100.0;

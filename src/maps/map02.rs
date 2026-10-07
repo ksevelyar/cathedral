@@ -5,14 +5,14 @@ use bevy::prelude::*;
 use super::pieces::{
     CUBOID_MATERIAL, FLOOR_MATERIAL, WALL_MATERIAL, build_cuboid, build_door, build_stair, build_wall_torch,
 };
-use super::{EnemySpawn, Map};
+use super::{EnemySpawn, Map, PlayerPosition};
 use crate::enemies::{EnemyKind, Fighter, Gunner};
 
 pub(super) fn build_map() -> Map {
     Map {
         ambient: GlobalAmbientLight::NONE,
         clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
-        player_start: Vec3::new(0.0, 1.85, 12.0),
+        player_position: PlayerPosition::new(Vec3::new(0.0, 1.85, 12.0)),
         enemies: vec![
             EnemySpawn {
                 position: Vec3::new(-6.0, 0.0, -10.0),

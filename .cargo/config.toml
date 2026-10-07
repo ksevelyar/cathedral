@@ -1,2 +1,5 @@
+[alias]
+screenshot = "run --bin screenshot --release"
+
 # [build]
 # target = "wasm32-unknown-unknown"
