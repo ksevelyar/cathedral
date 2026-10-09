@@ -5,4 +5,3 @@
 
 ## Lifecycle
 * spawn_map inserts PlayerPosition, spawns pieces, enemies.
-* advance_map: when all enemies are Dying, despawn every Arena entity and every enemy, advance CurrentMap, spawn_map.

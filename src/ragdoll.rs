@@ -1,6 +1,9 @@
 use crate::enemies::{Dying, EnemyHit};
 use avian3d::math::AsF32;
 use avian3d::prelude::*;
+use bevy::ecs::system::SystemParam;
+use bevy::mesh::skinning::SkinnedMesh;
+use bevy::mesh::{Mesh3d, VertexAttributeValues};
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 use bevy::world_serialization::WorldInstanceReady;
@@ -44,18 +47,13 @@ const HIP_ANGULAR_DAMPING: f32 = 15.0;
 const ANKLE_ANGULAR_DAMPING: f32 = 64.0;
 const RAGDOLL_ANGULAR_SLEEP_THRESHOLD: f32 = 0.6;
 
-const TORSO_RADIUS: f32 = 0.18;
-const HEAD_RADIUS: f32 = 0.12;
-const HEAD_OFFSET: f32 = 0.06;
-
-const UPPER_ARM_RADIUS: f32 = 0.06;
-const FOREARM_RADIUS: f32 = 0.05;
-const HAND_RADIUS: f32 = 0.06;
+const HEAD_CROWN_OFFSET: f32 = 0.30;
+const COLLIDER_FIT_PERCENTILE: f32 = 0.9;
+const CUBOID_CROSS_SECTION_PERCENTILE: f32 = 0.65;
+const MINIMUM_COLLIDER_RADIUS: f32 = 0.03;
+const DOMINANT_WEIGHT_THRESHOLD: f32 = 0.3;
+const COLLIDER_DENSITY: f32 = 1000.0;
 const HAND_LENGTH: f32 = 0.24;
-
-const THIGH_RADIUS: f32 = 0.08;
-const CALF_RADIUS: f32 = 0.06;
-const FOOT_RADIUS: f32 = 0.035;
 const FOOT_LENGTH: f32 = 0.24;
 
 #[derive(Component, Clone, Default)]
@@ -202,15 +200,14 @@ impl Segment {
 #[derive(Clone, Copy)]
 enum BonePoint {
     Joint(&'static str),
-    First(&'static [&'static str]),
-    Raised { bone: &'static str, offset: Vec3 },
+    Raised { bone: &'static str, local_offset: Vec3 },
     Extended { toward: &'static str, length: f32 },
 }
 
 #[derive(Clone, Copy)]
 enum Shape {
-    Capsule { radius: f32 },
-    Sphere { radius: f32 },
+    Capsule,
+    Cuboid,
 }
 
 #[derive(Clone, Copy)]
@@ -225,6 +222,7 @@ struct LimbSpec {
     shape: Shape,
     start: BonePoint,
     end: BonePoint,
+    bucket_bones: &'static [&'static str],
     parent: Option<RagdollBodyPart>,
     joint: Option<JointSpec>,
 }
@@ -234,13 +232,11 @@ impl LimbSpec {
         let mut names = Vec::new();
         match self.start {
             BonePoint::Joint(name) => names.push(name),
-            BonePoint::First(list_bone_names) => names.extend_from_slice(list_bone_names),
             BonePoint::Raised { bone, .. } => names.push(bone),
             BonePoint::Extended { toward, .. } => names.push(toward),
         }
         match self.end {
             BonePoint::Joint(name) => names.push(name),
-            BonePoint::First(list_bone_names) => names.extend_from_slice(list_bone_names),
             BonePoint::Raised { bone, .. } => names.push(bone),
             BonePoint::Extended { toward, .. } => names.push(toward),
         }
@@ -265,21 +261,23 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::Torso,
         name: "torso",
-        shape: Shape::Capsule { radius: TORSO_RADIUS },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("pelvis"),
-        end: BonePoint::First(&["spine_03", "spine_02"]),
+        end: BonePoint::Joint("neck_01"),
+        bucket_bones: &["pelvis", "spine_01", "spine_02", "spine_03", "neck_01"],
         parent: None,
         joint: None,
     },
     LimbSpec {
         part: RagdollBodyPart::Head,
         name: "head",
-        shape: Shape::Sphere { radius: HEAD_RADIUS },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("neck_01"),
         end: BonePoint::Raised {
             bone: "Head",
-            offset: Vec3::new(0.0, HEAD_OFFSET, 0.0),
+            local_offset: Vec3::new(0.0, HEAD_CROWN_OFFSET, 0.0),
         },
+        bucket_bones: &["Head"],
         parent: Some(RagdollBodyPart::Torso),
         joint: Some(JointSpec::Spherical {
             angular_damping: NECK_ANGULAR_DAMPING,
@@ -288,11 +286,10 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::LeftUpperArm,
         name: "left_upper_arm",
-        shape: Shape::Capsule {
-            radius: UPPER_ARM_RADIUS,
-        },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("upperarm_l"),
         end: BonePoint::Joint("lowerarm_l"),
+        bucket_bones: &["upperarm_l"],
         parent: Some(RagdollBodyPart::Torso),
         joint: Some(JointSpec::Spherical {
             angular_damping: JOINT_ANGULAR_DAMPING,
@@ -301,11 +298,10 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::RightUpperArm,
         name: "right_upper_arm",
-        shape: Shape::Capsule {
-            radius: UPPER_ARM_RADIUS,
-        },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("upperarm_r"),
         end: BonePoint::Joint("lowerarm_r"),
+        bucket_bones: &["upperarm_r"],
         parent: Some(RagdollBodyPart::Torso),
         joint: Some(JointSpec::Spherical {
             angular_damping: JOINT_ANGULAR_DAMPING,
@@ -314,9 +310,10 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::LeftForearm,
         name: "left_forearm",
-        shape: Shape::Capsule { radius: FOREARM_RADIUS },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("lowerarm_l"),
         end: BonePoint::Joint("hand_l"),
+        bucket_bones: &["lowerarm_l"],
         parent: Some(RagdollBodyPart::LeftUpperArm),
         joint: Some(JointSpec::Revolute {
             angle_limits: (-2.6, 0.1),
@@ -325,12 +322,20 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::LeftHand,
         name: "left_hand",
-        shape: Shape::Capsule { radius: HAND_RADIUS },
+        shape: Shape::Cuboid,
         start: BonePoint::Joint("hand_l"),
         end: BonePoint::Extended {
             toward: "middle_01_l",
             length: HAND_LENGTH,
         },
+        bucket_bones: &[
+            "hand_l",
+            "index_01_l",
+            "middle_01_l",
+            "pinky_01_l",
+            "ring_01_l",
+            "thumb_01_l",
+        ],
         parent: Some(RagdollBodyPart::LeftForearm),
         joint: Some(JointSpec::Spherical {
             angular_damping: WRIST_ANGULAR_DAMPING,
@@ -339,9 +344,10 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::RightForearm,
         name: "right_forearm",
-        shape: Shape::Capsule { radius: FOREARM_RADIUS },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("lowerarm_r"),
         end: BonePoint::Joint("hand_r"),
+        bucket_bones: &["lowerarm_r"],
         parent: Some(RagdollBodyPart::RightUpperArm),
         joint: Some(JointSpec::Revolute {
             angle_limits: (-0.1, 2.6),
@@ -350,12 +356,20 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::RightHand,
         name: "right_hand",
-        shape: Shape::Capsule { radius: HAND_RADIUS },
+        shape: Shape::Cuboid,
         start: BonePoint::Joint("hand_r"),
         end: BonePoint::Extended {
             toward: "middle_01_r",
             length: HAND_LENGTH,
         },
+        bucket_bones: &[
+            "hand_r",
+            "index_01_r",
+            "middle_01_r",
+            "pinky_01_r",
+            "ring_01_r",
+            "thumb_01_r",
+        ],
         parent: Some(RagdollBodyPart::RightForearm),
         joint: Some(JointSpec::Spherical {
             angular_damping: WRIST_ANGULAR_DAMPING,
@@ -364,9 +378,10 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::LeftThigh,
         name: "left_thigh",
-        shape: Shape::Capsule { radius: THIGH_RADIUS },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("thigh_l"),
         end: BonePoint::Joint("calf_l"),
+        bucket_bones: &["thigh_l"],
         parent: Some(RagdollBodyPart::Torso),
         joint: Some(JointSpec::Spherical {
             angular_damping: HIP_ANGULAR_DAMPING,
@@ -375,9 +390,10 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::LeftCalf,
         name: "left_calf",
-        shape: Shape::Capsule { radius: CALF_RADIUS },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("calf_l"),
         end: BonePoint::Joint("foot_l"),
+        bucket_bones: &["calf_l"],
         parent: Some(RagdollBodyPart::LeftThigh),
         joint: Some(JointSpec::Revolute {
             angle_limits: (-0.1, 2.6),
@@ -386,12 +402,13 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::LeftFoot,
         name: "left_foot",
-        shape: Shape::Capsule { radius: FOOT_RADIUS },
+        shape: Shape::Cuboid,
         start: BonePoint::Joint("foot_l"),
         end: BonePoint::Extended {
             toward: "ball_l",
             length: FOOT_LENGTH,
         },
+        bucket_bones: &["foot_l", "ball_l"],
         parent: Some(RagdollBodyPart::LeftCalf),
         joint: Some(JointSpec::Spherical {
             angular_damping: ANKLE_ANGULAR_DAMPING,
@@ -400,9 +417,10 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::RightThigh,
         name: "right_thigh",
-        shape: Shape::Capsule { radius: THIGH_RADIUS },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("thigh_r"),
         end: BonePoint::Joint("calf_r"),
+        bucket_bones: &["thigh_r"],
         parent: Some(RagdollBodyPart::Torso),
         joint: Some(JointSpec::Spherical {
             angular_damping: HIP_ANGULAR_DAMPING,
@@ -411,9 +429,10 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::RightCalf,
         name: "right_calf",
-        shape: Shape::Capsule { radius: CALF_RADIUS },
+        shape: Shape::Capsule,
         start: BonePoint::Joint("calf_r"),
         end: BonePoint::Joint("foot_r"),
+        bucket_bones: &["calf_r"],
         parent: Some(RagdollBodyPart::RightThigh),
         joint: Some(JointSpec::Revolute {
             angle_limits: (-0.1, 2.6),
@@ -422,12 +441,13 @@ const LIMBS: &[LimbSpec] = &[
     LimbSpec {
         part: RagdollBodyPart::RightFoot,
         name: "right_foot",
-        shape: Shape::Capsule { radius: FOOT_RADIUS },
+        shape: Shape::Cuboid,
         start: BonePoint::Joint("foot_r"),
         end: BonePoint::Extended {
             toward: "ball_r",
             length: FOOT_LENGTH,
         },
+        bucket_bones: &["foot_r", "ball_r"],
         parent: Some(RagdollBodyPart::RightCalf),
         joint: Some(JointSpec::Spherical {
             angular_damping: ANKLE_ANGULAR_DAMPING,
@@ -448,10 +468,11 @@ fn measure_point(
 ) -> Option<Vec3> {
     match point {
         BonePoint::Joint(name) => get_bone_position(name, bones, transforms),
-        BonePoint::First(list_bone_names) => list_bone_names
-            .iter()
-            .find_map(|name| get_bone_position(name, bones, transforms)),
-        BonePoint::Raised { bone, offset } => Some(get_bone_position(bone, bones, transforms)? + offset),
+        BonePoint::Raised { bone, local_offset } => {
+            let head_entity = bones.get(bone)?;
+            let head_transform = transforms.get(head_entity).ok()?;
+            Some(head_transform.translation() + head_transform.rotation() * local_offset)
+        }
         BonePoint::Extended { toward, length } => {
             let toward_position = get_bone_position(toward, bones, transforms)?;
             let direction = (toward_position - start_position).try_normalize()?;
@@ -467,20 +488,166 @@ fn measure_limb(
 ) -> Option<(Transform, MeasuredLimb)> {
     let start = measure_point(spec.start, Vec3::ZERO, bones, transforms)?;
     let end = measure_point(spec.end, start, bones, transforms)?;
-    let segment = match spec.shape {
-        Shape::Capsule { .. } => Some(Segment::create_between(start, end)?),
-        Shape::Sphere { .. } => None,
-    };
-    let transform = segment
-        .map(Segment::transform)
-        .unwrap_or_else(|| Transform::from_translation(end));
-    Some((transform, MeasuredLimb { anchor: start, segment }))
+    let segment = Segment::create_between(start, end)?;
+    Some((segment.transform(), MeasuredLimb { anchor: start, segment }))
 }
 
 #[derive(Clone, Copy)]
 struct MeasuredLimb {
     anchor: Vec3,
-    segment: Option<Segment>,
+    segment: Segment,
+}
+
+struct SkinnedVertices {
+    world_positions: Vec<Vec3>,
+    dominant_bones: Vec<Box<str>>,
+}
+
+#[derive(SystemParam)]
+struct RagdollSceneContext<'w, 's> {
+    transforms: Query<'w, 's, &'static GlobalTransform>,
+    parents: Query<'w, 's, &'static ChildOf>,
+    children: Query<'w, 's, &'static Children>,
+    skinned_meshes: Query<'w, 's, (&'static SkinnedMesh, &'static Mesh3d)>,
+    mesh_assets: Res<'w, Assets<Mesh>>,
+    names: Query<'w, 's, &'static Name>,
+}
+
+fn collect_skinned_vertices(bones: &BoneMap, scene: &RagdollSceneContext) -> Option<SkinnedVertices> {
+    let skeleton_root = bones.get("root")?;
+    let armature = scene.parents.get(skeleton_root).ok()?.parent();
+    let armature_global = scene.transforms.get(armature).ok()?.compute_transform();
+    let mut world_positions = Vec::new();
+    let mut dominant_bones = Vec::new();
+    for entity in scene.children.iter_descendants(armature) {
+        let Ok((skinned_mesh, mesh_handle)) = scene.skinned_meshes.get(entity) else {
+            continue;
+        };
+        let Some(mesh) = scene.mesh_assets.get(&mesh_handle.0) else {
+            continue;
+        };
+        let Some(vertex_positions) = mesh_attribute_positions(mesh) else {
+            continue;
+        };
+        let Some(joint_indices) = mesh_attribute_joint_indices(mesh) else {
+            continue;
+        };
+        let Some(joint_weights) = mesh_attribute_joint_weights(mesh) else {
+            continue;
+        };
+        for (vertex_index, &vertex_position) in vertex_positions.iter().enumerate() {
+            let mut strongest_influence: Option<(u16, f32)> = None;
+            for (&joint_index, weight) in joint_indices[vertex_index].iter().zip(joint_weights[vertex_index]) {
+                let beats_strongest = strongest_influence.is_none_or(|(_, strongest_weight)| weight > strongest_weight);
+                if beats_strongest {
+                    strongest_influence = Some((joint_index, weight));
+                }
+            }
+            let Some((joint_index, weight)) = strongest_influence else {
+                continue;
+            };
+            if weight < DOMINANT_WEIGHT_THRESHOLD {
+                continue;
+            }
+            let Some(&joint_entity) = skinned_mesh.joints.get(joint_index as usize) else {
+                continue;
+            };
+            let Ok(joint_name) = scene.names.get(joint_entity) else {
+                continue;
+            };
+            world_positions.push(armature_global * Vec3::from_array(vertex_position));
+            dominant_bones.push(joint_name.as_str().into());
+        }
+    }
+    (!world_positions.is_empty()).then_some(SkinnedVertices {
+        world_positions,
+        dominant_bones,
+    })
+}
+
+fn mesh_attribute_positions(mesh: &Mesh) -> Option<&Vec<[f32; 3]>> {
+    match mesh.try_attribute(Mesh::ATTRIBUTE_POSITION) {
+        Ok(VertexAttributeValues::Float32x3(values)) => Some(values),
+        _ => None,
+    }
+}
+
+fn mesh_attribute_joint_indices(mesh: &Mesh) -> Option<&Vec<[u16; 4]>> {
+    match mesh.try_attribute(Mesh::ATTRIBUTE_JOINT_INDEX) {
+        Ok(VertexAttributeValues::Uint16x4(values)) => Some(values),
+        _ => None,
+    }
+}
+
+fn mesh_attribute_joint_weights(mesh: &Mesh) -> Option<&Vec<[f32; 4]>> {
+    match mesh.try_attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT) {
+        Ok(VertexAttributeValues::Float32x4(values)) => Some(values),
+        _ => None,
+    }
+}
+
+fn fit_limb_collider(spec: &LimbSpec, vertices: &SkinnedVertices, segment: Segment) -> Collider {
+    let axis_direction = segment.rotation * Vec3::Y;
+    let mut along_axis = Vec::new();
+    let mut perpendicular_distances = Vec::new();
+    for (&vertex_position, dominant_bone) in vertices.world_positions.iter().zip(&vertices.dominant_bones) {
+        if !spec.bucket_bones.contains(&&**dominant_bone) {
+            continue;
+        }
+        let offset = vertex_position - segment.start;
+        along_axis.push(offset.dot(axis_direction));
+        perpendicular_distances.push(offset.reject_from(axis_direction).length());
+    }
+    if along_axis.is_empty() {
+        return fallback_limb_collider(spec, segment);
+    }
+    let perpendicular_radius =
+        percentile(&mut perpendicular_distances, COLLIDER_FIT_PERCENTILE).max(MINIMUM_COLLIDER_RADIUS);
+    match spec.shape {
+        Shape::Capsule => {
+            let cylinder_half_height = (segment.length * 0.5 - perpendicular_radius).max(0.01);
+            Collider::capsule(perpendicular_radius, cylinder_half_height * 2.0)
+        }
+        Shape::Cuboid => {
+            let lowest_along_axis = percentile(&mut along_axis, 0.05);
+            let highest_along_axis = percentile(&mut along_axis, 0.95);
+            let cross_section_radius =
+                percentile(&mut perpendicular_distances, CUBOID_CROSS_SECTION_PERCENTILE).max(MINIMUM_COLLIDER_RADIUS);
+            let half_length = highest_along_axis
+                .abs()
+                .max(lowest_along_axis.abs())
+                .min(segment.length * 0.5)
+                .max(MINIMUM_COLLIDER_RADIUS);
+            Collider::cuboid(
+                cross_section_radius * 2.0,
+                half_length * 2.0,
+                cross_section_radius * 2.0,
+            )
+        }
+    }
+}
+
+fn fallback_limb_collider(spec: &LimbSpec, segment: Segment) -> Collider {
+    let fallback_radius = match spec.part {
+        RagdollBodyPart::Torso => 0.24,
+        RagdollBodyPart::Head => 0.16,
+        RagdollBodyPart::LeftUpperArm | RagdollBodyPart::RightUpperArm => 0.06,
+        RagdollBodyPart::LeftForearm | RagdollBodyPart::RightForearm => 0.05,
+        RagdollBodyPart::LeftHand | RagdollBodyPart::RightHand => 0.06,
+        RagdollBodyPart::LeftThigh | RagdollBodyPart::RightThigh => 0.08,
+        RagdollBodyPart::LeftCalf | RagdollBodyPart::RightCalf => 0.06,
+        RagdollBodyPart::LeftFoot | RagdollBodyPart::RightFoot => 0.035,
+    };
+    match spec.shape {
+        Shape::Capsule => Collider::capsule(fallback_radius, segment.length),
+        Shape::Cuboid => Collider::cuboid(fallback_radius * 2.0, segment.length, fallback_radius * 2.0),
+    }
+}
+
+fn percentile(values: &mut [f32], fraction: f32) -> f32 {
+    values.sort_by(f32::total_cmp);
+    let index = ((values.len() as f32 * fraction).floor() as usize).min(values.len() - 1);
+    values[index]
 }
 
 fn spawn_spherical_joint(
@@ -569,44 +736,34 @@ fn spawn_body(
     enemy: Entity,
     spec: &LimbSpec,
     transform: Transform,
-    segment: Option<Segment>,
+    fitted: Collider,
 ) -> Entity {
-    let collider = match (spec.shape, segment) {
-        (Shape::Capsule { radius }, Some(segment)) => Collider::capsule(radius, segment.length - 2.0 * radius),
-        (Shape::Sphere { radius }, _) => Collider::sphere(radius),
-        _ => unreachable!("capsule limbs always have a measured segment"),
-    };
-
-    let mut body = commands.spawn((
-        Name::new(spec.name),
-        OwnedByEnemy(enemy),
-        spec.part,
-        RigidBody::Dynamic,
-        AngularDamping(ANGULAR_DAMPING),
-        LinearDamping(LINEAR_DAMPING),
-        SleepThreshold {
-            linear: 0.15,
-            angular: RAGDOLL_ANGULAR_SLEEP_THRESHOLD,
-        },
-        collider,
-        ColliderDensity(1000.0),
-        CollisionLayers::new(RAGDOLL_GROUP, WORLD_GROUP),
-        Friction::new(0.1).with_combine_rule(CoefficientCombine::Min),
-        transform,
-    ));
-
-    if matches!(spec.shape, Shape::Sphere { .. }) {
-        body.insert(Restitution::ZERO);
-    }
-
-    body.id()
+    commands
+        .spawn((
+            Name::new(spec.name),
+            OwnedByEnemy(enemy),
+            spec.part,
+            RigidBody::Dynamic,
+            AngularDamping(ANGULAR_DAMPING),
+            LinearDamping(LINEAR_DAMPING),
+            SleepThreshold {
+                linear: 0.15,
+                angular: RAGDOLL_ANGULAR_SLEEP_THRESHOLD,
+            },
+            ColliderDensity(COLLIDER_DENSITY),
+            CollisionLayers::new(RAGDOLL_GROUP, WORLD_GROUP),
+            Friction::new(0.1).with_combine_rule(CoefficientCombine::Min),
+            transform,
+            fitted,
+        ))
+        .id()
 }
 
 fn compute_hinge_axis(limbs: &HashMap<RagdollBodyPart, MeasuredLimb>) -> Vec3 {
     let left_shoulder = limbs[&RagdollBodyPart::LeftUpperArm].anchor;
     let right_shoulder = limbs[&RagdollBodyPart::RightUpperArm].anchor;
     let shoulder_axis = (left_shoulder - right_shoulder).try_normalize().unwrap_or(Vec3::X);
-    let torso_axis = limbs[&RagdollBodyPart::Torso].segment.unwrap().rotation * Vec3::Y;
+    let torso_axis = limbs[&RagdollBodyPart::Torso].segment.rotation * Vec3::Y;
     shoulder_axis.cross(torso_axis).try_normalize().unwrap_or(Vec3::Z)
 }
 
@@ -640,12 +797,7 @@ type PendingRagdollQuery<'w, 's> = Query<
     ),
 >;
 
-fn spawn_ragdoll_bodies(
-    mut commands: Commands,
-    pending: PendingRagdollQuery<'_, '_>,
-    transforms: Query<&GlobalTransform>,
-    parents: Query<&ChildOf>,
-) {
+fn spawn_ragdoll_bodies(mut commands: Commands, pending: PendingRagdollQuery<'_, '_>, scene: RagdollSceneContext) {
     for (root, bones, _, dying, already_spawned) in &pending {
         if already_spawned {
             commands.entity(root).remove::<PendingRagdoll>();
@@ -662,19 +814,24 @@ fn spawn_ragdoll_bodies(
             continue;
         }
 
+        let Some(skinned_vertices) = collect_skinned_vertices(bones, &scene) else {
+            warn!("Cannot create ragdoll for {root:?}: no skinned mesh vertices");
+            commands.entity(root).remove::<PendingRagdoll>();
+            continue;
+        };
+
         let mut limbs: HashMap<RagdollBodyPart, MeasuredLimb> = HashMap::new();
         let mut part_entities: HashMap<RagdollBodyPart, Entity> = HashMap::new();
         let mut parts: Vec<RigPart> = Vec::new();
 
         for spec in LIMBS {
-            let Ok((transform, measured)) = measure_limb(spec, bones, &transforms)
-                .ok_or(spec.name)
-                .inspect_err(|&name| warn!("Cannot create ragdoll for {root:?}: cannot measure limb {name}"))
-            else {
+            let Some((transform, measured)) = measure_limb(spec, bones, &scene.transforms) else {
+                warn!("Cannot create ragdoll for {root:?}: cannot measure limb {}", spec.name);
                 break;
             };
 
-            let entity = spawn_body(&mut commands, root, spec, transform, measured.segment);
+            let collider = fit_limb_collider(spec, &skinned_vertices, measured.segment);
+            let entity = spawn_body(&mut commands, root, spec, transform, collider);
             if !dying {
                 commands.entity(entity).insert(RigidBodyDisabled);
             }
@@ -698,7 +855,7 @@ fn spawn_ragdoll_bodies(
         }
 
         let torso_entity = part_entities[&RagdollBodyPart::Torso];
-        let mut bones_by_part = assign_drivers(bones, part_entities, &parents, &transforms, torso_entity);
+        let mut bones_by_part = assign_drivers(bones, part_entities, &scene.parents, &scene.transforms, torso_entity);
 
         for part in parts.iter_mut() {
             part.bones = bones_by_part.remove(&part.entity).unwrap_or_default();
@@ -779,8 +936,8 @@ fn spawn_joint(
                     parent: parent_entity,
                     child: child_entity,
                 },
-                limbs[&parent_part].segment.unwrap(),
-                child_measured.segment.unwrap(),
+                limbs[&parent_part].segment,
+                child_measured.segment,
                 compute_hinge_axis(limbs),
                 angle_limits,
             );

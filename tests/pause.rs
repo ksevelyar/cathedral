@@ -1,13 +1,13 @@
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
-use cathedral::app::build_headless_app;
+use cathedral::app::build_test_app;
 use cathedral::maps::CurrentMap;
 use cathedral::state::GameState;
 use cathedral::ui::setup_pause_menu;
 
 fn create_test_app() -> App {
-    let mut app = build_headless_app(CurrentMap::FlatFloor, None);
+    let mut app = build_test_app(CurrentMap::FlatFloor, None);
     app.add_systems(OnEnter(GameState::Paused), setup_pause_menu);
     app
 }

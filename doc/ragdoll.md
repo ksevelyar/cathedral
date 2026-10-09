@@ -1,9 +1,8 @@
 # Ragdoll
 ## Contract
-* A living enemy is driven entirely by animation. The physics bodies exist only as colliders for bullet rays.
+* A living enemy is driven by animation. The physics bodies exist only as colliders for bullet rays.
 * A killing hit applies an impulse to the hit body part.
 * After death, physics drives the bones.
-* The limbs are a torso capsule, a head sphere, upper arms, forearms, hands, thighs, calves, and feet.
 
 ## Scenario: a gunner is shot in the head
 ### Spawn the gunner

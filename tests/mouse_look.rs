@@ -2,12 +2,12 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
-use cathedral::app::build_headless_app;
+use cathedral::app::build_test_app;
 use cathedral::maps::CurrentMap;
 use cathedral::player::{CameraState, Player};
 
 fn create_test_app() -> App {
-    build_headless_app(CurrentMap::FlatFloor, None)
+    build_test_app(CurrentMap::FlatFloor, None)
 }
 
 fn find_player_entity(app: &mut App) -> Entity {

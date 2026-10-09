@@ -1,5 +1,4 @@
 mod map01;
-mod map02;
 mod meshes;
 pub mod pieces;
 pub mod test_maps;
@@ -7,7 +6,7 @@ pub mod test_maps;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
-use crate::enemies::{Dying, Enemy, EnemyKind, spawn_enemy};
+use crate::enemies::{EnemyKind, spawn_enemy};
 use crate::player;
 use pieces::Piece;
 use pieces::PieceSpawnContext;
@@ -18,7 +17,6 @@ impl Plugin for MapsPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<CurrentMap>()
             .add_systems(Startup, load_current_map.before(player::setup_player))
-            .add_systems(Update, advance_map)
             .add_systems(
                 FixedPostUpdate,
                 pieces::update_lamp_wires.after(TransformSystems::Propagate),
@@ -30,10 +28,10 @@ impl Plugin for MapsPlugin {
 pub enum CurrentMap {
     #[default]
     Map01,
-    Map02,
     FlatFloor,
     TallPillar,
     Staircase,
+    ColliderInspection,
 }
 
 #[derive(Resource, Clone, Copy)]
@@ -51,9 +49,6 @@ impl PlayerPosition {
     }
 }
 
-#[derive(Component)]
-pub(super) struct Arena;
-
 struct Map {
     ambient: GlobalAmbientLight,
     clear_color: ClearColor,
@@ -70,8 +65,9 @@ struct EnemySpawn {
 fn build_map(map: &CurrentMap) -> Map {
     match map {
         CurrentMap::Map01 => map01::build_map(),
-        CurrentMap::Map02 => map02::build_map(),
-        CurrentMap::FlatFloor | CurrentMap::TallPillar | CurrentMap::Staircase => test_maps::build_map(map),
+        CurrentMap::FlatFloor | CurrentMap::TallPillar | CurrentMap::Staircase | CurrentMap::ColliderInspection => {
+            test_maps::build_map(map)
+        }
     }
 }
 
@@ -124,37 +120,6 @@ fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &
             true,
         );
     }
-}
-
-fn advance_map(
-    mut current: ResMut<CurrentMap>,
-    enemies: Query<(Entity, Has<Dying>), With<Enemy>>,
-    arenas: Query<Entity, With<Arena>>,
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let all_dead = !enemies.is_empty() && enemies.iter().all(|(_, dying)| dying);
-    if *current != CurrentMap::Map01 || !all_dead {
-        return;
-    }
-
-    for entity in &arenas {
-        commands.entity(entity).despawn();
-    }
-    for (entity, _) in &enemies {
-        commands.entity(entity).despawn();
-    }
-    *current = CurrentMap::Map02;
-    spawn_map(
-        &current,
-        None,
-        &mut commands,
-        &asset_server,
-        &mut meshes,
-        &mut materials,
-    );
 }
 
 pub(crate) fn restart(

@@ -1,6 +1,6 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use cathedral::app::build_headless_app;
+use cathedral::app::build_test_app;
 use cathedral::enemies::{Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
 use cathedral::maps::{CurrentMap, PlayerPosition};
 use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart};
@@ -19,16 +19,6 @@ fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind
         Transform::from_xyz(0.0, 0.5, 0.0),
         true,
     );
-}
-
-fn create_test_app(kind: EnemyKind) -> App {
-    let fixed_timestep = Duration::from_secs_f64(support::FIXED_TIMESTEP_SECONDS);
-    let player_position = PlayerPosition::new(Vec3::new(5.0, 0.5, 0.0));
-    let mut app = build_headless_app(CurrentMap::FlatFloor, Some(player_position));
-    app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
-        .insert_resource(TestEnemyKind(kind))
-        .add_systems(Startup, spawn_test_enemy);
-    app
 }
 
 fn wait_for_inert_ragdoll(app: &mut App) {
@@ -57,7 +47,12 @@ fn wait_for_inert_ragdoll(app: &mut App) {
 }
 
 fn spawn_walking_enemy_with_player(kind: EnemyKind) -> (App, Entity) {
-    let mut app = create_test_app(kind);
+    let fixed_timestep = Duration::from_secs_f64(support::FIXED_TIMESTEP_SECONDS);
+    let player_position = PlayerPosition::new(Vec3::new(5.0, 0.5, 0.0));
+    let mut app = build_test_app(CurrentMap::FlatFloor, Some(player_position));
+    app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
+        .insert_resource(TestEnemyKind(kind))
+        .add_systems(Startup, spawn_test_enemy);
     wait_for_inert_ragdoll(&mut app);
     let enemy = app
         .world_mut()

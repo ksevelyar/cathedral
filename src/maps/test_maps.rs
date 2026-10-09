@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
 use super::pieces::{Piece, build_default_cuboid};
-use super::{CurrentMap, Map, PlayerPosition};
+use super::{CurrentMap, EnemySpawn, Map, PlayerPosition};
+use crate::enemies::{EnemyKind, Fighter};
 
 pub const TEST_FLOOR_SIZE: Vec3 = Vec3::new(60.0, 0.1, 60.0);
 pub const TALL_PILLAR_POSITION: Vec3 = Vec3::new(0.0, 10.0, 0.0);
@@ -31,6 +32,19 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
             player_position: PlayerPosition::new(Vec3::new(0.0, 1.5, 12.0)),
             enemies: vec![],
             pieces: spawn_staircase_pieces(),
+        },
+        CurrentMap::ColliderInspection => Map {
+            ambient: GlobalAmbientLight::default(),
+            clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
+            player_position: PlayerPosition {
+                position: Vec3::new(0.0, 1.8, 3.0),
+                look_at: Vec3::new(0.0, 1.0, 0.0),
+            },
+            enemies: vec![EnemySpawn {
+                position: Vec3::ZERO,
+                kind: EnemyKind::Fighter(Fighter::default()),
+            }],
+            pieces: vec![build_floor()],
         },
         _ => unreachable!("test map definitions only cover test maps"),
     }

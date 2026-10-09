@@ -2,7 +2,7 @@ use bevy::ecs::system::RunSystemOnce;
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
-use cathedral::app::build_headless_app;
+use cathedral::app::build_test_app;
 use cathedral::enemies::{AnimationState, EnemyActivity, EnemyKind, Fighter, spawn_enemy};
 use cathedral::maps::test_maps::{TALL_PILLAR_POSITION, TALL_PILLAR_SIZE};
 use cathedral::maps::{CurrentMap, PlayerPosition};
@@ -26,7 +26,7 @@ const STAIR_CROSSING_POSITION: f32 = -1.0;
 
 fn create_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
-    let mut app = build_headless_app(map, player_position);
+    let mut app = build_test_app(map, player_position);
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
     app.update();
     app
