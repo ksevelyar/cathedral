@@ -16,13 +16,13 @@ impl Default for Fighter {
     fn default() -> Self {
         Self {
             rig: EnemyRig {
-                scene: "animation/Unreal-Godot/UAL1_Standard.glb",
-                animation_source: "animation/Unreal-Godot/UAL1_Standard.glb",
+                scene: "characters/animations/ual1-standard.glb",
+                animation_source: "characters/animations/ual1-standard.glb",
                 idle_animation: 40,
                 moving_animation: 36,
                 attack_animation: 39,
                 weapon: WeaponSpec {
-                    path: "weapon/katana.glb",
+                    path: "weapons/katana.glb",
                     scale: 1.0,
                     rotation_euler_yxz: (0.0, 0.0, 0.0),
                     translation: Vec3::ZERO,

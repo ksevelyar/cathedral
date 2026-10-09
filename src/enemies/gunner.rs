@@ -17,13 +17,13 @@ impl Default for Gunner {
     fn default() -> Self {
         Self {
             rig: EnemyRig {
-                scene: "universal-base-characters/Base Characters/Godot - UE/Superhero_Female_FullBody.gltf",
-                animation_source: "animation/Unreal-Godot/UAL1_Standard.glb",
+                scene: "characters/bodies/female.gltf",
+                animation_source: "characters/animations/ual1-standard.glb",
                 idle_animation: 21,
                 moving_animation: 36,
                 attack_animation: 23,
                 weapon: WeaponSpec {
-                    path: "weapon/pistol.glb",
+                    path: "weapons/pistol.glb",
                     scale: 0.15,
                     rotation_euler_yxz: (1.5240, 0.0217, 1.3841),
                     translation: Vec3::new(-0.05, 0.0, 0.0),

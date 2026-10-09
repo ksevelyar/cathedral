@@ -3,11 +3,9 @@ use std::io::{self, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use avian3d::prelude::PhysicsPlugins;
-use avian3d::prelude::SubstepCount;
+use avian3d::prelude::{PhysicsDebugPlugin, PhysicsGizmos, PhysicsPlugins, SubstepCount};
 use bevy::app::{PluginGroup, SubApps};
 use bevy::asset::RenderAssetUsages;
-use bevy::audio::AudioPlugin;
 use bevy::camera::RenderTarget;
 use bevy::diagnostic::FrameCount;
 use bevy::gltf::GltfPlugin;
@@ -105,16 +103,16 @@ use bevy::winit::WinitPlugin;
 use bevy::world_serialization::WorldSerializationPlugin;
 
 use crate::{
-    GamePlugin,
     enemies::EnemiesPlugin,
     maps::{CurrentMap, MapsPlugin, PlayerPosition},
     player::{CameraState, Player, PlayerPlugin},
     ragdoll::RagdollPlugin,
-    shooting::ShootingPlugin,
+    shooting::{Gun, ShootingPlugin},
     state::GameStatePlugin,
+    ui::UiPlugin,
 };
 
-const FIRST_CAPTURE_FRAME: u32 = 16;
+const FIRST_CAPTURE_FRAME: u32 = 200;
 
 fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
     ImageSamplerDescriptor {
@@ -126,19 +124,36 @@ fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
     .clone()
 }
 
-pub fn build_app() -> App {
+pub fn build_gui_app() -> App {
     initialize_logging();
     let mut app = App::new();
+    app.add_plugins(DefaultPlugins.build().disable::<LogPlugin>().set(ImagePlugin {
+        default_sampler: make_tiling_image_sampler(),
+    }));
     app.add_plugins((
-        DefaultPlugins.build().disable::<LogPlugin>().set(ImagePlugin {
-            default_sampler: make_tiling_image_sampler(),
-        }),
-        GamePlugin,
-    ));
+        PhysicsPlugins::default(),
+        PhysicsDebugPlugin,
+        GameStatePlugin,
+        MapsPlugin,
+        PlayerPlugin,
+        EnemiesPlugin,
+        RagdollPlugin,
+        ShootingPlugin,
+        UiPlugin,
+    ))
+    .insert_resource(SubstepCount(30))
+    .add_systems(Startup, crate::player::setup_player)
+    .insert_gizmo_config(
+        PhysicsGizmos::default(),
+        GizmoConfig {
+            enabled: false,
+            ..default()
+        },
+    );
     app
 }
 
-pub fn build_headless_app(map: CurrentMap, player_position: Option<PlayerPosition>) -> App {
+pub fn build_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) -> App {
     let mut app = App::new();
     app.insert_resource(map);
     if let Some(player_position) = player_position {
@@ -149,7 +164,6 @@ pub fn build_headless_app(map: CurrentMap, player_position: Option<PlayerPositio
         TransformPlugin,
         AssetPlugin::default(),
         InputPlugin,
-        AudioPlugin::default(),
         WorldSerializationPlugin,
         MeshPlugin,
         AnimationPlugin,
@@ -181,14 +195,20 @@ pub struct ScreenshotApp(pub SubApps);
 #[derive(Resource)]
 struct ScreenshotDir(String);
 
+#[derive(Resource)]
+struct ScreenshotName(&'static str);
+
 #[derive(Resource, Default)]
 pub struct CapturedScreenshots(pub Vec<Image>);
 
-pub fn build_headless_screenshot_app(
+pub fn build_screenshot_app(
+    map: CurrentMap,
     viewpoint: Option<(Vec3, Vec3)>,
     render_width: u32,
     render_height: u32,
     screenshot_dir: String,
+    screenshot_name: &'static str,
+    show_colliders: bool,
 ) -> ScreenshotApp {
     let render_plugin = RenderPlugin {
         synchronous_pipeline_compilation: true,
@@ -198,6 +218,11 @@ pub fn build_headless_screenshot_app(
         primary_window: None,
         exit_condition: ExitCondition::DontExit,
         ..default()
+    };
+    let physics_gizmos = if show_colliders {
+        PhysicsGizmos::colliders(Color::srgb(1.0, 0.2, 0.2))
+    } else {
+        PhysicsGizmos::default()
     };
 
     let mut app = App::new();
@@ -211,12 +236,36 @@ pub fn build_headless_screenshot_app(
             .set(ImagePlugin {
                 default_sampler: make_tiling_image_sampler(),
             }),
+    );
+    app.add_plugins((
+        PhysicsPlugins::default(),
+        PhysicsDebugPlugin,
+        GameStatePlugin,
+        MapsPlugin,
+        PlayerPlugin,
+        EnemiesPlugin,
+        RagdollPlugin,
+        ShootingPlugin,
+        UiPlugin,
+    ))
+    .insert_resource(SubstepCount(30))
+    .add_systems(Startup, crate::player::setup_player)
+    .insert_gizmo_config(
+        physics_gizmos,
+        GizmoConfig {
+            enabled: show_colliders,
+            ..default()
+        },
     )
-    .add_plugins(GamePlugin)
+    .insert_resource(map)
     .insert_resource(ScreenshotDir(screenshot_dir))
+    .insert_resource(ScreenshotName(screenshot_name))
     .insert_resource(CapturedScreenshots::default())
     .insert_resource(Viewpoint(viewpoint))
     .add_systems(Update, (attach_screenshot_camera, capture_screenshots));
+    if show_colliders {
+        app.add_systems(Update, hide_screenshot_weapons);
+    }
     let render_target = create_render_target(&mut app, render_width, render_height);
     app.insert_resource(ScreenshotRenderTarget(render_target));
 
@@ -267,6 +316,16 @@ fn attach_screenshot_camera(
 }
 
 impl ScreenshotApp {
+    pub fn run_until_screenshot_captured(&mut self) -> &CapturedScreenshots {
+        loop {
+            self.update();
+            let captured_screenshots = self.0.main.world().resource::<CapturedScreenshots>();
+            if !captured_screenshots.0.is_empty() {
+                return captured_screenshots;
+            }
+        }
+    }
+
     pub fn update(&mut self) {
         self.0.update();
         self.0
@@ -288,9 +347,16 @@ struct Viewpoint(Option<(Vec3, Vec3)>);
 #[derive(Component)]
 struct ScreenshotCamera;
 
+fn hide_screenshot_weapons(mut weapons: Query<&mut Visibility, With<Gun>>) {
+    for mut visibility in &mut weapons {
+        *visibility = Visibility::Hidden;
+    }
+}
+
 fn capture_screenshots(
     frame_count: Res<FrameCount>,
     screenshot_dir: Res<ScreenshotDir>,
+    screenshot_name: Res<ScreenshotName>,
     screenshot_target: Res<ScreenshotRenderTarget>,
     mut commands: Commands,
 ) {
@@ -300,9 +366,10 @@ fn capture_screenshots(
     commands
         .spawn(Screenshot::image(screenshot_target.0.clone()))
         .observe(save_to_disk(format!(
-            "{}/{}-map01.png",
+            "{}/{}-{}.png",
             screenshot_dir.0,
-            env!("CARGO_PKG_VERSION")
+            env!("CARGO_PKG_VERSION"),
+            screenshot_name.0
         )))
         .observe(collect_captured_screenshot);
 }

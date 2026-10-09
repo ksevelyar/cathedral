@@ -3,7 +3,6 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
-use super::Arena;
 use super::meshes::{CYLINDER_RADIAL_SEGMENTS, build_cuboid_mesh, make_cylinder_mesh};
 use crate::ragdoll::{OBJECTS_GROUP, WORLD_GROUP};
 
@@ -15,7 +14,6 @@ pub(super) struct Piece {
 enum Item {
     Cuboid(Cuboid),
     Lamp(Lamp),
-    Torch(Torch),
 }
 
 struct Cuboid {
@@ -28,16 +26,11 @@ struct Lamp {
     wire_length: f32,
 }
 
-struct Torch {
-    position: Vec3,
-}
-
 impl Item {
     fn get_position(&self) -> Vec3 {
         match self {
             Item::Cuboid(build_cuboid) => build_cuboid.position,
             Item::Lamp(_) => Vec3::ZERO,
-            Item::Torch(torch) => torch.position,
         }
     }
 }
@@ -96,26 +89,10 @@ impl<'c, 'w, 's> PieceSpawnContext<'c, 'w, 's> {
     fn spawn_mesh_cuboid(&mut self, transform: Transform, size: Vec3, material: &Material) {
         let handle = self.find_material_handle(material);
         self.commands.spawn((
-            Arena,
             Mesh3d(self.meshes.add(build_cuboid_mesh(size, get_tile_size(material)))),
             MeshMaterial3d(handle),
             RigidBody::Static,
             Collider::cuboid(size.x, size.y, size.z),
-            transform,
-        ));
-    }
-
-    fn spawn_point_light(&mut self, transform: Transform, color: Color, intensity: f32, range: f32, radius: f32) {
-        self.commands.spawn((
-            Arena,
-            PointLight {
-                intensity,
-                color,
-                range,
-                radius,
-                shadow_maps_enabled: true,
-                ..default()
-            },
             transform,
         ));
     }
@@ -129,7 +106,6 @@ pub(super) fn spawn_piece(piece: &Piece, context: &mut PieceSpawnContext) {
                 context.spawn_mesh_cuboid(transform, build_cuboid.size, &build_cuboid.material)
             }
             Item::Lamp(lamp) => spawn_lamp(context, piece.transform, lamp.wire_length),
-            Item::Torch(_) => spawn_torch(context, transform),
         }
     }
 }
@@ -177,14 +153,15 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
     let lamp_reflector_radius = 0.26;
     let lamp_reflector_height = 0.02;
     let lamp_wire_radius = 0.02;
-    let lamp_shade_mass = 1.5;
+    let lamp_shade_mass = 16.0;
     let links_per_meter = 10.0;
     let cable_collider_radius = 0.04;
-    let link_mass_per_meter = 0.5;
-    let lamp_linear_damping = 2.0;
+    let link_mass_per_meter = 2.5;
+    let lamp_linear_damping = 0.5;
     let lamp_angular_damping = 1.0;
-    let link_linear_damping = 1.0;
-    let link_angular_damping = 2.0;
+    let link_linear_damping = 0.3;
+    let link_angular_damping = 32.0;
+    let cable_joint_angular_damping = 4.0;
 
     let shade_material = context.find_material_handle(&Material::Solid {
         color: lamp_shade_color,
@@ -209,10 +186,11 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
         let link_body = context
             .commands
             .spawn((
+                Name::new(format!("Lamp cable link {link_index}")),
                 RigidBody::Dynamic,
                 Transform::from_translation(link_position),
                 Collider::capsule(cable_collider_radius, link_length),
-                CollisionLayers::new(OBJECTS_GROUP, WORLD_GROUP | OBJECTS_GROUP),
+                CollisionLayers::new(OBJECTS_GROUP, WORLD_GROUP),
                 Mass(link_length * link_mass_per_meter),
                 LinearDamping(link_linear_damping),
                 AngularDamping(link_angular_damping),
@@ -227,6 +205,10 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
             SphericalJoint::new(previous_body, link_body)
                 .with_local_anchor1(previous_body_anchor)
                 .with_local_anchor2(Vec3::Y * link_length * 0.5),
+            JointDamping {
+                linear: 0.0,
+                angular: cable_joint_angular_damping,
+            },
             JointCollisionDisabled,
         ));
         link_bodies.push(link_body);
@@ -240,6 +222,7 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
     let lamp_body = context
         .commands
         .spawn((
+            Name::new("Lamp shade"),
             RigidBody::Dynamic,
             HangingLamp,
             LampShade,
@@ -263,6 +246,10 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
         SphericalJoint::new(previous_body, lamp_body)
             .with_local_anchor1(Vec3::Y * -link_length * 0.5)
             .with_local_anchor2(Vec3::Y * lamp_shade_height * 0.5),
+        JointDamping {
+            linear: 0.0,
+            angular: cable_joint_angular_damping,
+        },
         JointCollisionDisabled,
     ));
 
@@ -497,30 +484,6 @@ fn build_lamp_wire_indices(point_count: usize) -> Vec<u32> {
     indices
 }
 
-fn spawn_torch(context: &mut PieceSpawnContext, transform: Transform) {
-    let torch_handle_size = Vec3::new(0.15, 0.4, 0.15);
-    let torch_handle_color = Color::srgb(0.35, 0.2, 0.1);
-    let torch_fire_offset = Vec3::new(0.0, 0.3, -0.25);
-    let torch_fire_color = Color::srgb(1.0, 0.6, 0.2);
-    let torch_fire_intensity = 900_000.0;
-    let torch_fire_range = 12.0;
-    let torch_fire_radius = 0.15;
-    context.spawn_mesh_cuboid(
-        transform,
-        torch_handle_size,
-        &Material::Solid {
-            color: torch_handle_color,
-        },
-    );
-    context.spawn_point_light(
-        transform * Transform::from_translation(torch_fire_offset),
-        torch_fire_color,
-        torch_fire_intensity,
-        torch_fire_range,
-        torch_fire_radius,
-    );
-}
-
 fn build_piece(transform: Transform, items: Vec<Item>) -> Piece {
     Piece { transform, items }
 }
@@ -545,11 +508,11 @@ pub(super) fn build_default_cuboid(position: Vec3, size: Vec3) -> Piece {
 }
 
 pub(super) fn make_concrete_material(tile_size: f32) -> Material {
-    let textures = "maps/industrial/textures";
+    let textures = "textures";
 
     Material::Textured {
-        base_color_texture: format!("{textures}/concrete_floor/base_color.jpg"),
-        normal_map_texture: format!("{textures}/concrete_floor/normal.png"),
+        base_color_texture: format!("{textures}/concrete-floor/base-color.jpg"),
+        normal_map_texture: format!("{textures}/concrete-floor/normal.png"),
         metallic_roughness_texture: None,
         roughness: 0.85,
         metallic: 0.0,
@@ -557,66 +520,9 @@ pub(super) fn make_concrete_material(tile_size: f32) -> Material {
     }
 }
 
-pub(super) fn build_stair(transform: Transform, width: f32, steps: u32, step_height: f32, step_depth: f32) -> Piece {
-    let default_cuboid_color = Color::srgb(0.5, 0.5, 0.5);
-    let stair_material = Material::Solid {
-        color: default_cuboid_color,
-    };
-    let items = (0..steps)
-        .map(|step_index| {
-            let along = step_index as f32 + 0.5;
-            Item::Cuboid(Cuboid {
-                position: Vec3::NEG_Z * (step_depth * along) + Vec3::Y * (step_height * along),
-                size: Vec3::new(width, step_height, step_depth),
-                material: stair_material.clone(),
-            })
-        })
-        .collect();
-    build_piece(transform, items)
-}
-
-pub(super) fn build_door(transform: Transform, width: f32, height: f32, thickness: f32) -> Piece {
-    let post_thickness = 0.5;
-    let lintel_thickness = 0.5;
-    let default_cuboid_color = Color::srgb(0.5, 0.5, 0.5);
-    let door_material = Material::Solid {
-        color: default_cuboid_color,
-    };
-    let post_offset = (width + post_thickness) * 0.5;
-    build_piece(
-        transform,
-        vec![
-            Item::Cuboid(Cuboid {
-                position: Vec3::new(-post_offset, height * 0.5, 0.0),
-                size: Vec3::new(post_thickness, height, thickness),
-                material: door_material.clone(),
-            }),
-            Item::Cuboid(Cuboid {
-                position: Vec3::new(post_offset, height * 0.5, 0.0),
-                size: Vec3::new(post_thickness, height, thickness),
-                material: door_material.clone(),
-            }),
-            Item::Cuboid(Cuboid {
-                position: Vec3::new(0.0, height + lintel_thickness * 0.5, 0.0),
-                size: Vec3::new(width + post_thickness * 2.0, lintel_thickness, thickness),
-                material: door_material,
-            }),
-        ],
-    )
-}
-
 pub(super) fn build_hanging_lamp(pivot_position: Vec3, wire_length: f32) -> Piece {
     build_piece(
         Transform::from_translation(pivot_position),
         vec![Item::Lamp(Lamp { wire_length })],
-    )
-}
-
-pub(super) fn build_wall_torch(transform: Transform) -> Piece {
-    build_piece(
-        transform,
-        vec![Item::Torch(Torch {
-            position: Vec3::new(0.0, 2.2, -0.15),
-        })],
     )
 }

@@ -2,17 +2,41 @@ use std::env;
 use std::process;
 
 use bevy::prelude::*;
-use cathedral::app::{CapturedScreenshots, ScreenshotApp, build_headless_screenshot_app};
+use cathedral::app::build_screenshot_app;
+use cathedral::maps::CurrentMap;
 
 const SCREENSHOT_DIR: &str = "screenshots";
 const RENDER_WIDTH: u32 = 3440;
 const RENDER_HEIGHT: u32 = 1440;
+const COLLIDER_RENDER_WIDTH: u32 = 1440;
+const COLLIDER_RENDER_HEIGHT: u32 = 1440;
 
 fn main() {
-    let viewpoint = parse_viewpoint_arguments(&mut env::args().skip(1));
+    let arguments: Vec<String> = env::args().skip(1).collect();
     std::fs::create_dir_all(SCREENSHOT_DIR).unwrap();
-    let mut app = build_headless_screenshot_app(viewpoint, RENDER_WIDTH, RENDER_HEIGHT, SCREENSHOT_DIR.to_owned());
-    run_until_captured(&mut app);
+    let mut app = if arguments.as_slice() == ["--colliders"] {
+        build_screenshot_app(
+            CurrentMap::ColliderInspection,
+            None,
+            COLLIDER_RENDER_WIDTH,
+            COLLIDER_RENDER_HEIGHT,
+            SCREENSHOT_DIR.to_owned(),
+            "collider-inspection",
+            true,
+        )
+    } else {
+        let viewpoint = parse_viewpoint_arguments(&mut arguments.into_iter());
+        build_screenshot_app(
+            CurrentMap::Map01,
+            viewpoint,
+            RENDER_WIDTH,
+            RENDER_HEIGHT,
+            SCREENSHOT_DIR.to_owned(),
+            "map01",
+            false,
+        )
+    };
+    app.run_until_screenshot_captured();
 }
 
 fn parse_viewpoint_arguments(arguments: &mut dyn Iterator<Item = String>) -> Option<(Vec3, Vec3)> {
@@ -30,15 +54,6 @@ fn parse_viewpoint_arguments(arguments: &mut dyn Iterator<Item = String>) -> Opt
         process::exit(1);
     }
     Some(viewpoint)
-}
-
-fn run_until_captured(app: &mut ScreenshotApp) {
-    loop {
-        app.update();
-        if !app.0.main.world().resource::<CapturedScreenshots>().0.is_empty() {
-            return;
-        }
-    }
 }
 
 fn parse_viewpoint(argument: &str) -> Result<(Vec3, Vec3), String> {

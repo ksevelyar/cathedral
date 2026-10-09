@@ -5,6 +5,7 @@ use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
+use crate::maps::CurrentMap;
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
 use crate::ragdoll::{BoneMap, OwnedByEnemy, setup_ragdoll};
@@ -389,6 +390,7 @@ const ENEMY_COLLISION_RADIUS: f32 = 0.35;
 const ENEMY_COLLISION_CENTER_HEIGHT: f32 = 1.0;
 
 fn update_behaviour(
+    current_map: Res<CurrentMap>,
     time: Res<Time>,
     move_and_slide: MoveAndSlide,
     gravity: Res<Gravity>,
@@ -396,6 +398,9 @@ fn update_behaviour(
     mut enemies: Query<EnemyBehavior, (AliveEnemy, Without<Player>)>,
     owned_bodies: Query<(Entity, &OwnedByEnemy)>,
 ) {
+    if *current_map == CurrentMap::ColliderInspection {
+        return;
+    }
     let Ok(player_transform) = player.single() else {
         return;
     };
