@@ -319,11 +319,12 @@ impl ScreenshotApp {
     pub fn run_until_screenshot_captured(&mut self) -> &CapturedScreenshots {
         loop {
             self.update();
-            let captured_screenshots = self.0.main.world().resource::<CapturedScreenshots>();
-            if !captured_screenshots.0.is_empty() {
-                return captured_screenshots;
+            if !self.0.main.world().resource::<CapturedScreenshots>().0.is_empty() {
+                break;
             }
         }
+
+        self.0.main.world().resource::<CapturedScreenshots>()
     }
 
     pub fn update(&mut self) {
