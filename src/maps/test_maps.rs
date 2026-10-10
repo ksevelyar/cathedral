@@ -15,6 +15,7 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
         CurrentMap::FlatFloor => Map {
             ambient: GlobalAmbientLight::NONE,
             clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
+            fog_volume: None,
             player_position: PlayerPosition::new(Vec3::new(0.0, 0.5, 0.0)),
             enemies: vec![],
             pieces: vec![build_floor()],
@@ -22,6 +23,7 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
         CurrentMap::TallPillar => Map {
             ambient: GlobalAmbientLight::NONE,
             clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
+            fog_volume: None,
             player_position: PlayerPosition::new(Vec3::new(-6.0, 1.5, 0.0)),
             enemies: vec![],
             pieces: vec![build_floor(), spawn_tall_pillar()],
@@ -29,6 +31,7 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
         CurrentMap::Staircase => Map {
             ambient: GlobalAmbientLight::NONE,
             clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
+            fog_volume: None,
             player_position: PlayerPosition::new(Vec3::new(0.0, 1.5, 12.0)),
             enemies: vec![],
             pieces: spawn_staircase_pieces(),
@@ -36,6 +39,7 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
         CurrentMap::ColliderInspection => Map {
             ambient: GlobalAmbientLight::default(),
             clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
+            fog_volume: None,
             player_position: PlayerPosition {
                 position: Vec3::new(0.0, 1.8, 3.0),
                 look_at: Vec3::new(0.0, 1.0, 0.0),

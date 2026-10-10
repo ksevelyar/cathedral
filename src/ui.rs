@@ -1,10 +1,13 @@
+use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 
 use crate::shooting::{Crosshair, Gun};
 use crate::state::GameState;
 
-pub struct UiPlugin;
+pub struct UiPlugin {
+    pub show_fps: bool,
+}
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
@@ -13,6 +16,46 @@ impl Plugin for UiPlugin {
             .add_systems(OnEnter(GameState::Paused), setup_pause_menu)
             .add_systems(OnEnter(GameState::GameOver), setup_game_over_menu)
             .add_systems(Update, update_crosshair_and_gun_visibility);
+        if self.show_fps {
+            app.add_plugins(FrameTimeDiagnosticsPlugin::default())
+                .add_systems(Startup, setup_fps_display)
+                .add_systems(Update, update_fps_display);
+        }
+    }
+}
+
+#[derive(Component)]
+struct FpsDisplay;
+
+fn setup_fps_display(mut commands: Commands) {
+    let fps_text_color = Color::srgb(0.55, 0.8, 1.0);
+    commands.spawn((
+        FpsDisplay,
+        Text::new("FPS --"),
+        TextFont {
+            font_size: FontSize::Px(18.0),
+            ..default()
+        },
+        TextColor(fps_text_color),
+        Node {
+            position_type: PositionType::Absolute,
+            top: px(12),
+            right: px(12),
+            ..default()
+        },
+    ));
+}
+
+fn update_fps_display(diagnostics: Res<DiagnosticsStore>, mut fps_displays: Query<&mut Text, With<FpsDisplay>>) {
+    let Some(fps) = diagnostics.get(&FrameTimeDiagnosticsPlugin::FPS) else {
+        return;
+    };
+    let Some(fps_value) = fps.smoothed() else {
+        return;
+    };
+    let fps_text = format!("FPS {fps_value:.0}");
+    for mut fps_display in &mut fps_displays {
+        fps_display.0.clone_from(&fps_text);
     }
 }
 
