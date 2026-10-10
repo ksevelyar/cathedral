@@ -2,10 +2,11 @@ use std::collections::HashSet;
 use std::fs;
 use std::path::PathBuf;
 use std::process;
+use std::sync::Mutex;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use cathedral::app::build_screenshot_app;
+use cathedral::app::{ScreenshotOptions, build_screenshot_app};
 use cathedral::maps::CurrentMap;
 use cathedral::shooting::Gun;
 
@@ -15,8 +16,11 @@ const COLLIDER_RENDER_WIDTH: u32 = 1440;
 const COLLIDER_RENDER_HEIGHT: u32 = 1440;
 const BLACK_CHANNEL_THRESHOLD: u8 = 32;
 
+static SCREENSHOT_TEST_MUTEX: Mutex<()> = Mutex::new(());
+
 #[test]
 fn screenshot_app_captures_map01_frame() {
+    let _screenshot_test_guard = SCREENSHOT_TEST_MUTEX.lock().unwrap();
     let screenshot_dir = create_temp_screenshot_dir("map01");
     let viewpoint = (Vec3::new(0.0, 1.85, 6.0), Vec3::new(0.0, 2.0, -6.0));
     let mut app = build_screenshot_app(
@@ -25,8 +29,11 @@ fn screenshot_app_captures_map01_frame() {
         RENDER_WIDTH,
         RENDER_HEIGHT,
         screenshot_dir.to_string_lossy().into_owned(),
-        "map01",
-        false,
+        ScreenshotOptions {
+            screenshot_name: "map01",
+            show_colliders: false,
+            show_revolver_muzzle_flash: false,
+        },
     );
 
     let captured_screenshots = app.run_until_screenshot_captured();
@@ -77,7 +84,59 @@ fn screenshot_app_captures_map01_frame() {
 }
 
 #[test]
+fn screenshot_app_captures_revolver_muzzle_flash_and_light() {
+    let _screenshot_test_guard = SCREENSHOT_TEST_MUTEX.lock().unwrap();
+    let idle_screenshot_dir = create_temp_screenshot_dir("idle-map01");
+    let mut idle_app = build_screenshot_app(
+        CurrentMap::Map01,
+        None,
+        RENDER_WIDTH,
+        RENDER_HEIGHT,
+        idle_screenshot_dir.to_string_lossy().into_owned(),
+        ScreenshotOptions {
+            screenshot_name: "idle-map01",
+            show_colliders: false,
+            show_revolver_muzzle_flash: false,
+        },
+    );
+    let idle_image = idle_app.run_until_screenshot_captured().0[0].clone();
+
+    let muzzle_flash_screenshot_dir = create_temp_screenshot_dir("revolver-muzzle-flash");
+    let mut muzzle_flash_app = build_screenshot_app(
+        CurrentMap::Map01,
+        None,
+        RENDER_WIDTH,
+        RENDER_HEIGHT,
+        muzzle_flash_screenshot_dir.to_string_lossy().into_owned(),
+        ScreenshotOptions {
+            screenshot_name: "revolver-muzzle-flash",
+            show_colliders: false,
+            show_revolver_muzzle_flash: true,
+        },
+    );
+    let muzzle_flash_image = muzzle_flash_app.run_until_screenshot_captured().0[0].clone();
+
+    let idle_pixels = idle_image.data.as_deref().unwrap();
+    let muzzle_flash_pixels = muzzle_flash_image.data.as_deref().unwrap();
+    let greatest_channel_difference = idle_pixels
+        .iter()
+        .zip(muzzle_flash_pixels)
+        .map(|(idle_channel, muzzle_flash_channel)| idle_channel.abs_diff(*muzzle_flash_channel))
+        .max()
+        .unwrap();
+    let required_channel_difference = 32;
+    assert!(
+        greatest_channel_difference >= required_channel_difference,
+        "expected the revolver muzzle flash and light to change the captured scene"
+    );
+
+    fs::remove_dir_all(&idle_screenshot_dir).unwrap();
+    fs::remove_dir_all(&muzzle_flash_screenshot_dir).unwrap();
+}
+
+#[test]
 fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
+    let _screenshot_test_guard = SCREENSHOT_TEST_MUTEX.lock().unwrap();
     let screenshot_dir = create_temp_screenshot_dir("collider-inspection");
     let mut app = build_screenshot_app(
         CurrentMap::ColliderInspection,
@@ -85,8 +144,11 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
         COLLIDER_RENDER_WIDTH,
         COLLIDER_RENDER_HEIGHT,
         screenshot_dir.to_string_lossy().into_owned(),
-        "collider-inspection",
-        true,
+        ScreenshotOptions {
+            screenshot_name: "collider-inspection",
+            show_colliders: true,
+            show_revolver_muzzle_flash: false,
+        },
     );
 
     let captured_screenshots = app.run_until_screenshot_captured();

@@ -101,13 +101,14 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::window::ExitCondition;
 use bevy::winit::WinitPlugin;
 use bevy::world_serialization::WorldSerializationPlugin;
+use bevy_hanabi::HanabiPlugin;
 
 use crate::{
     enemies::EnemiesPlugin,
     maps::{CurrentMap, MapsPlugin, PlayerPosition},
     player::{CameraState, Player, PlayerPlugin},
     ragdoll::RagdollPlugin,
-    shooting::{Gun, ShootingPlugin},
+    shooting::{Gun, RevolverMuzzleFlashSystems, ShootingPlugin, WeaponFired},
     state::GameStatePlugin,
     ui::UiPlugin,
 };
@@ -130,6 +131,7 @@ pub fn build_gui_app() -> App {
     app.add_plugins(DefaultPlugins.build().disable::<LogPlugin>().set(ImagePlugin {
         default_sampler: make_tiling_image_sampler(),
     }));
+    app.add_plugins(HanabiPlugin);
     app.add_plugins((
         PhysicsPlugins::default(),
         PhysicsDebugPlugin,
@@ -201,14 +203,19 @@ struct ScreenshotName(&'static str);
 #[derive(Resource, Default)]
 pub struct CapturedScreenshots(pub Vec<Image>);
 
+pub struct ScreenshotOptions {
+    pub screenshot_name: &'static str,
+    pub show_colliders: bool,
+    pub show_revolver_muzzle_flash: bool,
+}
+
 pub fn build_screenshot_app(
     map: CurrentMap,
     viewpoint: Option<(Vec3, Vec3)>,
     render_width: u32,
     render_height: u32,
     screenshot_dir: String,
-    screenshot_name: &'static str,
-    show_colliders: bool,
+    screenshot_options: ScreenshotOptions,
 ) -> ScreenshotApp {
     let render_plugin = RenderPlugin {
         synchronous_pipeline_compilation: true,
@@ -219,7 +226,7 @@ pub fn build_screenshot_app(
         exit_condition: ExitCondition::DontExit,
         ..default()
     };
-    let physics_gizmos = if show_colliders {
+    let physics_gizmos = if screenshot_options.show_colliders {
         PhysicsGizmos::colliders(Color::srgb(1.0, 0.2, 0.2))
     } else {
         PhysicsGizmos::default()
@@ -237,6 +244,7 @@ pub fn build_screenshot_app(
                 default_sampler: make_tiling_image_sampler(),
             }),
     );
+    app.add_plugins(HanabiPlugin);
     app.add_plugins((
         PhysicsPlugins::default(),
         PhysicsDebugPlugin,
@@ -253,21 +261,34 @@ pub fn build_screenshot_app(
     .insert_gizmo_config(
         physics_gizmos,
         GizmoConfig {
-            enabled: show_colliders,
+            enabled: screenshot_options.show_colliders,
             ..default()
         },
     )
     .insert_resource(map)
     .insert_resource(ScreenshotDir(screenshot_dir))
-    .insert_resource(ScreenshotName(screenshot_name))
+    .insert_resource(ScreenshotName(screenshot_options.screenshot_name))
     .insert_resource(CapturedScreenshots::default())
     .insert_resource(Viewpoint(viewpoint))
-    .add_systems(Update, (attach_screenshot_camera, capture_screenshots));
-    if show_colliders {
+    .add_systems(
+        PreUpdate,
+        trigger_screenshot_revolver_muzzle_flash.run_if(resource_exists::<ScreenshotRevolverMuzzleFlash>),
+    )
+    .add_systems(
+        Update,
+        (
+            attach_screenshot_camera,
+            capture_screenshots.after(RevolverMuzzleFlashSystems),
+        ),
+    );
+    if screenshot_options.show_colliders {
         app.add_systems(Update, hide_screenshot_weapons);
     }
     let render_target = create_render_target(&mut app, render_width, render_height);
     app.insert_resource(ScreenshotRenderTarget(render_target));
+    if screenshot_options.show_revolver_muzzle_flash {
+        app.insert_resource(ScreenshotRevolverMuzzleFlash);
+    }
 
     app.finish();
     app.cleanup();
@@ -292,6 +313,23 @@ fn create_render_target(app: &mut App, render_width: u32, render_height: u32) ->
 
 #[derive(Resource)]
 struct ScreenshotRenderTarget(Handle<Image>);
+
+#[derive(Resource)]
+struct ScreenshotRevolverMuzzleFlash;
+
+fn trigger_screenshot_revolver_muzzle_flash(
+    frame_count: Res<FrameCount>,
+    mut weapon_fired: MessageWriter<WeaponFired>,
+) {
+    let first_trigger_frame = FIRST_CAPTURE_FRAME - 5;
+    let trigger_interval = 2;
+    let trigger_frame = FIRST_CAPTURE_FRAME - 1;
+    if (first_trigger_frame..=trigger_frame).contains(&frame_count.0)
+        && (frame_count.0 - first_trigger_frame).is_multiple_of(trigger_interval)
+    {
+        weapon_fired.write(WeaponFired::revolver());
+    }
+}
 
 fn attach_screenshot_camera(
     screenshot_target: Res<ScreenshotRenderTarget>,

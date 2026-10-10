@@ -2,7 +2,7 @@ use std::env;
 use std::process;
 
 use bevy::prelude::*;
-use cathedral::app::build_screenshot_app;
+use cathedral::app::{ScreenshotOptions, build_screenshot_app};
 use cathedral::maps::CurrentMap;
 
 const SCREENSHOT_DIR: &str = "screenshots";
@@ -10,31 +10,52 @@ const RENDER_WIDTH: u32 = 3440;
 const RENDER_HEIGHT: u32 = 1440;
 const COLLIDER_RENDER_WIDTH: u32 = 1440;
 const COLLIDER_RENDER_HEIGHT: u32 = 1440;
+const MUZZLE_FLASH_RENDER_WIDTH: u32 = 1440;
+const MUZZLE_FLASH_RENDER_HEIGHT: u32 = 1440;
 
 fn main() {
     let arguments: Vec<String> = env::args().skip(1).collect();
     std::fs::create_dir_all(SCREENSHOT_DIR).unwrap();
-    let mut app = if arguments.as_slice() == ["--colliders"] {
-        build_screenshot_app(
+    let mut app = match arguments.as_slice() {
+        [argument] if argument == "--colliders" => build_screenshot_app(
             CurrentMap::ColliderInspection,
             None,
             COLLIDER_RENDER_WIDTH,
             COLLIDER_RENDER_HEIGHT,
             SCREENSHOT_DIR.to_owned(),
-            "collider-inspection",
-            true,
-        )
-    } else {
-        let viewpoint = parse_viewpoint_arguments(&mut arguments.into_iter());
-        build_screenshot_app(
+            ScreenshotOptions {
+                screenshot_name: "collider-inspection",
+                show_colliders: true,
+                show_revolver_muzzle_flash: false,
+            },
+        ),
+        [argument] if argument == "--muzzle-flash" => build_screenshot_app(
             CurrentMap::Map01,
-            viewpoint,
-            RENDER_WIDTH,
-            RENDER_HEIGHT,
+            None,
+            MUZZLE_FLASH_RENDER_WIDTH,
+            MUZZLE_FLASH_RENDER_HEIGHT,
             SCREENSHOT_DIR.to_owned(),
-            "map01",
-            false,
-        )
+            ScreenshotOptions {
+                screenshot_name: "revolver-muzzle-flash",
+                show_colliders: false,
+                show_revolver_muzzle_flash: true,
+            },
+        ),
+        _ => {
+            let viewpoint = parse_viewpoint_arguments(&mut arguments.into_iter());
+            build_screenshot_app(
+                CurrentMap::Map01,
+                viewpoint,
+                RENDER_WIDTH,
+                RENDER_HEIGHT,
+                SCREENSHOT_DIR.to_owned(),
+                ScreenshotOptions {
+                    screenshot_name: "map01",
+                    show_colliders: false,
+                    show_revolver_muzzle_flash: false,
+                },
+            )
+        }
     };
     app.run_until_screenshot_captured();
 }

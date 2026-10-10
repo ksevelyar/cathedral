@@ -3,6 +3,7 @@ use std::time::Duration;
 use avian3d::prelude::*;
 use bevy::audio::AudioPlugin;
 use bevy::prelude::*;
+use bevy_hanabi::prelude::*;
 
 use crate::enemies::EnemyHit;
 use crate::player::Player;
@@ -15,10 +16,20 @@ impl Plugin for ShootingPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<WeaponFireCooldown>()
             .add_message::<WeaponFired>()
-            .add_systems(Startup, (setup_gun, setup_crosshair).after(crate::player::setup_player))
+            .configure_sets(Update, RevolverMuzzleFlashSystems)
+            .add_systems(
+                Startup,
+                (setup_gun, setup_crosshair, setup_revolver_muzzle_flash).after(crate::player::setup_player),
+            )
             .add_systems(
                 Update,
-                (switch_weapon, fire_weapon, shoot)
+                (
+                    switch_weapon,
+                    fire_weapon,
+                    spawn_revolver_muzzle_flash.in_set(RevolverMuzzleFlashSystems),
+                    update_muzzle_flashes,
+                    shoot,
+                )
                     .chain()
                     .run_if(in_state(GameState::Playing))
                     .after(crate::player::apply_mouse_look)
@@ -125,6 +136,12 @@ enum FireMode {
 
 #[derive(Message)]
 pub struct WeaponFired(Weapon);
+
+impl WeaponFired {
+    pub fn revolver() -> Self {
+        Self(Weapon::Revolver2)
+    }
+}
 
 #[derive(Resource)]
 struct WeaponFireCooldown(Timer);
@@ -288,6 +305,161 @@ fn fire_weapon(
 }
 
 const SHOT_DISTANCE: f32 = 100.0;
+
+#[derive(Component)]
+struct MuzzleFlashLifetime(Timer);
+
+#[derive(Component)]
+struct RevolverMuzzleFlash;
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct RevolverMuzzleFlashSystems;
+
+#[derive(Resource)]
+struct RevolverMuzzleFlashAssets {
+    flame_effect: Handle<EffectAsset>,
+    texture: Handle<Image>,
+}
+
+fn setup_revolver_muzzle_flash(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    effects: Option<ResMut<Assets<EffectAsset>>>,
+) {
+    let Some(mut effects) = effects else {
+        return;
+    };
+    let expression_writer = ExprWriter::new();
+    let particle_age = expression_writer.lit(0.0).expr();
+    let particle_lifetime = (expression_writer.lit(0.025)
+        + expression_writer.lit(0.045) * expression_writer.rand(ScalarType::Float))
+        .expr();
+    let particle_rotation = (expression_writer.rand(ScalarType::Float)
+        * expression_writer.lit(std::f32::consts::TAU))
+        .expr();
+    let particle_speed = (expression_writer.lit(4.0)
+        + expression_writer.lit(5.0) * expression_writer.rand(ScalarType::Float))
+        .expr();
+    let particle_texture_slot = expression_writer.lit(0u32).expr();
+    let mut color_gradient = bevy_hanabi::Gradient::new();
+    color_gradient.add_key(0.0, Vec4::new(3.0, 2.0, 0.4, 1.0));
+    color_gradient.add_key(0.3, Vec4::new(2.0, 0.5, 0.04, 0.85));
+    color_gradient.add_key(1.0, Vec4::ZERO);
+    let mut size_gradient = bevy_hanabi::Gradient::new();
+    size_gradient.add_key(0.0, Vec3::splat(0.025));
+    size_gradient.add_key(0.35, Vec3::splat(0.08));
+    size_gradient.add_key(1.0, Vec3::splat(0.015));
+    let particle_position = SetPositionCone3dModifier {
+        base_radius: expression_writer.lit(0.015).expr(),
+        top_radius: expression_writer.lit(0.12).expr(),
+        height: expression_writer.lit(0.28).expr(),
+        dimension: ShapeDimension::Volume,
+    };
+    let particle_velocity = SetVelocityCircleModifier {
+        center: expression_writer.lit(Vec3::Y).expr(),
+        axis: expression_writer.lit(Vec3::Y).expr(),
+        speed: particle_speed,
+    };
+    let particle_age_initializer = SetAttributeModifier::new(Attribute::AGE, particle_age);
+    let particle_lifetime_initializer = SetAttributeModifier::new(Attribute::LIFETIME, particle_lifetime);
+    let particle_rotation_initializer = SetAttributeModifier::new(Attribute::F32_0, particle_rotation);
+    let particle_rotation_attribute = expression_writer.attr(Attribute::F32_0).expr();
+    let mut expression_module = expression_writer.finish();
+    expression_module.add_texture_slot("flame");
+    let flame_effect = effects.add(
+        EffectAsset::new(48, SpawnerSettings::once(10.0.into()), expression_module)
+            .with_name("revolver_muzzle_flame")
+            .with_alpha_mode(bevy_hanabi::AlphaMode::Add)
+            .init(particle_position)
+            .init(particle_velocity)
+            .init(particle_age_initializer)
+            .init(particle_lifetime_initializer)
+            .init(particle_rotation_initializer)
+            .render(ParticleTextureModifier {
+                texture_slot: particle_texture_slot,
+                sample_mapping: ImageSampleMapping::ModulateOpacityFromR,
+            })
+            .render(OrientModifier {
+                mode: OrientMode::FaceCameraPosition,
+                rotation: Some(particle_rotation_attribute),
+            })
+            .render(ColorOverLifetimeModifier::new(color_gradient))
+            .render(SizeOverLifetimeModifier {
+                gradient: size_gradient,
+                screen_space_size: false,
+            }),
+    );
+    let flame_texture_path = "effects/revolver-muzzle-flame.png";
+    commands.insert_resource(RevolverMuzzleFlashAssets {
+        flame_effect,
+        texture: asset_server.load(flame_texture_path),
+    });
+}
+
+fn spawn_revolver_muzzle_flash(
+    mut commands: Commands,
+    mut weapon_fired: MessageReader<WeaponFired>,
+    revolver_muzzle_flash_assets: Option<Res<RevolverMuzzleFlashAssets>>,
+    guns: Query<(Entity, &WeaponSlot), With<Gun>>,
+) {
+    let Some(revolver_muzzle_flash_assets) = revolver_muzzle_flash_assets else {
+        return;
+    };
+    let revolver_muzzle_position = Vec3::new(2.11, 0.5, 0.0);
+    let muzzle_light_position = Vec3::new(2.35, 0.5, 0.0);
+    let flash_forward_rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    let flash_duration = Duration::from_millis(33);
+    let muzzle_light_color = Color::srgb(1.0, 0.82, 0.58);
+    let muzzle_light_intensity = 18_000.0;
+    let muzzle_light_range = 3.5;
+    let muzzle_light_radius = 0.08;
+
+    for WeaponFired(weapon) in weapon_fired.read() {
+        if *weapon != Weapon::Revolver2 {
+            continue;
+        }
+        let Some((revolver_entity, _)) = guns.iter().find(|(_, weapon_slot)| weapon_slot.0 == Weapon::Revolver2) else {
+            continue;
+        };
+        commands.entity(revolver_entity).with_children(|revolver| {
+            revolver.spawn((
+                RevolverMuzzleFlash,
+                MuzzleFlashLifetime(Timer::new(flash_duration, TimerMode::Once)),
+                ParticleEffect::new(revolver_muzzle_flash_assets.flame_effect.clone()),
+                EffectMaterial {
+                    images: vec![revolver_muzzle_flash_assets.texture.clone()],
+                },
+                Transform::from_translation(revolver_muzzle_position)
+                    .with_rotation(flash_forward_rotation),
+            ));
+            revolver.spawn((
+                RevolverMuzzleFlash,
+                MuzzleFlashLifetime(Timer::new(flash_duration, TimerMode::Once)),
+                PointLight {
+                    color: muzzle_light_color,
+                    intensity: muzzle_light_intensity,
+                    range: muzzle_light_range,
+                    radius: muzzle_light_radius,
+                    ..default()
+                },
+                Transform::from_translation(muzzle_light_position),
+            ));
+        });
+    }
+}
+
+fn update_muzzle_flashes(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut muzzle_flashes: Query<(Entity, &mut MuzzleFlashLifetime)>,
+) {
+    for (muzzle_flash_entity, mut muzzle_flash_lifetime) in &mut muzzle_flashes {
+        muzzle_flash_lifetime.0.tick(time.delta());
+        if muzzle_flash_lifetime.0.is_finished() {
+            commands.entity(muzzle_flash_entity).despawn();
+        }
+    }
+}
 
 fn compute_bullet_momentum(weapon: Weapon) -> f32 {
     weapon.get_bullet_mass() * weapon.get_bullet_speed()
