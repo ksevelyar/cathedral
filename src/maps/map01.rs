@@ -1,13 +1,28 @@
 use bevy::prelude::*;
 
 use super::pieces::{Piece, build_cuboid, build_hanging_lamp, make_concrete_material};
-use super::{EnemySpawn, Map, PlayerPosition};
+use super::{EnemySpawn, FogVolumeSettings, Map, PlayerPosition};
 use crate::enemies::{EnemyKind, Fighter};
 
 pub(super) fn build_map() -> Map {
+    let indirect_light_color = Color::srgb(0.45, 0.5, 0.58);
+    let indirect_light_brightness = 50.0;
     Map {
-        ambient: GlobalAmbientLight::NONE,
+        ambient: GlobalAmbientLight {
+            color: indirect_light_color,
+            brightness: indirect_light_brightness,
+            ..default()
+        },
         clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
+        fog_volume: Some(FogVolumeSettings {
+            center: Vec3::new(0.0, 3.0, 0.0),
+            size: Vec3::new(25.0, 6.0, 19.0),
+            color: Color::srgb(0.32, 0.4, 0.5),
+            density: 0.002,
+            absorption: 0.15,
+            scattering: 0.45,
+            scattering_asymmetry: 0.7,
+        }),
         player_position: PlayerPosition {
             position: Vec3::new(10.0, 1.9, 7.0),
             look_at: Vec3::new(-6.0, 2.0, -2.0),
@@ -42,7 +57,6 @@ fn spawn_fighters_in_arc_before_player() -> Vec<EnemySpawn> {
 fn spawn_control_room_pieces() -> Vec<Piece> {
     let mut pieces = vec![build_floor(), build_ceiling()];
     pieces.extend(build_walls());
-    pieces.extend(spawn_ceiling_beams());
     pieces.extend(spawn_control_room_lights());
     pieces
 }
@@ -93,31 +107,6 @@ fn build_walls() -> Vec<Piece> {
         build_cuboid(
             Vec3::new(0.0, 4.1, -9.6),
             Vec3::new(1.6, 3.8, 0.2),
-            make_concrete_material(3.0),
-        ),
-    ]
-}
-
-fn spawn_ceiling_beams() -> Vec<Piece> {
-    vec![
-        build_cuboid(
-            Vec3::new(0.0, 5.75, 9.25),
-            Vec3::new(25.0, 0.3, 0.3),
-            make_concrete_material(3.0),
-        ),
-        build_cuboid(
-            Vec3::new(0.0, 5.75, -9.25),
-            Vec3::new(25.0, 0.3, 0.3),
-            make_concrete_material(3.0),
-        ),
-        build_cuboid(
-            Vec3::new(12.35, 5.75, 0.0),
-            Vec3::new(0.3, 0.3, 18.5),
-            make_concrete_material(3.0),
-        ),
-        build_cuboid(
-            Vec3::new(-12.35, 5.75, 0.0),
-            Vec3::new(0.3, 0.3, 18.5),
             make_concrete_material(3.0),
         ),
     ]

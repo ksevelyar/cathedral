@@ -1,5 +1,6 @@
 use avian3d::prelude::*;
 use bevy::asset::RenderAssetUsages;
+use bevy::light::VolumetricLight;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
@@ -147,11 +148,15 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
     let pivot_position = pivot_transform.translation;
     let lamp_shade_color = Color::srgb(0.02, 0.02, 0.02);
     let lamp_light_color = Color::srgb(1.0, 0.95, 0.88);
-    let lamp_reflector_color = Color::srgb(0.92, 0.92, 0.88);
+    let lamp_reflector_color = Color::srgb(0.08, 0.08, 0.07);
+    let lamp_diffuser_color = lamp_light_color;
+    let lamp_diffuser_luminance = 2_000.0;
     let lamp_shade_radius = 0.3;
     let lamp_shade_height = 0.1;
     let lamp_reflector_radius = 0.26;
     let lamp_reflector_height = 0.02;
+    let lamp_diffuser_radius = 0.22;
+    let lamp_diffuser_height = 0.01;
     let lamp_wire_radius = 0.02;
     let lamp_shade_mass = 16.0;
     let links_per_meter = 10.0;
@@ -167,6 +172,13 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
     });
     let reflector_material = context.find_material_handle(&Material::Solid {
         color: lamp_reflector_color,
+    });
+    let diffuser_material = context.materials.add(StandardMaterial {
+        base_color: lamp_diffuser_color,
+        emissive: lamp_diffuser_color.to_linear() * lamp_diffuser_luminance,
+        emissive_exposure_weight: 0.0,
+        perceptual_roughness: 0.9,
+        ..default()
     });
     let wire_material = shade_material.clone();
 
@@ -269,12 +281,12 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
 
     let commands = &mut context.commands;
     let meshes = &mut *context.meshes;
-    let lamp_cone_intensity = 80_000.0;
-    let lamp_cone_range = 9.0;
-    let lamp_bounce_intensity = 60_000.0;
-    let lamp_bounce_range = 9.0;
+    let lamp_cone_intensity = 65_000.0;
+    let lamp_cone_range = 7.0;
+    let lamp_cone_inner_angle = 25.0_f32.to_radians();
+    let lamp_cone_outer_angle = 55.0_f32.to_radians();
     let reflector_center = Vec3::Y * -(lamp_shade_height * 0.5 + lamp_reflector_height * 0.5);
-    let cone_position = lamp_shade_height * 0.5 + lamp_reflector_height;
+    let diffuser_center = Vec3::Y * -(lamp_shade_height * 0.5 + lamp_reflector_height + lamp_diffuser_height * 0.5);
     commands.entity(lamp_body).with_children(|lamp_parts| {
         lamp_parts.spawn((
             Mesh3d(meshes.add(make_cylinder_mesh(
@@ -287,25 +299,28 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
             Transform::from_translation(reflector_center),
         ));
         lamp_parts.spawn((
+            Mesh3d(meshes.add(make_cylinder_mesh(
+                lamp_diffuser_radius,
+                lamp_diffuser_height,
+                CYLINDER_RADIAL_SEGMENTS,
+                1.0,
+            ))),
+            MeshMaterial3d(diffuser_material),
+            Transform::from_translation(diffuser_center),
+        ));
+        lamp_parts.spawn((
             SpotLight {
                 color: lamp_light_color,
                 intensity: lamp_cone_intensity,
                 range: lamp_cone_range,
+                inner_angle: lamp_cone_inner_angle,
+                outer_angle: lamp_cone_outer_angle,
                 shadow_maps_enabled: true,
                 ..default()
             },
-            Transform::from_translation(Vec3::Y * -cone_position)
+            VolumetricLight,
+            Transform::from_translation(diffuser_center)
                 .with_rotation(Quat::from_rotation_arc(Vec3::NEG_Z, Vec3::NEG_Y)),
-        ));
-        lamp_parts.spawn((
-            PointLight {
-                color: lamp_light_color,
-                intensity: lamp_bounce_intensity,
-                range: lamp_bounce_range,
-                radius: 0.25,
-                ..default()
-            },
-            Transform::from_translation(Vec3::Y * -(lamp_shade_height * 0.5 + 0.25)),
         ));
     });
 }

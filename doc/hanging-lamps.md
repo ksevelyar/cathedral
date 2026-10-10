@@ -14,7 +14,7 @@
 ### Spawn
 * maps::pieces::spawn_lamp() spawns the static ceiling anchor, the cable link chain, the shade body, and the joints.
 * The wire mesh entity (LampWire) follows the link transforms every frame.
-* The shade carries the reflector, spot light, and bounce point light as children.
+* The shade carries a reflector, an emissive diffuser, and one shadow-casting downward spot light as children.
 
 ### Hit
 * shooting::shoot() raycasts the shade collider and the link colliders.

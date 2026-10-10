@@ -124,7 +124,7 @@ fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
     .clone()
 }
 
-pub fn build_gui_app() -> App {
+pub fn build_gui_app(show_fps: bool) -> App {
     initialize_logging();
     let mut app = App::new();
     app.add_plugins(DefaultPlugins.build().disable::<LogPlugin>().set(ImagePlugin {
@@ -139,7 +139,7 @@ pub fn build_gui_app() -> App {
         EnemiesPlugin,
         RagdollPlugin,
         ShootingPlugin,
-        UiPlugin,
+        UiPlugin { show_fps },
     ))
     .insert_resource(SubstepCount(30))
     .add_systems(Startup, crate::player::setup_player)
@@ -246,7 +246,7 @@ pub fn build_screenshot_app(
         EnemiesPlugin,
         RagdollPlugin,
         ShootingPlugin,
-        UiPlugin,
+        UiPlugin { show_fps: false },
     ))
     .insert_resource(SubstepCount(30))
     .add_systems(Startup, crate::player::setup_player)
