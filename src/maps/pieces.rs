@@ -155,13 +155,12 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
     let lamp_wire_radius = 0.02;
     let lamp_shade_mass = 16.0;
     let links_per_meter = 10.0;
-    let cable_collider_radius = 0.04;
+    let cable_particle_radius = 0.04;
     let link_mass_per_meter = 2.5;
-    let lamp_linear_damping = 0.5;
+    let lamp_linear_damping = 0.09;
     let lamp_angular_damping = 1.0;
     let link_linear_damping = 0.3;
     let link_angular_damping = 32.0;
-    let cable_joint_angular_damping = 4.0;
 
     let shade_material = context.find_material_handle(&Material::Solid {
         color: lamp_shade_color,
@@ -189,26 +188,21 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
                 Name::new(format!("Lamp cable link {link_index}")),
                 RigidBody::Dynamic,
                 Transform::from_translation(link_position),
-                Collider::capsule(cable_collider_radius, link_length),
+                Collider::sphere(cable_particle_radius),
                 CollisionLayers::new(OBJECTS_GROUP, WORLD_GROUP),
                 Mass(link_length * link_mass_per_meter),
                 LinearDamping(link_linear_damping),
                 AngularDamping(link_angular_damping),
             ))
             .id();
-        let previous_body_anchor = if link_index == 0 {
-            Vec3::ZERO
+        let distance_to_previous_body = if link_index == 0 {
+            link_length * 0.5
         } else {
-            Vec3::Y * -link_length * 0.5
+            link_length
         };
         context.commands.spawn((
-            SphericalJoint::new(previous_body, link_body)
-                .with_local_anchor1(previous_body_anchor)
-                .with_local_anchor2(Vec3::Y * link_length * 0.5),
-            JointDamping {
-                linear: 0.0,
-                angular: cable_joint_angular_damping,
-            },
+            DistanceJoint::new(previous_body, link_body)
+                .with_limits(distance_to_previous_body, distance_to_previous_body),
             JointCollisionDisabled,
         ));
         link_bodies.push(link_body);
@@ -242,14 +236,11 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
             CollisionLayers::new(OBJECTS_GROUP, WORLD_GROUP),
         ))
         .id();
+    let shade_attachment_distance = link_length * 0.5;
     context.commands.spawn((
-        SphericalJoint::new(previous_body, lamp_body)
-            .with_local_anchor1(Vec3::Y * -link_length * 0.5)
-            .with_local_anchor2(Vec3::Y * lamp_shade_height * 0.5),
-        JointDamping {
-            linear: 0.0,
-            angular: cable_joint_angular_damping,
-        },
+        DistanceJoint::new(previous_body, lamp_body)
+            .with_local_anchor2(Vec3::Y * lamp_shade_height * 0.5)
+            .with_limits(shade_attachment_distance, shade_attachment_distance),
         JointCollisionDisabled,
     ));
 

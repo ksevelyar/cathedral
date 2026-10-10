@@ -96,30 +96,17 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
         "expected exactly one captured screenshot"
     );
     let image = &captured_screenshots.0[0];
-    assert_eq!(
-        image.width(),
-        COLLIDER_RENDER_WIDTH,
-        "unexpected captured width"
-    );
-    assert_eq!(
-        image.height(),
-        COLLIDER_RENDER_HEIGHT,
-        "unexpected captured height"
-    );
+    assert_eq!(image.width(), COLLIDER_RENDER_WIDTH, "unexpected captured width");
+    assert_eq!(image.height(), COLLIDER_RENDER_HEIGHT, "unexpected captured height");
 
     let world = app.0.main.world_mut();
-    let mut gun_visibility_query =
-        world.query_filtered::<&Visibility, With<Gun>>();
-    let gun_visibilities: Vec<Visibility> = gun_visibility_query
-        .iter(world)
-        .copied()
-        .collect();
+    let mut gun_visibility_query = world.query_filtered::<&Visibility, With<Gun>>();
+    let gun_visibilities: Vec<Visibility> = gun_visibility_query.iter(world).copied().collect();
+    assert!(!gun_visibilities.is_empty(), "expected at least one gun entity");
     assert!(
-        !gun_visibilities.is_empty(),
-        "expected at least one gun entity"
-    );
-    assert!(
-        gun_visibilities.iter().all(|visibility| *visibility == Visibility::Hidden),
+        gun_visibilities
+            .iter()
+            .all(|visibility| *visibility == Visibility::Hidden),
         "screenshot app with colliders must hide weapons"
     );
 
@@ -134,7 +121,8 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
 }
 
 fn create_temp_screenshot_dir(test_name: &str) -> PathBuf {
-    let screenshot_dir = std::env::temp_dir().join(format!("cathedral-screenshot-test-{}-{}", process::id(), test_name));
+    let screenshot_dir =
+        std::env::temp_dir().join(format!("cathedral-screenshot-test-{}-{}", process::id(), test_name));
     fs::remove_dir_all(&screenshot_dir).ok();
     fs::create_dir_all(&screenshot_dir).unwrap();
     screenshot_dir

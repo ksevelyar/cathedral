@@ -1,7 +1,7 @@
 use avian3d::dynamics::solver::joint_graph::JointGraph;
 use avian3d::prelude::*;
-use bevy::input::mouse::MouseButtonInput;
 use bevy::input::ButtonState;
+use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use cathedral::player::Player;
 use std::collections::{HashSet, VecDeque};
