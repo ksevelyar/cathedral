@@ -1,6 +1,8 @@
 use avian3d::prelude::{Gravity, LinearVelocity, MoveAndSlide, SpatialQueryFilter};
 use bevy::camera::Exposure;
 use bevy::input::mouse::AccumulatedMouseMotion;
+use bevy::light::VolumetricFog;
+use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 
 use crate::maps::PlayerPosition;
@@ -45,6 +47,7 @@ const PLAYER_COLLISION_RADIUS: f32 = 0.4;
 const PLAYER_EYE_HEIGHT: f32 = 1.8;
 
 pub fn setup_player(mut commands: Commands, start_position: Option<Res<PlayerPosition>>) {
+    let camera_bloom_intensity = 0.01;
     let player_position = start_position
         .map(|start_position| *start_position)
         .unwrap_or_else(|| PlayerPosition::new(Vec3::ZERO));
@@ -52,6 +55,15 @@ pub fn setup_player(mut commands: Commands, start_position: Option<Res<PlayerPos
     commands.spawn((
         Camera3d::default(),
         Exposure::INDOOR,
+        Bloom {
+            intensity: camera_bloom_intensity,
+            ..Bloom::NATURAL
+        },
+        VolumetricFog {
+            ambient_intensity: 0.0,
+            step_count: 48,
+            ..default()
+        },
         Transform::from_translation(player_position.position).with_rotation(Quat::from_euler(
             EulerRot::YXZ,
             yaw,
