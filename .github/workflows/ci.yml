@@ -19,7 +19,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
 
       - name: Build
-        run: nix develop .#ci-vulkan --command cargo build --verbose
+        run: nix develop .#ci-vulkan --command cargo build
 
       - name: Format check
         run: nix develop .#ci-vulkan --command cargo fmt --all -- --check --color always
@@ -28,4 +28,4 @@ jobs:
         run: nix develop .#ci-vulkan --command cargo clippy --all-features --workspace -- -D warnings
 
       - name: Test
-        run: nix develop .#ci-vulkan --command cargo test --verbose
+        run: nix develop .#ci-vulkan --command cargo test

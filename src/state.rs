@@ -1,4 +1,3 @@
-use avian3d::prelude::*;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -12,11 +11,7 @@ impl Plugin for GameStatePlugin {
     fn build(&self, app: &mut App) {
         app.init_state::<GameState>().add_systems(
             Update,
-            (
-                toggle_pause,
-                toggle_physics_pause,
-                restart_game.run_if(in_state(GameState::GameOver)),
-            ),
+            (toggle_pause, restart_game.run_if(in_state(GameState::GameOver))),
         );
     }
 }
@@ -40,22 +35,6 @@ pub fn toggle_pause(
             GameState::Paused => GameState::Playing,
             GameState::GameOver => GameState::GameOver,
         });
-    }
-}
-
-fn toggle_physics_pause(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut time: ResMut<Time<Physics>>,
-    mut gizmo_configs: ResMut<GizmoConfigStore>,
-) {
-    if keyboard.just_pressed(KeyCode::KeyP) {
-        let pause = !time.is_paused();
-        if pause {
-            time.pause();
-        } else {
-            time.unpause();
-        }
-        gizmo_configs.config_mut::<PhysicsGizmos>().0.enabled = pause;
     }
 }
 

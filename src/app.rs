@@ -1,10 +1,12 @@
+use std::collections::HashMap;
+use std::env;
 use std::fs::File;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::Duration;
 
-use avian3d::prelude::{PhysicsDebugPlugin, PhysicsGizmos, PhysicsPlugins, SubstepCount};
-use bevy::app::{PluginGroup, SubApps};
+use avian3d::prelude::{PhysicsPlugins, SubstepCount};
+use bevy::app::PluginGroup;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
 use bevy::diagnostic::FrameCount;
@@ -107,12 +109,48 @@ use crate::{
     maps::{CurrentMap, MapsPlugin, PlayerPosition},
     player::{CameraState, Player, PlayerPlugin},
     ragdoll::RagdollPlugin,
-    shooting::{Gun, ShootingPlugin},
+    shooting::ShootingPlugin,
     state::GameStatePlugin,
     ui::UiPlugin,
 };
 
 const FIRST_CAPTURE_FRAME: u32 = 200;
+
+#[derive(Resource, Default)]
+pub struct Configuration {
+    pub show_fps: bool,
+    pub show_colliders: bool,
+    pub viewpoint: Option<(Vec3, Vec3)>,
+}
+
+pub fn fetch_configuration() -> Configuration {
+    let values = env::args()
+        .skip(1)
+        .map(|argument| {
+            let (name, value) = argument.strip_prefix("--").unwrap().split_once('=').unwrap();
+            (name.to_owned(), value.to_owned())
+        })
+        .collect::<HashMap<_, _>>();
+
+    Configuration {
+        show_fps: values.get("fps").map(|value| value.parse().unwrap()).unwrap_or(false),
+        show_colliders: values
+            .get("colliders")
+            .map(|value| value.parse().unwrap())
+            .unwrap_or(false),
+        viewpoint: values.get("viewpoint").map(|value| parse_viewpoint(value)),
+    }
+}
+
+fn parse_viewpoint(value: &str) -> (Vec3, Vec3) {
+    let coordinates = value
+        .split([':', ','])
+        .map(str::parse)
+        .collect::<Result<Vec<f32>, _>>()
+        .unwrap();
+
+    (Vec3::from_slice(&coordinates[..3]), Vec3::from_slice(&coordinates[3..]))
+}
 
 fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
     ImageSamplerDescriptor {
@@ -124,32 +162,25 @@ fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
     .clone()
 }
 
-pub fn build_gui_app(show_fps: bool) -> App {
+pub fn build_gui_app(configuration: Configuration) -> App {
     initialize_logging();
     let mut app = App::new();
+    app.insert_resource(configuration);
     app.add_plugins(DefaultPlugins.build().disable::<LogPlugin>().set(ImagePlugin {
         default_sampler: make_tiling_image_sampler(),
     }));
     app.add_plugins((
         PhysicsPlugins::default(),
-        PhysicsDebugPlugin,
         GameStatePlugin,
         MapsPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
         ShootingPlugin,
-        UiPlugin { show_fps },
+        UiPlugin,
     ))
     .insert_resource(SubstepCount(30))
-    .add_systems(Startup, crate::player::setup_player)
-    .insert_gizmo_config(
-        PhysicsGizmos::default(),
-        GizmoConfig {
-            enabled: false,
-            ..default()
-        },
-    );
+    .add_systems(Startup, crate::player::setup_player);
     app
 }
 
@@ -190,8 +221,6 @@ pub fn build_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) 
     app
 }
 
-pub struct ScreenshotApp(pub SubApps);
-
 #[derive(Resource)]
 struct ScreenshotDir(String);
 
@@ -203,13 +232,13 @@ pub struct CapturedScreenshots(pub Vec<Image>);
 
 pub fn build_screenshot_app(
     map: CurrentMap,
-    viewpoint: Option<(Vec3, Vec3)>,
+    configuration: Configuration,
     render_width: u32,
     render_height: u32,
     screenshot_dir: String,
     screenshot_name: &'static str,
-    show_colliders: bool,
-) -> ScreenshotApp {
+) -> App {
+    let viewpoint = configuration.viewpoint;
     let render_plugin = RenderPlugin {
         synchronous_pipeline_compilation: true,
         ..default()
@@ -219,13 +248,8 @@ pub fn build_screenshot_app(
         exit_condition: ExitCondition::DontExit,
         ..default()
     };
-    let physics_gizmos = if show_colliders {
-        PhysicsGizmos::colliders(Color::srgb(1.0, 0.2, 0.2))
-    } else {
-        PhysicsGizmos::default()
-    };
-
     let mut app = App::new();
+    app.insert_resource(configuration);
     app.add_plugins(
         DefaultPlugins
             .build()
@@ -239,40 +263,29 @@ pub fn build_screenshot_app(
     );
     app.add_plugins((
         PhysicsPlugins::default(),
-        PhysicsDebugPlugin,
         GameStatePlugin,
         MapsPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
         ShootingPlugin,
-        UiPlugin { show_fps: false },
+        UiPlugin,
     ))
     .insert_resource(SubstepCount(30))
     .add_systems(Startup, crate::player::setup_player)
-    .insert_gizmo_config(
-        physics_gizmos,
-        GizmoConfig {
-            enabled: show_colliders,
-            ..default()
-        },
-    )
     .insert_resource(map)
     .insert_resource(ScreenshotDir(screenshot_dir))
     .insert_resource(ScreenshotName(screenshot_name))
     .insert_resource(CapturedScreenshots::default())
     .insert_resource(Viewpoint(viewpoint))
     .add_systems(Update, (attach_screenshot_camera, capture_screenshots));
-    if show_colliders {
-        app.add_systems(Update, hide_screenshot_weapons);
-    }
     let render_target = create_render_target(&mut app, render_width, render_height);
     app.insert_resource(ScreenshotRenderTarget(render_target));
 
     app.finish();
     app.cleanup();
 
-    ScreenshotApp(std::mem::take(app.sub_apps_mut()))
+    app
 }
 
 fn create_render_target(app: &mut App, render_width: u32, render_height: u32) -> Handle<Image> {
@@ -315,23 +328,10 @@ fn attach_screenshot_camera(
     }
 }
 
-impl ScreenshotApp {
-    pub fn run_until_screenshot_captured(&mut self) -> &CapturedScreenshots {
-        loop {
-            self.update();
-            if !self.0.main.world().resource::<CapturedScreenshots>().0.is_empty() {
-                break;
-            }
-        }
-
-        self.0.main.world().resource::<CapturedScreenshots>()
-    }
-
-    pub fn update(&mut self) {
-        self.0.update();
-        self.0
-            .main
-            .world()
+pub fn run_until_screenshot_captured(app: &mut App) -> &CapturedScreenshots {
+    loop {
+        app.update();
+        app.world()
             .resource::<RenderDevice>()
             .wgpu_device()
             .poll(PollType::Wait {
@@ -339,7 +339,12 @@ impl ScreenshotApp {
                 timeout: None,
             })
             .unwrap();
+        if !app.world().resource::<CapturedScreenshots>().0.is_empty() {
+            break;
+        }
     }
+
+    app.world().resource::<CapturedScreenshots>()
 }
 
 #[derive(Resource)]
@@ -347,12 +352,6 @@ struct Viewpoint(Option<(Vec3, Vec3)>);
 
 #[derive(Component)]
 struct ScreenshotCamera;
-
-fn hide_screenshot_weapons(mut weapons: Query<&mut Visibility, With<Gun>>) {
-    for mut visibility in &mut weapons {
-        *visibility = Visibility::Hidden;
-    }
-}
 
 fn capture_screenshots(
     frame_count: Res<FrameCount>,
