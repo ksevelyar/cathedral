@@ -1,6 +1,6 @@
 mod map01;
 mod meshes;
-pub mod pieces;
+mod objects;
 pub mod test_maps;
 
 use bevy::light::FogVolume;
@@ -9,8 +9,8 @@ use bevy::transform::TransformSystems;
 
 use crate::enemies::{EnemyKind, spawn_enemy};
 use crate::player;
-use pieces::Piece;
-use pieces::PieceSpawnContext;
+use objects::Object;
+use objects::ObjectSpawnContext;
 
 pub struct MapsPlugin;
 
@@ -20,7 +20,7 @@ impl Plugin for MapsPlugin {
             .add_systems(Startup, load_current_map.before(player::setup_player))
             .add_systems(
                 FixedPostUpdate,
-                pieces::update_lamp_wires.after(TransformSystems::Propagate),
+                objects::update_lamp_wires.after(TransformSystems::Propagate),
             );
     }
 }
@@ -56,7 +56,7 @@ struct Map {
     fog_volume: Option<FogVolumeSettings>,
     player_position: PlayerPosition,
     enemies: Vec<EnemySpawn>,
-    pieces: Vec<Piece>,
+    objects: Vec<Object>,
 }
 
 struct FogVolumeSettings {
@@ -127,10 +127,11 @@ fn spawn_map(
             Transform::from_translation(fog_volume.center).with_scale(fog_volume.size),
         ));
     }
-    let mut material_cache = Vec::new();
-    let mut piece_context = PieceSpawnContext::new(commands, asset_server, meshes, materials, &mut material_cache);
-    for map_piece in &map.pieces {
-        pieces::spawn_piece(map_piece, &mut piece_context);
+    {
+        let mut object_spawn_context = ObjectSpawnContext::new(commands, asset_server, meshes, materials);
+        for object in map.objects {
+            object.spawn(&mut object_spawn_context);
+        }
     }
     spawn_enemies(commands, asset_server, &map.enemies);
 }

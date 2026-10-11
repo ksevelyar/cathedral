@@ -1,5 +1,6 @@
 use avian3d::prelude::*;
 use bevy::asset::RenderAssetUsages;
+use bevy::gltf::GltfAssetLabel;
 use bevy::light::VolumetricLight;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
@@ -7,144 +8,235 @@ use bevy::prelude::*;
 use super::meshes::{CYLINDER_RADIAL_SEGMENTS, build_cuboid_mesh, make_cylinder_mesh};
 use crate::ragdoll::{OBJECTS_GROUP, WORLD_GROUP};
 
-pub(super) struct Piece {
-    transform: Transform,
-    items: Vec<Item>,
+pub(super) enum Object {
+    Desk(Transform),
+    Laptop(Transform),
+    Stool(Transform),
+    StorageRack(Transform),
+    CardboardBox(Transform),
+    Jerrycan(Transform),
+    PlasticBottleGallon(Transform),
+    PowerBox(Transform),
+    Floor { transform: Transform, size: Vec3 },
+    Ceiling { transform: Transform, size: Vec3 },
+    Wall { transform: Transform, size: Vec3 },
+    HangingLamp { transform: Transform, wire_length: f32 },
 }
 
-enum Item {
-    Cuboid(Cuboid),
-    Lamp(Lamp),
+pub(super) struct ObjectSpawnContext<'commands, 'world, 'state> {
+    commands: &'commands mut Commands<'world, 'state>,
+    asset_server: &'commands AssetServer,
+    meshes: &'commands mut Assets<Mesh>,
+    materials: &'commands mut Assets<StandardMaterial>,
 }
 
-struct Cuboid {
-    position: Vec3,
-    size: Vec3,
-    material: Material,
-}
-
-struct Lamp {
-    wire_length: f32,
-}
-
-impl Item {
-    fn get_position(&self) -> Vec3 {
-        match self {
-            Item::Cuboid(build_cuboid) => build_cuboid.position,
-            Item::Lamp(_) => Vec3::ZERO,
-        }
-    }
-}
-
-#[derive(Clone, PartialEq)]
-pub(super) enum Material {
-    Solid {
-        color: Color,
-    },
-    Textured {
-        base_color_texture: String,
-        normal_map_texture: String,
-        metallic_roughness_texture: Option<String>,
-        roughness: f32,
-        metallic: f32,
-        tile_size: f32,
-    },
-}
-
-pub(super) struct PieceSpawnContext<'c, 'w, 's> {
-    commands: &'c mut Commands<'w, 's>,
-    asset_server: &'c AssetServer,
-    meshes: &'c mut Assets<Mesh>,
-    materials: &'c mut Assets<StandardMaterial>,
-    material_cache: &'c mut Vec<(Material, Handle<StandardMaterial>)>,
-}
-
-impl<'c, 'w, 's> PieceSpawnContext<'c, 'w, 's> {
+impl<'commands, 'world, 'state> ObjectSpawnContext<'commands, 'world, 'state> {
     pub(super) fn new(
-        commands: &'c mut Commands<'w, 's>,
-        asset_server: &'c AssetServer,
-        meshes: &'c mut Assets<Mesh>,
-        materials: &'c mut Assets<StandardMaterial>,
-        material_cache: &'c mut Vec<(Material, Handle<StandardMaterial>)>,
+        commands: &'commands mut Commands<'world, 'state>,
+        asset_server: &'commands AssetServer,
+        meshes: &'commands mut Assets<Mesh>,
+        materials: &'commands mut Assets<StandardMaterial>,
     ) -> Self {
         Self {
             commands,
             asset_server,
             meshes,
             materials,
-            material_cache,
         }
     }
+}
 
-    fn find_material_handle(&mut self, material: &Material) -> Handle<StandardMaterial> {
-        if let Some((_, cached_handle)) = self.material_cache.iter().find(|(cached, _)| cached == material) {
-            return cached_handle.clone();
+impl Object {
+    pub(super) fn spawn(self, context: &mut ObjectSpawnContext) {
+        match self {
+            Self::Desk(transform) => spawn_desk(context, transform),
+            Self::Laptop(transform) => spawn_laptop(context, transform),
+            Self::Stool(transform) => spawn_stool(context, transform),
+            Self::StorageRack(transform) => spawn_storage_rack(context, transform),
+            Self::CardboardBox(transform) => spawn_cardboard_box(context, transform),
+            Self::Jerrycan(transform) => spawn_jerrycan(context, transform),
+            Self::PlasticBottleGallon(transform) => spawn_plastic_bottle_gallon(context, transform),
+            Self::PowerBox(transform) => spawn_power_box(context, transform),
+            Self::Floor { transform, size } => spawn_floor(context, transform, size),
+            Self::Ceiling { transform, size } => spawn_ceiling(context, transform, size),
+            Self::Wall { transform, size } => spawn_wall(context, transform, size),
+            Self::HangingLamp { transform, wire_length } => spawn_hanging_lamp(context, transform, wire_length),
         }
-        let handle = self
-            .materials
-            .add(make_material_from_definition(self.asset_server, material));
-        self.material_cache.push((material.clone(), handle.clone()));
-        handle
     }
+}
 
-    fn spawn_mesh_cuboid(&mut self, transform: Transform, size: Vec3, material: &Material) {
-        let handle = self.find_material_handle(material);
-        self.commands.spawn((
-            Mesh3d(self.meshes.add(build_cuboid_mesh(size, get_tile_size(material)))),
-            MeshMaterial3d(handle),
-            RigidBody::Static,
-            Collider::cuboid(size.x, size.y, size.z),
+fn spawn_desk(context: &mut ObjectSpawnContext, transform: Transform) {
+    spawn_dynamic_gltf_object(
+        context,
+        transform,
+        "desk",
+        "objects/table/metal_office_desk_2k.gltf",
+        Collider::cuboid(2.0, 0.788, 0.947),
+        Transform::from_translation(Vec3::new(0.0, 0.394, 0.0)),
+        ColliderDensity(300.0),
+    );
+}
+
+fn spawn_laptop(context: &mut ObjectSpawnContext, transform: Transform) {
+    spawn_dynamic_gltf_object(
+        context,
+        transform,
+        "laptop",
+        "objects/classic-laptop/classic_laptop_2k.gltf",
+        Collider::cuboid(0.66, 0.46, 0.49),
+        Transform::from_translation(Vec3::new(0.0, 0.23, 0.0)),
+        ColliderDensity(1000.0),
+    );
+}
+
+fn spawn_stool(context: &mut ObjectSpawnContext, transform: Transform) {
+    spawn_dynamic_gltf_object(
+        context,
+        transform,
+        "stool",
+        "objects/metal-stool/metal_stool_03_2k.gltf",
+        Collider::cuboid(0.46, 1.024, 0.47),
+        Transform::from_translation(Vec3::new(0.0, 0.512, 0.0)),
+        ColliderDensity(500.0),
+    );
+}
+
+fn spawn_storage_rack(context: &mut ObjectSpawnContext, transform: Transform) {
+    spawn_dynamic_gltf_object(
+        context,
+        transform,
+        "storage rack",
+        "objects/worn-metal-rack/worn_metal_rack_2k.gltf",
+        Collider::cuboid(0.92, 1.9, 0.6),
+        Transform::from_translation(Vec3::new(0.0, 0.95, 0.0)),
+        ColliderDensity(300.0),
+    );
+}
+
+fn spawn_cardboard_box(context: &mut ObjectSpawnContext, transform: Transform) {
+    spawn_dynamic_gltf_object(
+        context,
+        transform,
+        "cardboard box",
+        "objects/cardboard-box/cardboard_box_01_2k.gltf",
+        Collider::cuboid(0.39, 0.34, 0.52),
+        Transform::from_translation(Vec3::new(0.0, 0.17, 0.03)),
+        ColliderDensity(100.0),
+    );
+}
+
+fn spawn_jerrycan(context: &mut ObjectSpawnContext, transform: Transform) {
+    spawn_dynamic_gltf_object(
+        context,
+        transform,
+        "jerrycan",
+        "objects/metal-jerrycan/metal_jerrycan_2k.gltf",
+        Collider::cuboid(0.35, 0.455, 0.172),
+        Transform::from_translation(Vec3::new(0.005, 0.228, -0.003)),
+        ColliderDensity(500.0),
+    );
+}
+
+fn spawn_plastic_bottle_gallon(context: &mut ObjectSpawnContext, transform: Transform) {
+    spawn_dynamic_gltf_object(
+        context,
+        transform,
+        "plastic bottle gallon",
+        "objects/plastic-bottle-gallon/plastic_bottle_gallon_2k.gltf",
+        Collider::cuboid(0.166, 0.275, 0.126),
+        Transform::from_translation(Vec3::new(-0.005, 0.137, -0.002)),
+        ColliderDensity(100.0),
+    );
+}
+
+fn spawn_power_box(context: &mut ObjectSpawnContext, transform: Transform) {
+    let asset_path = "objects/power-box/power_box_01_2k.gltf";
+    let scene = context
+        .asset_server
+        .load(GltfAssetLabel::Scene(0).from_asset(asset_path));
+    let collider = Collider::cuboid(0.35, 0.51, 0.12);
+    let density = ColliderDensity(500.0);
+    context
+        .commands
+        .spawn((
+            Name::new("power box"),
             transform,
-        ));
-    }
+            WorldAssetRoot(scene),
+            RigidBody::Static,
+        ))
+        .with_children(|object_parent| {
+            object_parent.spawn((collider, density, CollisionLayers::new(WORLD_GROUP, OBJECTS_GROUP)));
+        });
 }
 
-pub(super) fn spawn_piece(piece: &Piece, context: &mut PieceSpawnContext) {
-    for item in &piece.items {
-        let transform = piece.transform * Transform::from_translation(item.get_position());
-        match item {
-            Item::Cuboid(build_cuboid) => {
-                context.spawn_mesh_cuboid(transform, build_cuboid.size, &build_cuboid.material)
-            }
-            Item::Lamp(lamp) => spawn_lamp(context, piece.transform, lamp.wire_length),
-        }
-    }
+fn spawn_dynamic_gltf_object(
+    context: &mut ObjectSpawnContext,
+    transform: Transform,
+    name: &'static str,
+    asset_path: &'static str,
+    collider: Collider,
+    collider_transform: Transform,
+    density: ColliderDensity,
+) {
+    let scene = context
+        .asset_server
+        .load(GltfAssetLabel::Scene(0).from_asset(asset_path));
+    let object_linear_damping = 0.5;
+    let object_angular_damping = 8.0;
+    context
+        .commands
+        .spawn((
+            Name::new(name),
+            transform,
+            WorldAssetRoot(scene),
+            RigidBody::Dynamic,
+            LinearDamping(object_linear_damping),
+            AngularDamping(object_angular_damping),
+        ))
+        .with_children(|object_parent| {
+            object_parent.spawn((
+                collider,
+                collider_transform,
+                density,
+                CollisionLayers::new(OBJECTS_GROUP, WORLD_GROUP | OBJECTS_GROUP),
+            ));
+        });
 }
 
-fn get_tile_size(material: &Material) -> f32 {
-    match material {
-        Material::Solid { .. } => 1.0,
-        Material::Textured { tile_size, .. } => *tile_size,
-    }
+fn spawn_floor(context: &mut ObjectSpawnContext, transform: Transform, size: Vec3) {
+    let concrete_tile_size = 2.0;
+    spawn_concrete_cuboid(context, transform, size, concrete_tile_size);
 }
 
-fn make_material_from_definition(asset_server: &AssetServer, material: &Material) -> StandardMaterial {
-    match material {
-        Material::Solid { color } => StandardMaterial {
-            base_color: *color,
-            perceptual_roughness: 0.9,
-            ..default()
-        },
-        Material::Textured {
-            base_color_texture,
-            normal_map_texture,
-            metallic_roughness_texture,
-            roughness,
-            metallic,
-            ..
-        } => StandardMaterial {
-            base_color: Color::WHITE,
-            base_color_texture: Some(asset_server.load(base_color_texture)),
-            normal_map_texture: Some(asset_server.load(normal_map_texture)),
-            metallic_roughness_texture: metallic_roughness_texture.as_ref().map(|path| asset_server.load(path)),
-            perceptual_roughness: *roughness,
-            metallic: *metallic,
-            ..default()
-        },
-    }
+fn spawn_ceiling(context: &mut ObjectSpawnContext, transform: Transform, size: Vec3) {
+    let concrete_tile_size = 3.0;
+    spawn_concrete_cuboid(context, transform, size, concrete_tile_size);
 }
 
-fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_length: f32) {
+fn spawn_wall(context: &mut ObjectSpawnContext, transform: Transform, size: Vec3) {
+    let concrete_tile_size = 3.0;
+    spawn_concrete_cuboid(context, transform, size, concrete_tile_size);
+}
+
+fn spawn_concrete_cuboid(context: &mut ObjectSpawnContext, transform: Transform, size: Vec3, tile_size: f32) {
+    let texture_directory = "textures/concrete-floor";
+    let material = context.materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(context.asset_server.load(format!("{texture_directory}/base-color.jpg"))),
+        normal_map_texture: Some(context.asset_server.load(format!("{texture_directory}/normal.png"))),
+        perceptual_roughness: 0.85,
+        ..default()
+    });
+    context.commands.spawn((
+        Mesh3d(context.meshes.add(build_cuboid_mesh(size, tile_size))),
+        MeshMaterial3d(material),
+        RigidBody::Static,
+        Collider::cuboid(size.x, size.y, size.z),
+        transform,
+    ));
+}
+
+fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transform, wire_length: f32) {
     let pivot_position = pivot_transform.translation;
     let lamp_shade_color = Color::srgb(0.02, 0.02, 0.02);
     let lamp_light_color = Color::srgb(1.0, 0.95, 0.88);
@@ -167,11 +259,15 @@ fn spawn_lamp(context: &mut PieceSpawnContext, pivot_transform: Transform, wire_
     let link_linear_damping = 0.3;
     let link_angular_damping = 32.0;
 
-    let shade_material = context.find_material_handle(&Material::Solid {
-        color: lamp_shade_color,
+    let shade_material = context.materials.add(StandardMaterial {
+        base_color: lamp_shade_color,
+        perceptual_roughness: 0.9,
+        ..default()
     });
-    let reflector_material = context.find_material_handle(&Material::Solid {
-        color: lamp_reflector_color,
+    let reflector_material = context.materials.add(StandardMaterial {
+        base_color: lamp_reflector_color,
+        perceptual_roughness: 0.9,
+        ..default()
     });
     let diffuser_material = context.materials.add(StandardMaterial {
         base_color: lamp_diffuser_color,
@@ -488,47 +584,4 @@ fn build_lamp_wire_indices(point_count: usize) -> Vec<u32> {
         }
     }
     indices
-}
-
-fn build_piece(transform: Transform, items: Vec<Item>) -> Piece {
-    Piece { transform, items }
-}
-
-pub(super) fn build_cuboid(position: Vec3, size: Vec3, material: Material) -> Piece {
-    build_piece(
-        Transform::from_translation(position),
-        vec![Item::Cuboid(Cuboid {
-            position: Vec3::ZERO,
-            size,
-            material,
-        })],
-    )
-}
-
-pub(super) fn build_default_cuboid(position: Vec3, size: Vec3) -> Piece {
-    let default_cuboid_color = Color::srgb(0.5, 0.5, 0.5);
-    let default_cuboid_material = Material::Solid {
-        color: default_cuboid_color,
-    };
-    build_cuboid(position, size, default_cuboid_material)
-}
-
-pub(super) fn make_concrete_material(tile_size: f32) -> Material {
-    let textures = "textures";
-
-    Material::Textured {
-        base_color_texture: format!("{textures}/concrete-floor/base-color.jpg"),
-        normal_map_texture: format!("{textures}/concrete-floor/normal.png"),
-        metallic_roughness_texture: None,
-        roughness: 0.85,
-        metallic: 0.0,
-        tile_size,
-    }
-}
-
-pub(super) fn build_hanging_lamp(pivot_position: Vec3, wire_length: f32) -> Piece {
-    build_piece(
-        Transform::from_translation(pivot_position),
-        vec![Item::Lamp(Lamp { wire_length })],
-    )
 }

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::pieces::{Piece, build_default_cuboid};
+use super::objects::Object;
 use super::{CurrentMap, EnemySpawn, Map, PlayerPosition};
 use crate::enemies::{EnemyKind, Fighter};
 
@@ -18,7 +18,7 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
             fog_volume: None,
             player_position: PlayerPosition::new(Vec3::new(0.0, 0.5, 0.0)),
             enemies: vec![],
-            pieces: vec![build_floor()],
+            objects: vec![build_floor()],
         },
         CurrentMap::TallPillar => Map {
             ambient: GlobalAmbientLight::NONE,
@@ -26,7 +26,7 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
             fog_volume: None,
             player_position: PlayerPosition::new(Vec3::new(-6.0, 1.5, 0.0)),
             enemies: vec![],
-            pieces: vec![build_floor(), spawn_tall_pillar()],
+            objects: vec![build_floor(), build_tall_pillar()],
         },
         CurrentMap::Staircase => Map {
             ambient: GlobalAmbientLight::NONE,
@@ -34,7 +34,7 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
             fog_volume: None,
             player_position: PlayerPosition::new(Vec3::new(0.0, 1.5, 12.0)),
             enemies: vec![],
-            pieces: spawn_staircase_pieces(),
+            objects: build_staircase_objects(),
         },
         CurrentMap::ColliderInspection => Map {
             ambient: GlobalAmbientLight::default(),
@@ -48,33 +48,42 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
                 position: Vec3::ZERO,
                 kind: EnemyKind::Fighter(Fighter::default()),
             }],
-            pieces: vec![build_floor()],
+            objects: vec![build_floor()],
         },
         _ => unreachable!("test map definitions only cover test maps"),
     }
 }
 
-fn build_floor() -> Piece {
-    build_default_cuboid(Vec3::ZERO, TEST_FLOOR_SIZE)
+fn build_floor() -> Object {
+    Object::Floor {
+        transform: Transform::IDENTITY,
+        size: TEST_FLOOR_SIZE,
+    }
 }
 
-fn spawn_tall_pillar() -> Piece {
-    build_default_cuboid(TALL_PILLAR_POSITION, TALL_PILLAR_SIZE)
+fn build_tall_pillar() -> Object {
+    Object::Wall {
+        transform: Transform::from_translation(TALL_PILLAR_POSITION),
+        size: TALL_PILLAR_SIZE,
+    }
 }
 
-fn spawn_staircase_pieces() -> Vec<Piece> {
-    let mut pieces = vec![build_floor()];
+fn build_staircase_objects() -> Vec<Object> {
+    let mut objects = vec![build_floor()];
     for step_index in 0..4u32 {
         let step_center_height = 0.3 + step_index as f32 * 0.5;
         let up_z = 4.5 - step_index as f32;
         let down_z = -4.5 + step_index as f32;
         for step_z in [up_z, down_z] {
-            pieces.push(build_default_cuboid(
-                Vec3::new(0.0, step_center_height, step_z),
-                Vec3::new(4.0, 0.5, 1.0),
-            ));
+            objects.push(Object::Wall {
+                transform: Transform::from_translation(Vec3::new(0.0, step_center_height, step_z)),
+                size: Vec3::new(4.0, 0.5, 1.0),
+            });
         }
     }
-    pieces.push(build_default_cuboid(STAIRCASE_APEX_POSITION, STAIRCASE_APEX_SIZE));
-    pieces
+    objects.push(Object::Wall {
+        transform: Transform::from_translation(STAIRCASE_APEX_POSITION),
+        size: STAIRCASE_APEX_SIZE,
+    });
+    objects
 }

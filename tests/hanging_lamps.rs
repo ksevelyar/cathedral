@@ -2,28 +2,11 @@ use avian3d::prelude::*;
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
 use cathedral::maps::CurrentMap;
-use cathedral::maps::pieces::LampShade;
-use cathedral::player::Player;
 use std::time::Duration;
 
-mod support;
+pub mod support;
 
-use support::{FIXED_TIMESTEP_SECONDS, shoot_entity};
-
-fn find_closest_body_with_marker<Marker: Component>(app: &mut App) -> Option<Entity> {
-    let player_position = app
-        .world_mut()
-        .query_filtered::<&GlobalTransform, With<Player>>()
-        .single(app.world())
-        .ok()?
-        .translation();
-    app.world_mut()
-        .query_filtered::<(Entity, &GlobalTransform), With<Marker>>()
-        .iter(app.world())
-        .map(|(entity, transform)| (entity, transform.translation().distance_squared(player_position)))
-        .min_by(|left, right| left.1.total_cmp(&right.1))
-        .map(|(entity, _)| entity)
-}
+use support::{FIXED_TIMESTEP_SECONDS, shoot_entity, wait_for_named_body};
 
 struct SwingSample {
     horizontal_displacement: Vec2,
@@ -108,17 +91,6 @@ fn create_lamp_test_app() -> App {
     app
 }
 
-fn wait_for_lamp_shade(app: &mut App) -> Entity {
-    for _ in 0..600 {
-        app.update();
-        let shade = find_closest_body_with_marker::<LampShade>(app);
-        if let Some(shade) = shade {
-            return shade;
-        }
-    }
-    panic!("map01 should spawn hanging lamp shades within 600 frames");
-}
-
 fn record_shot_swing_trace(app: &mut App, shade: Entity) -> Vec<f32> {
     let shot_direction = shoot_entity(app, shade);
     let swing_horizontal_direction = Vec2::new(shot_direction.x, shot_direction.z).normalize();
@@ -133,7 +105,7 @@ fn record_shot_swing_trace(app: &mut App, shade: Entity) -> Vec<f32> {
 #[test]
 fn lamp_hangs_still_on_spawn() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_lamp_shade(&mut app);
+    let shade = wait_for_named_body(&mut app, "Lamp shade");
 
     let settling_deadline = 1.0;
     support::assert_settles(&mut app, shade, settling_deadline);
@@ -142,7 +114,7 @@ fn lamp_hangs_still_on_spawn() {
 #[test]
 fn lamp_completes_five_swings_within_fifteen_seconds() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_lamp_shade(&mut app);
+    let shade = wait_for_named_body(&mut app, "Lamp shade");
 
     let displacement = record_shot_swing_trace(&mut app, shade);
     let peaks = find_half_swing_peaks(&displacement);
@@ -163,7 +135,7 @@ fn lamp_completes_five_swings_within_fifteen_seconds() {
 #[test]
 fn lamp_swing_period_matches_cable_length() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_lamp_shade(&mut app);
+    let shade = wait_for_named_body(&mut app, "Lamp shade");
 
     let displacement = record_shot_swing_trace(&mut app, shade);
     let crossings = find_swing_zero_crossings(&displacement);
@@ -192,7 +164,7 @@ fn lamp_swing_period_matches_cable_length() {
 #[test]
 fn lamp_swing_amplitude_decays_monotonically() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_lamp_shade(&mut app);
+    let shade = wait_for_named_body(&mut app, "Lamp shade");
 
     let displacement = record_shot_swing_trace(&mut app, shade);
     let peaks = find_half_swing_peaks(&displacement);
@@ -217,7 +189,7 @@ fn lamp_swing_amplitude_decays_monotonically() {
 #[test]
 fn lamp_swing_amplitude_matches_bullet_momentum() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_lamp_shade(&mut app);
+    let shade = wait_for_named_body(&mut app, "Lamp shade");
 
     let displacement = record_shot_swing_trace(&mut app, shade);
     let first_peak = displacement
@@ -237,7 +209,7 @@ fn lamp_swing_amplitude_matches_bullet_momentum() {
 #[test]
 fn shot_lamp_settles_within_documented_time() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_lamp_shade(&mut app);
+    let shade = wait_for_named_body(&mut app, "Lamp shade");
 
     shoot_entity(&mut app, shade);
     support::assert_received_kick(&app, shade);
