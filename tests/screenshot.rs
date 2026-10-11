@@ -5,7 +5,7 @@ use std::process;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use cathedral::app::build_screenshot_app;
+use cathedral::app::{Configuration, build_screenshot_app, run_until_screenshot_captured};
 use cathedral::maps::CurrentMap;
 use cathedral::shooting::Gun;
 
@@ -21,15 +21,17 @@ fn screenshot_app_captures_map01_frame() {
     let viewpoint = (Vec3::new(0.0, 1.85, 6.0), Vec3::new(0.0, 2.0, -6.0));
     let mut app = build_screenshot_app(
         CurrentMap::Map01,
-        Some(viewpoint),
+        Configuration {
+            viewpoint: Some(viewpoint),
+            ..default()
+        },
         RENDER_WIDTH,
         RENDER_HEIGHT,
         screenshot_dir.to_string_lossy().into_owned(),
         "map01",
-        false,
     );
 
-    let captured_screenshots = app.run_until_screenshot_captured();
+    let captured_screenshots = run_until_screenshot_captured(&mut app);
     assert_eq!(
         captured_screenshots.0.len(),
         1,
@@ -81,15 +83,17 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
     let screenshot_dir = create_temp_screenshot_dir("collider-inspection");
     let mut app = build_screenshot_app(
         CurrentMap::ColliderInspection,
-        None,
+        Configuration {
+            show_colliders: true,
+            ..default()
+        },
         COLLIDER_RENDER_WIDTH,
         COLLIDER_RENDER_HEIGHT,
         screenshot_dir.to_string_lossy().into_owned(),
         "collider-inspection",
-        true,
     );
 
-    let captured_screenshots = app.run_until_screenshot_captured();
+    let captured_screenshots = run_until_screenshot_captured(&mut app);
     assert_eq!(
         captured_screenshots.0.len(),
         1,
@@ -99,7 +103,7 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
     assert_eq!(image.width(), COLLIDER_RENDER_WIDTH, "unexpected captured width");
     assert_eq!(image.height(), COLLIDER_RENDER_HEIGHT, "unexpected captured height");
 
-    let world = app.0.main.world_mut();
+    let world = app.world_mut();
     let mut gun_visibility_query = world.query_filtered::<&Visibility, With<Gun>>();
     let gun_visibilities: Vec<Visibility> = gun_visibility_query.iter(world).copied().collect();
     assert!(!gun_visibilities.is_empty(), "expected at least one gun entity");

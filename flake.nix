@@ -22,7 +22,6 @@
         with pkgs; {
           devShells.default = mkShell {
             buildInputs = [
-              # openssl
               alsa-lib
               vulkan-loader
               vulkan-tools
@@ -32,17 +31,11 @@
               wayland
               libxkbcommon
 
-              # wasm
-              # wasm-bindgen-cli
-              # wasm-pack
-              # binaryen
-
               pkg-config
               cargo-watch
               rust-analyzer
 
               jq
-              python3
               blender
               (
                 rust-bin.nightly.latest.default.override {
@@ -55,10 +48,12 @@
                 set -euo pipefail
                 cargo fmt --all -- --check --color always
                 cargo clippy --all-features --workspace -- -D warnings
-                cargo test -- --nocapture
+                cargo test
               '')
             ];
 
+            CARGO_BUILD_JOBS = 12;
+            RUST_TEST_THREADS = 12;
             LD_LIBRARY_PATH = lib.makeLibraryPath [
               alsa-lib
               vulkan-loader

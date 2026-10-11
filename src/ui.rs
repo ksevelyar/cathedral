@@ -1,22 +1,45 @@
+use avian3d::prelude::{Physics, PhysicsDebugPlugin, PhysicsGizmos, PhysicsTime};
 use bevy::diagnostic::{DiagnosticsStore, FrameTimeDiagnosticsPlugin};
 use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 
+use crate::app::Configuration;
 use crate::shooting::{Crosshair, Gun};
 use crate::state::GameState;
 
-pub struct UiPlugin {
-    pub show_fps: bool,
-}
+pub struct UiPlugin;
 
 impl Plugin for UiPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(GameState::Playing), lock_cursor)
+        let configuration = app.world().resource::<Configuration>();
+        let show_fps = configuration.show_fps;
+        let show_colliders = configuration.show_colliders;
+        let physics_gizmos = if show_colliders {
+            PhysicsGizmos::colliders(Color::srgb(1.0, 0.2, 0.2))
+        } else {
+            PhysicsGizmos::default()
+        };
+
+        app.add_plugins(PhysicsDebugPlugin)
+            .insert_gizmo_config(
+                physics_gizmos,
+                GizmoConfig {
+                    enabled: show_colliders,
+                    ..default()
+                },
+            )
+            .add_systems(OnEnter(GameState::Playing), lock_cursor)
             .add_systems(OnEnter(GameState::Paused), show_cursor)
             .add_systems(OnEnter(GameState::Paused), setup_pause_menu)
             .add_systems(OnEnter(GameState::GameOver), setup_game_over_menu)
-            .add_systems(Update, update_crosshair_and_gun_visibility);
-        if self.show_fps {
+            .add_systems(Update, (toggle_physics_pause, update_crosshair_and_gun_visibility));
+        if show_colliders {
+            app.add_systems(
+                Update,
+                hide_weapons_for_collider_inspection.after(update_crosshair_and_gun_visibility),
+            );
+        }
+        if show_fps {
             app.add_plugins(FrameTimeDiagnosticsPlugin::default())
                 .add_systems(Startup, setup_fps_display)
                 .add_systems(Update, update_fps_display);
@@ -126,6 +149,28 @@ fn setup_game_over_menu(mut commands: Commands) {
             ),
         ],
     ));
+}
+
+fn toggle_physics_pause(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    mut physics_time: ResMut<Time<Physics>>,
+    mut gizmo_configs: ResMut<GizmoConfigStore>,
+) {
+    if keyboard.just_pressed(KeyCode::KeyP) {
+        let pause = !physics_time.is_paused();
+        if pause {
+            physics_time.pause();
+        } else {
+            physics_time.unpause();
+        }
+        gizmo_configs.config_mut::<PhysicsGizmos>().0.enabled = pause;
+    }
+}
+
+fn hide_weapons_for_collider_inspection(mut weapons: Query<&mut Visibility, With<Gun>>) {
+    for mut visibility in &mut weapons {
+        *visibility = Visibility::Hidden;
+    }
 }
 
 fn update_crosshair_and_gun_visibility(

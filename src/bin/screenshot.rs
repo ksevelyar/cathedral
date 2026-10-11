@@ -1,8 +1,4 @@
-use std::env;
-use std::process;
-
-use bevy::prelude::*;
-use cathedral::app::build_screenshot_app;
+use cathedral::app::{build_screenshot_app, fetch_configuration, run_until_screenshot_captured};
 use cathedral::maps::CurrentMap;
 
 const SCREENSHOT_DIR: &str = "screenshots";
@@ -12,67 +8,26 @@ const COLLIDER_RENDER_WIDTH: u32 = 1440;
 const COLLIDER_RENDER_HEIGHT: u32 = 1440;
 
 fn main() {
-    let arguments: Vec<String> = env::args().skip(1).collect();
+    let configuration = fetch_configuration();
+    let show_colliders = configuration.show_colliders;
     std::fs::create_dir_all(SCREENSHOT_DIR).unwrap();
-    let mut app = if arguments.as_slice() == ["--colliders"] {
-        build_screenshot_app(
+    let (map, render_width, render_height, screenshot_name) = if show_colliders {
+        (
             CurrentMap::ColliderInspection,
-            None,
             COLLIDER_RENDER_WIDTH,
             COLLIDER_RENDER_HEIGHT,
-            SCREENSHOT_DIR.to_owned(),
             "collider-inspection",
-            true,
         )
     } else {
-        let viewpoint = parse_viewpoint_arguments(&mut arguments.into_iter());
-        build_screenshot_app(
-            CurrentMap::Map01,
-            viewpoint,
-            RENDER_WIDTH,
-            RENDER_HEIGHT,
-            SCREENSHOT_DIR.to_owned(),
-            "map01",
-            false,
-        )
+        (CurrentMap::Map01, RENDER_WIDTH, RENDER_HEIGHT, "map01")
     };
-    app.run_until_screenshot_captured();
-}
-
-fn parse_viewpoint_arguments(arguments: &mut dyn Iterator<Item = String>) -> Option<(Vec3, Vec3)> {
-    let argument = arguments.next()?;
-    let extra = arguments.next();
-    let viewpoint = match parse_viewpoint(&argument) {
-        Ok(viewpoint) => viewpoint,
-        Err(error) => {
-            eprintln!("{error}");
-            process::exit(1);
-        }
-    };
-    if let Some(extra) = extra {
-        eprintln!("expected at most one viewpoint argument, got a second: {extra}");
-        process::exit(1);
-    }
-    Some(viewpoint)
-}
-
-fn parse_viewpoint(argument: &str) -> Result<(Vec3, Vec3), String> {
-    let Some((eye, look_target)) = argument.split_once(':') else {
-        return Err(format!("expected eye:look, got {argument}"));
-    };
-    let eye = parse_position(eye, argument)?;
-    let look_target = parse_position(look_target, argument)?;
-    Ok((eye, look_target))
-}
-
-fn parse_position(text: &str, argument: &str) -> Result<Vec3, String> {
-    let coordinates = text
-        .split(',')
-        .map(|coordinate| coordinate.trim().parse::<f32>())
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| format!("expected comma separated numbers, got {argument}"))?;
-    let [x, y, z]: [f32; 3] = coordinates
-        .try_into()
-        .map_err(|_| format!("expected x,y,z, got {argument}"))?;
-    Ok(Vec3::new(x, y, z))
+    let mut app = build_screenshot_app(
+        map,
+        configuration,
+        render_width,
+        render_height,
+        SCREENSHOT_DIR.to_owned(),
+        screenshot_name,
+    );
+    run_until_screenshot_captured(&mut app);
 }
