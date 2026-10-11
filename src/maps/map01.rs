@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use super::pieces::{Piece, build_cuboid, build_hanging_lamp, make_concrete_material};
+use super::objects::Object;
 use super::{EnemySpawn, FogVolumeSettings, Map, PlayerPosition};
 use crate::enemies::{EnemyKind, Fighter};
 
@@ -27,12 +27,12 @@ pub(super) fn build_map() -> Map {
             position: Vec3::new(10.0, 1.9, 7.0),
             look_at: Vec3::new(-6.0, 2.0, -2.0),
         },
-        enemies: spawn_fighters_in_arc_before_player(),
-        pieces: spawn_control_room_pieces(),
+        enemies: build_fighters_in_arc_before_player(),
+        objects: build_control_room_objects(),
     }
 }
 
-fn spawn_fighters_in_arc_before_player() -> Vec<EnemySpawn> {
+fn build_fighters_in_arc_before_player() -> Vec<EnemySpawn> {
     let player_position = Vec3::new(10.0, 0.0, 7.0);
     let player_look_at = Vec3::new(-6.0, 0.0, -2.0);
     let forward_direction = (player_look_at - player_position).normalize();
@@ -43,7 +43,7 @@ fn spawn_fighters_in_arc_before_player() -> Vec<EnemySpawn> {
     let fighter_angle_step = arc_span_radians / (fighter_count - 1) as f32;
 
     (0..fighter_count)
-        .map(|fighter_index| {
+        .map(move |fighter_index| {
             let fighter_angle = first_fighter_angle + fighter_angle_step * fighter_index as f32;
             let fighter_direction = Quat::from_rotation_y(fighter_angle).mul_vec3(forward_direction);
             EnemySpawn {
@@ -54,71 +54,105 @@ fn spawn_fighters_in_arc_before_player() -> Vec<EnemySpawn> {
         .collect()
 }
 
-fn spawn_control_room_pieces() -> Vec<Piece> {
-    let mut pieces = vec![build_floor(), build_ceiling()];
-    pieces.extend(build_walls());
-    pieces.extend(spawn_control_room_lights());
-    pieces
-}
+fn build_control_room_objects() -> Vec<Object> {
+    let floor_surface_height = 0.1;
+    let desk_height = 0.788;
+    let object_separation = 0.01;
+    let desk_z_position = 2.9;
+    let laptop_height_above_desk = desk_height + object_separation;
+    let laptop_rotation = Quat::from_rotation_y(std::f32::consts::PI);
+    let storage_rack_rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
 
-fn build_floor() -> Piece {
-    build_cuboid(
-        Vec3::new(0.0, 0.05, 0.0),
-        Vec3::new(25.8, 0.1, 19.8),
-        make_concrete_material(2.0),
-    )
-}
+    let structure = [
+        Object::Floor {
+            transform: Transform::from_translation(Vec3::new(0.0, 0.05, 0.0)),
+            size: Vec3::new(25.8, 0.1, 19.8),
+        },
+        Object::Ceiling {
+            transform: Transform::from_translation(Vec3::new(0.0, 5.95, 0.0)),
+            size: Vec3::new(25.8, 0.1, 19.8),
+        },
+        Object::Wall {
+            transform: Transform::from_translation(Vec3::new(0.0, 3.0, 9.6)),
+            size: Vec3::new(25.4, 6.0, 0.2),
+        },
+        Object::Wall {
+            transform: Transform::from_translation(Vec3::new(12.6, 3.0, 0.0)),
+            size: Vec3::new(0.2, 6.0, 19.4),
+        },
+        Object::Wall {
+            transform: Transform::from_translation(Vec3::new(-12.6, 3.0, 0.0)),
+            size: Vec3::new(0.2, 6.0, 19.4),
+        },
+        Object::Wall {
+            transform: Transform::from_translation(Vec3::new(-6.75, 3.0, -9.6)),
+            size: Vec3::new(11.9, 6.0, 0.2),
+        },
+        Object::Wall {
+            transform: Transform::from_translation(Vec3::new(6.75, 3.0, -9.6)),
+            size: Vec3::new(11.9, 6.0, 0.2),
+        },
+        Object::Wall {
+            transform: Transform::from_translation(Vec3::new(0.0, 4.1, -9.6)),
+            size: Vec3::new(1.6, 3.8, 0.2),
+        },
+    ];
 
-fn build_ceiling() -> Piece {
-    build_cuboid(
-        Vec3::new(0.0, 5.95, 0.0),
-        Vec3::new(25.8, 0.1, 19.8),
-        make_concrete_material(3.0),
-    )
-}
+    let lamp_pivot_height = 5.85;
+    let lamp_wire_length = 2.2;
+    let lamps =
+        [(-6.0, -4.5), (6.0, -4.5), (-6.0, 4.5), (6.0, 4.5)].map(|(x_position, z_position)| Object::HangingLamp {
+            transform: Transform::from_translation(Vec3::new(x_position, lamp_pivot_height, z_position)),
+            wire_length: lamp_wire_length,
+        });
 
-fn build_walls() -> Vec<Piece> {
-    vec![
-        build_cuboid(
-            Vec3::new(0.0, 3.0, 9.6),
-            Vec3::new(25.4, 6.0, 0.2),
-            make_concrete_material(3.0),
+    let furniture = [
+        Object::Desk(Transform::from_translation(Vec3::new(
+            -4.0,
+            floor_surface_height,
+            desk_z_position,
+        ))),
+        Object::Desk(Transform::from_translation(Vec3::new(
+            4.0,
+            floor_surface_height,
+            desk_z_position,
+        ))),
+        Object::Laptop(
+            Transform::from_translation(Vec3::new(
+                -4.0,
+                floor_surface_height + laptop_height_above_desk,
+                desk_z_position,
+            ))
+            .with_rotation(laptop_rotation),
         ),
-        build_cuboid(
-            Vec3::new(12.6, 3.0, 0.0),
-            Vec3::new(0.2, 6.0, 19.4),
-            make_concrete_material(3.0),
+        Object::Laptop(
+            Transform::from_translation(Vec3::new(
+                4.0,
+                floor_surface_height + laptop_height_above_desk,
+                desk_z_position,
+            ))
+            .with_rotation(laptop_rotation),
         ),
-        build_cuboid(
-            Vec3::new(-12.6, 3.0, 0.0),
-            Vec3::new(0.2, 6.0, 19.4),
-            make_concrete_material(3.0),
+        Object::Stool(Transform::from_translation(Vec3::new(-4.0, floor_surface_height, 4.0))),
+        Object::Stool(Transform::from_translation(Vec3::new(4.0, floor_surface_height, 4.0))),
+        Object::StorageRack(
+            Transform::from_translation(Vec3::new(-12.1, floor_surface_height, 6.5))
+                .with_rotation(storage_rack_rotation),
         ),
-        build_cuboid(
-            Vec3::new(-6.75, 3.0, -9.6),
-            Vec3::new(11.9, 6.0, 0.2),
-            make_concrete_material(3.0),
-        ),
-        build_cuboid(
-            Vec3::new(6.75, 3.0, -9.6),
-            Vec3::new(11.9, 6.0, 0.2),
-            make_concrete_material(3.0),
-        ),
-        build_cuboid(
-            Vec3::new(0.0, 4.1, -9.6),
-            Vec3::new(1.6, 3.8, 0.2),
-            make_concrete_material(3.0),
-        ),
-    ]
-}
+        Object::CardboardBox(Transform::from_translation(Vec3::new(-10.8, floor_surface_height, 7.8))),
+        Object::Jerrycan(Transform::from_translation(Vec3::new(
+            -10.35,
+            floor_surface_height,
+            7.85,
+        ))),
+        Object::PlasticBottleGallon(Transform::from_translation(Vec3::new(
+            -11.15,
+            floor_surface_height,
+            7.85,
+        ))),
+        Object::PowerBox(Transform::from_translation(Vec3::new(-10.0, 2.0, 9.43))),
+        Object::PowerBox(Transform::from_translation(Vec3::new(10.0, 2.0, 9.43))),
+    ];
 
-fn spawn_control_room_lights() -> Vec<Piece> {
-    const LAMP_PIVOT_HEIGHT: f32 = 5.85;
-    const LAMP_WIRE_LENGTH: f32 = 2.2;
-    [(-6.0, -4.5), (6.0, -4.5), (-6.0, 4.5), (6.0, 4.5)]
-        .into_iter()
-        .map(|(x_position, z_position)| {
-            build_hanging_lamp(Vec3::new(x_position, LAMP_PIVOT_HEIGHT, z_position), LAMP_WIRE_LENGTH)
-        })
-        .collect()
+    structure.into_iter().chain(lamps).chain(furniture).collect()
 }

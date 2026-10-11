@@ -6,7 +6,7 @@ use cathedral::maps::{CurrentMap, PlayerPosition};
 use cathedral::ragdoll::{OwnedByEnemy, RagdollBodyPart};
 use std::time::Duration;
 
-mod support;
+pub mod support;
 
 #[derive(Resource, Clone)]
 struct TestEnemyKind(EnemyKind);
