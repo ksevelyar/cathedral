@@ -31,7 +31,15 @@ pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {
         .single_mut(app.world_mut())
         .expect("one player should spawn");
     let shot_direction = (target_position - player_transform.translation).normalize();
-    *player_transform = Transform::from_translation(player_transform.translation).looking_at(target_position, Vec3::Y);
+    let (yaw, pitch) = cathedral::player::compute_look_angles(player_transform.translation, target_position);
+    player_transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, 0.0, 0.0);
+    let mut camera_transform = app
+        .world_mut()
+        .query_filtered::<&mut Transform, With<cathedral::player::PlayerCamera>>()
+        .single_mut(app.world_mut())
+        .expect("one player camera should spawn");
+    camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, pitch, 0.0);
+    app.update();
     let mut pressed_message_writer = app.world_mut().resource_mut::<Messages<MouseButtonInput>>();
     pressed_message_writer.write(MouseButtonInput {
         button: MouseButton::Left,

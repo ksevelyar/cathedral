@@ -87,12 +87,24 @@ struct RigPart {
 }
 
 #[derive(Component)]
-#[relationship(relationship_target = EnemyPhysicsEntities)]
-pub struct OwnedByEnemy(pub Entity);
+#[relationship(relationship_target = CharacterPhysicsEntities)]
+pub struct OwnedByCharacter(pub Entity);
+
+pub(crate) fn exclude_character_bodies(
+    character_entities: &[Entity],
+    owned_bodies: &Query<(Entity, &OwnedByCharacter)>,
+) -> SpatialQueryFilter {
+    SpatialQueryFilter::default().with_excluded_entities(
+        owned_bodies
+            .iter()
+            .filter(|(_, owner)| character_entities.contains(&owner.0))
+            .map(|(body_entity, _)| body_entity),
+    )
+}
 
 #[derive(Component)]
-#[relationship_target(relationship = OwnedByEnemy, linked_spawn)]
-pub struct EnemyPhysicsEntities(Vec<Entity>);
+#[relationship_target(relationship = OwnedByCharacter, linked_spawn)]
+pub struct CharacterPhysicsEntities(Vec<Entity>);
 
 #[derive(Component)]
 #[relationship(relationship_target = JointsAnchoredToBody)]
@@ -143,7 +155,7 @@ fn apply_pending_impacts(mut commands: Commands, mut impacted_bodies: Query<(Ent
 fn wake_ragdoll_bodies_on_hit(
     hit: On<EnemyHit>,
     mut commands: Commands,
-    ragdoll_bodies: Query<(&OwnedByEnemy, &RagdollBodyPart)>,
+    ragdoll_bodies: Query<(&OwnedByCharacter, &RagdollBodyPart)>,
 ) {
     let Some(body_part) = ragdoll_bodies.get(hit.body).ok().map(|(_, part)| *part) else {
         return;
@@ -660,7 +672,7 @@ fn spawn_spherical_joint(
 ) -> Entity {
     commands
         .spawn((
-            OwnedByEnemy(enemy),
+            OwnedByCharacter(enemy),
             SphericalJoint::new(parent, child).with_anchor(anchor),
             JointDamping {
                 linear: 0.0,
@@ -688,7 +700,7 @@ fn spawn_revolute_joint(
 ) -> Entity {
     commands
         .spawn((
-            OwnedByEnemy(bodies.enemy),
+            OwnedByCharacter(bodies.enemy),
             JointAnchoredToBody(bodies.child),
             make_revolute_joint(
                 bodies.parent,
@@ -733,7 +745,7 @@ fn make_revolute_joint(
 
 fn spawn_body(
     commands: &mut Commands,
-    enemy: Entity,
+    character: Entity,
     spec: &LimbSpec,
     transform: Transform,
     fitted: Collider,
@@ -741,7 +753,7 @@ fn spawn_body(
     commands
         .spawn((
             Name::new(spec.name),
-            OwnedByEnemy(enemy),
+            OwnedByCharacter(character),
             spec.part,
             RigidBody::Dynamic,
             AngularDamping(ANGULAR_DAMPING),

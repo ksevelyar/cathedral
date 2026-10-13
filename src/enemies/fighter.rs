@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
-use super::{AnimationState, EnemyActivity, EnemyRig, WeaponSpec, flatten_direction};
+use super::{AnimationState, EnemyActivity, EnemyRig, EquippedWeapon, flatten_direction};
 use crate::movement::PhysicsWorld;
+use crate::shooting::{MeleeWeapon, Weapon};
 
 #[derive(Clone)]
 pub struct Fighter {
@@ -21,12 +22,9 @@ impl Default for Fighter {
                 idle_animation: 40,
                 moving_animation: 36,
                 attack_animation: 39,
-                weapon: WeaponSpec {
-                    path: "weapons/katana.glb",
-                    scale: 1.0,
-                    rotation_euler_yxz: (0.0, 0.0, 0.0),
-                    translation: Vec3::ZERO,
-                    collider_half_extents: Vec3::new(0.01, 0.04, 0.35),
+                weapon: EquippedWeapon {
+                    weapon: Weapon::Melee(MeleeWeapon::Katana),
+                    transform: Transform::default(),
                 },
             },
             move_speed: 3.0,
@@ -50,7 +48,7 @@ impl Fighter {
         };
 
         if distance <= self.reach {
-            activity.attack_on_cooldown(self.attack_cooldown, self.attack_animation_seconds);
+            let _ = activity.attack_on_cooldown(self.attack_cooldown, self.attack_animation_seconds);
         } else {
             activity.state = AnimationState::Moving;
             enemy.look_to(-direction, Vec3::Y);

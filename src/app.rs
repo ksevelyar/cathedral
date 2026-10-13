@@ -107,7 +107,7 @@ use bevy::world_serialization::WorldSerializationPlugin;
 use crate::{
     enemies::EnemiesPlugin,
     maps::{CurrentMap, MapsPlugin, PlayerPosition},
-    player::{CameraState, Player, PlayerPlugin},
+    player::{CameraState, PlayerCamera, PlayerPlugin},
     ragdoll::RagdollPlugin,
     shooting::ShootingPlugin,
     state::GameStatePlugin,
@@ -309,7 +309,7 @@ struct ScreenshotRenderTarget(Handle<Image>);
 fn attach_screenshot_camera(
     screenshot_target: Res<ScreenshotRenderTarget>,
     viewpoint: Res<Viewpoint>,
-    player_camera: Query<Entity, (With<Player>, Without<ScreenshotCamera>)>,
+    player_camera: Query<Entity, (With<PlayerCamera>, Without<ScreenshotCamera>)>,
     mut commands: Commands,
 ) {
     let Ok(player_camera) = player_camera.single() else {
@@ -322,6 +322,7 @@ fn attach_screenshot_camera(
         let direction = (look_target - eye).normalize();
         let pitch = direction.y.asin();
         let yaw = (-direction.x).atan2(-direction.z);
+        commands.entity(player_camera).remove::<ChildOf>();
         commands
             .entity(player_camera)
             .insert((CameraState { yaw, pitch }, Transform::from_translation(eye)));

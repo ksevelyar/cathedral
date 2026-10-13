@@ -4,7 +4,7 @@ use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
 use cathedral::maps::CurrentMap;
-use cathedral::player::{CameraState, Player};
+use cathedral::player::{CameraState, Player, PlayerCamera};
 
 fn create_test_app() -> App {
     build_test_app(CurrentMap::FlatFloor, None)
@@ -44,7 +44,7 @@ fn starting_the_game_spawns_the_player_camera() {
 
     let mut query = app
         .world_mut()
-        .query_filtered::<Entity, (With<Camera3d>, With<Player>)>();
+        .query_filtered::<Entity, (With<Camera3d>, With<PlayerCamera>)>();
     assert_eq!(
         query.iter(app.world()).count(),
         1,

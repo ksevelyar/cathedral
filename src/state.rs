@@ -3,7 +3,7 @@ use bevy::prelude::*;
 
 use crate::enemies::Enemy;
 use crate::maps::{self, CurrentMap, PlayerPosition};
-use crate::player::{self, CameraState, Player};
+use crate::player;
 
 pub struct GameStatePlugin;
 
@@ -50,7 +50,8 @@ struct GameRestartContext<'w, 's> {
 fn restart_game(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut next_state: ResMut<NextState<GameState>>,
-    player_query: Query<(&mut Transform, &mut CameraState), With<Player>>,
+    player_query: player::PlayerBodyTransformQuery,
+    camera_query: player::PlayerCameraTransformQuery,
     mut restart_context: GameRestartContext,
 ) {
     if !keyboard.just_pressed(KeyCode::Space) {
@@ -67,6 +68,6 @@ fn restart_game(
         &mut restart_context.commands,
         &restart_context.asset_server,
     );
-    player::reset_player(player_query, &restart_context.player_position);
+    player::reset_player(player_query, camera_query, &restart_context.player_position);
     next_state.set(GameState::Playing);
 }

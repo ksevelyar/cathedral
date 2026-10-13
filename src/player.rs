@@ -7,6 +7,20 @@ use bevy::prelude::*;
 
 use crate::maps::PlayerPosition;
 use crate::movement::PhysicsWorld;
+use crate::ragdoll::{OwnedByCharacter, exclude_character_bodies, setup_ragdoll};
+
+fn exclude_player_bodies(
+    player_entity: Entity,
+    owned_bodies: &Query<(Entity, &OwnedByCharacter)>,
+    player_children: &Query<&Children>,
+) -> SpatialQueryFilter {
+    let mut owner_entities: Vec<Entity> = Vec::new();
+    if let Ok(children) = player_children.get(player_entity) {
+        owner_entities.extend(children.iter());
+    }
+    owner_entities.push(player_entity);
+    exclude_character_bodies(&owner_entities, owned_bodies)
+}
 use crate::state::GameState;
 
 pub struct PlayerPlugin;
@@ -29,6 +43,9 @@ impl Plugin for PlayerPlugin {
 pub struct Player;
 
 #[derive(Component)]
+pub struct PlayerCamera;
+
+#[derive(Component)]
 pub struct CameraState {
     pub yaw: f32,
     pub pitch: f32,
@@ -45,35 +62,54 @@ const PLAYER_MOVE_SPEED: f32 = 5.0;
 const CAMERA_PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 const PLAYER_COLLISION_RADIUS: f32 = 0.4;
 const PLAYER_EYE_HEIGHT: f32 = 1.8;
+const PLAYER_BODY_ASSET_PATH: &str = "characters/bodies/female.gltf";
+const PLAYER_BODY_CAMERA_OFFSET: Vec3 = Vec3::new(0.0, -1.85, 0.3);
 
-pub fn setup_player(mut commands: Commands, start_position: Option<Res<PlayerPosition>>) {
+pub fn setup_player(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    start_position: Option<Res<PlayerPosition>>,
+) {
     let camera_bloom_intensity = 0.01;
     let player_position = start_position
         .map(|start_position| *start_position)
         .unwrap_or_else(|| PlayerPosition::new(Vec3::ZERO));
     let (yaw, pitch) = compute_look_angles(player_position.position, player_position.look_at);
-    commands.spawn((
-        Camera3d::default(),
-        Exposure::INDOOR,
-        Bloom {
-            intensity: camera_bloom_intensity,
-            ..Bloom::NATURAL
-        },
-        VolumetricFog {
-            ambient_intensity: 0.0,
-            step_count: 48,
-            ..default()
-        },
-        Transform::from_translation(player_position.position).with_rotation(Quat::from_euler(
-            EulerRot::YXZ,
-            yaw,
-            pitch,
-            0.0,
-        )),
-        CameraState { yaw, pitch },
-        LinearVelocity::default(),
-        Player,
-    ));
+    let player_entity = commands
+        .spawn((
+            Transform::from_translation(player_position.position)
+                .with_rotation(Quat::from_euler(EulerRot::YXZ, yaw, 0.0, 0.0)),
+            CameraState { yaw, pitch },
+            LinearVelocity::default(),
+            Player,
+        ))
+        .id();
+    let player_camera_entity = commands
+        .spawn((
+            Camera3d::default(),
+            Exposure::INDOOR,
+            Bloom {
+                intensity: camera_bloom_intensity,
+                ..Bloom::NATURAL
+            },
+            VolumetricFog {
+                ambient_intensity: 0.0,
+                step_count: 48,
+                ..default()
+            },
+            Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, 0.0, pitch, 0.0)),
+            PlayerCamera,
+        ))
+        .id();
+    let player_body_entity = commands
+        .spawn((
+            WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(PLAYER_BODY_ASSET_PATH))),
+            Transform::from_translation(PLAYER_BODY_CAMERA_OFFSET),
+        ))
+        .id();
+    commands.entity(player_body_entity).observe(setup_ragdoll);
+    commands.entity(player_entity).add_child(player_body_entity);
+    commands.entity(player_entity).add_child(player_camera_entity);
 }
 
 pub fn compute_look_angles(eye: Vec3, look_at: Vec3) -> (f32, f32) {
@@ -81,8 +117,15 @@ pub fn compute_look_angles(eye: Vec3, look_at: Vec3) -> (f32, f32) {
     ((-direction.x).atan2(-direction.z), direction.y.asin())
 }
 
+pub type PlayerBodyTransformQuery<'w, 's> =
+    Query<'w, 's, (&'static mut Transform, &'static mut CameraState), (With<Player>, Without<PlayerCamera>)>;
+
+pub type PlayerCameraTransformQuery<'w, 's> =
+    Query<'w, 's, &'static mut Transform, (With<PlayerCamera>, Without<Player>)>;
+
 pub fn reset_player(
-    mut player_query: Query<(&mut Transform, &mut CameraState), With<Player>>,
+    mut player_query: PlayerBodyTransformQuery,
+    mut camera_query: PlayerCameraTransformQuery,
     start_position: &PlayerPosition,
 ) {
     let Ok((mut transform, mut camera_state)) = player_query.single_mut() else {
@@ -91,17 +134,23 @@ pub fn reset_player(
 
     let (yaw, pitch) = compute_look_angles(start_position.position, start_position.look_at);
     transform.translation = start_position.position;
-    transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0);
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, 0.0, 0.0);
     camera_state.yaw = yaw;
     camera_state.pitch = pitch;
+    let Ok(mut camera_transform) = camera_query.single_mut() else {
+        return;
+    };
+    camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, pitch, 0.0);
 }
 
 pub fn settle_player_on_startup(
-    mut player: Query<(&mut Transform, &mut LinearVelocity), Added<Player>>,
+    mut player: Query<(Entity, &mut Transform, &mut LinearVelocity), Added<Player>>,
     move_and_slide: MoveAndSlide,
+    owned_bodies: Query<(Entity, &OwnedByCharacter)>,
+    player_children: Query<&Children>,
 ) {
-    for (mut transform, mut velocity) in &mut player {
-        let filter = SpatialQueryFilter::default();
+    for (player_entity, mut transform, mut velocity) in &mut player {
+        let filter = exclude_player_bodies(player_entity, &owned_bodies, &player_children);
         let physics_world = PhysicsWorld::new(
             &move_and_slide,
             0.0,
@@ -120,7 +169,8 @@ pub fn settle_player_on_startup(
 
 pub fn apply_mouse_look(
     mouse_motion: Res<AccumulatedMouseMotion>,
-    mut query: Query<(&mut Transform, &mut CameraState), With<Player>>,
+    mut query: PlayerBodyTransformQuery,
+    mut camera_query: PlayerCameraTransformQuery,
 ) {
     let Ok((mut transform, mut camera_state)) = query.single_mut() else {
         return;
@@ -135,7 +185,10 @@ pub fn apply_mouse_look(
     camera_state.pitch =
         (camera_state.pitch - mouse_delta.y * MOUSE_SENSITIVITY).clamp(-CAMERA_PITCH_LIMIT, CAMERA_PITCH_LIMIT);
 
-    transform.rotation = Quat::from_euler(EulerRot::YXZ, camera_state.yaw, camera_state.pitch, 0.0);
+    transform.rotation = Quat::from_euler(EulerRot::YXZ, camera_state.yaw, 0.0, 0.0);
+    if let Ok(mut camera_transform) = camera_query.single_mut() {
+        camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera_state.pitch, 0.0);
+    }
 }
 
 pub fn move_player(
@@ -143,9 +196,11 @@ pub fn move_player(
     time: Res<Time>,
     move_and_slide: MoveAndSlide,
     gravity: Res<Gravity>,
-    mut query: Query<(&mut Transform, &CameraState, &mut LinearVelocity), With<Player>>,
+    owned_bodies: Query<(Entity, &OwnedByCharacter)>,
+    player_children: Query<&Children>,
+    mut query: Query<(Entity, &mut Transform, &CameraState, &mut LinearVelocity), With<Player>>,
 ) {
-    let Ok((mut transform, camera_state, mut velocity)) = query.single_mut() else {
+    let Ok((player_entity, mut transform, camera_state, mut velocity)) = query.single_mut() else {
         return;
     };
 
@@ -166,7 +221,7 @@ pub fn move_player(
         movement_direction -= right_direction;
     }
 
-    let filter = SpatialQueryFilter::default();
+    let filter = exclude_player_bodies(player_entity, &owned_bodies, &player_children);
     let physics_world = PhysicsWorld::new(
         &move_and_slide,
         gravity.0.y,

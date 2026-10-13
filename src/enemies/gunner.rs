@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 
-use super::{AnimationState, EnemyActivity, EnemyRig, WeaponSpec, flatten_direction};
+use super::{AnimationState, EnemyActivity, EnemyRig, EquippedWeapon, flatten_direction};
 use crate::movement::PhysicsWorld;
+use crate::shooting::{RangedWeapon, Weapon};
 
 #[derive(Clone)]
 pub struct Gunner {
@@ -22,12 +23,13 @@ impl Default for Gunner {
                 idle_animation: 21,
                 moving_animation: 36,
                 attack_animation: 23,
-                weapon: WeaponSpec {
-                    path: "weapons/pistol.glb",
-                    scale: 0.15,
-                    rotation_euler_yxz: (1.5240, 0.0217, 1.3841),
-                    translation: Vec3::new(-0.05, 0.0, 0.0),
-                    collider_half_extents: Vec3::new(0.88, 0.15, 0.1),
+                weapon: EquippedWeapon {
+                    weapon: Weapon::Ranged(RangedWeapon::Pistol),
+                    transform: Transform {
+                        translation: Vec3::new(-0.05, 0.0, 0.0),
+                        rotation: Quat::from_euler(EulerRot::YXZ, 1.5240, 0.0217, 1.3841),
+                        scale: Vec3::splat(0.15),
+                    },
                 },
             },
             move_speed: 4.0,
@@ -46,9 +48,9 @@ impl Gunner {
         enemy: &mut Transform,
         activity: &mut EnemyActivity,
         physics_world: &PhysicsWorld,
-    ) {
+    ) -> bool {
         let Some((direction, distance)) = flatten_direction(player, enemy) else {
-            return;
+            return false;
         };
 
         if distance < self.flee_distance {
@@ -68,7 +70,8 @@ impl Gunner {
             activity.state = AnimationState::Moving;
         } else {
             enemy.look_to(-direction, Vec3::Y);
-            activity.attack_on_cooldown(self.attack_cooldown, self.attack_animation_seconds);
+            return activity.attack_on_cooldown(self.attack_cooldown, self.attack_animation_seconds);
         }
+        false
     }
 }

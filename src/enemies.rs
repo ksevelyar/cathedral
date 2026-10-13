@@ -1,14 +1,17 @@
 use avian3d::prelude::{
-    Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation, SpatialQueryFilter,
+    Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation,
 };
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::prelude::*;
+use bevy::ecs::system::SystemParam;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
+use rand::Rng;
 
 use crate::maps::CurrentMap;
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
-use crate::ragdoll::{BoneMap, OwnedByEnemy, setup_ragdoll};
+use crate::ragdoll::{BoneMap, OwnedByCharacter, exclude_character_bodies, setup_ragdoll};
+use crate::shooting::{Weapon, WeaponFired, observe_muzzle_flash};
 use crate::state::GameState;
 
 mod fighter;
@@ -60,31 +63,31 @@ impl EnemyKind {
         enemy: &mut Transform,
         activity: &mut EnemyActivity,
         physics_world: &PhysicsWorld,
-    ) {
+    ) -> bool {
         match self {
-            Self::Fighter(fighter) => fighter.update(player, enemy, activity, physics_world),
+            Self::Fighter(fighter) => {
+                fighter.update(player, enemy, activity, physics_world);
+                false
+            }
             Self::Gunner(gunner) => gunner.update(player, enemy, activity, physics_world),
         }
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct EnemyRig {
     scene: &'static str,
     animation_source: &'static str,
     idle_animation: usize,
     moving_animation: usize,
     attack_animation: usize,
-    weapon: WeaponSpec,
+    weapon: EquippedWeapon,
 }
 
-#[derive(Clone, Copy)]
-struct WeaponSpec {
-    path: &'static str,
-    scale: f32,
-    rotation_euler_yxz: (f32, f32, f32),
-    translation: Vec3,
-    collider_half_extents: Vec3,
+#[derive(Clone)]
+struct EquippedWeapon {
+    weapon: Weapon,
+    transform: Transform,
 }
 
 fn flatten_direction(player: &Transform, enemy: &Transform) -> Option<(Vec3, f32)> {
@@ -101,8 +104,9 @@ pub struct EnemyActivity {
 }
 
 impl EnemyActivity {
-    fn attack_on_cooldown(&mut self, cooldown_seconds: f32, animation_seconds: f32) {
-        if self.attack_cooldown <= 0.0 {
+    fn attack_on_cooldown(&mut self, cooldown_seconds: f32, animation_seconds: f32) -> bool {
+        let attack_started = self.attack_cooldown <= 0.0;
+        if attack_started {
             self.attack_cooldown = cooldown_seconds;
         }
         let attacking = self.attack_cooldown > cooldown_seconds - animation_seconds;
@@ -111,6 +115,7 @@ impl EnemyActivity {
         } else {
             AnimationState::Idle
         };
+        attack_started
     }
 }
 
@@ -151,7 +156,7 @@ pub fn spawn_enemy(
     transform: Transform,
     alive: bool,
 ) -> Entity {
-    let rig = *kind.get_rig();
+    let rig = kind.get_rig().clone();
     let mut enemy = commands.spawn((
         Enemy,
         WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(rig.scene))),
@@ -166,7 +171,8 @@ pub fn spawn_enemy(
                     .load(GltfAssetLabel::Animation(rig.moving_animation).from_asset(rig.animation_source)),
                 attack: asset_server
                     .load(GltfAssetLabel::Animation(rig.attack_animation).from_asset(rig.animation_source)),
-                weapon: asset_server.load(GltfAssetLabel::Scene(0).from_asset(rig.weapon.path)),
+                weapon: asset_server
+                    .load(GltfAssetLabel::Scene(0).from_asset(rig.weapon.weapon.get_model_asset_path())),
             },
             EnemyActivity::default(),
             LinearVelocity::default(),
@@ -216,12 +222,12 @@ fn drop_weapon(
     let Ok(global) = weapon_transforms.get(weapon.0) else {
         return;
     };
-    let collider_half_extents = kind.get_rig().weapon.collider_half_extents;
+    let collider_half_extents = kind.get_rig().weapon.weapon.get_collider_half_extents();
 
     let (scale, rotation, translation) = global.to_scale_rotation_translation();
     commands.entity(weapon.0).remove::<ChildOf>();
     commands.entity(weapon.0).insert((
-        OwnedByEnemy(enemy),
+        OwnedByCharacter(enemy),
         Transform {
             translation,
             rotation,
@@ -306,25 +312,22 @@ fn attach_weapon(
     enemy_entity: Entity,
     bones: &BoneMap,
     animations: &EnemyAnimations,
-    weapon: &WeaponSpec,
+    weapon: &EquippedWeapon,
 ) {
     let Some(right_hand) = bones.get("hand_r") else {
         return;
     };
 
-    let (yaw, pitch, roll) = weapon.rotation_euler_yxz;
     let weapon_entity = commands
         .spawn((
             Name::new("Weapon"),
             WorldAssetRoot(animations.weapon.clone()),
-            Transform {
-                translation: weapon.translation,
-                rotation: Quat::from_euler(EulerRot::YXZ, yaw, pitch, roll),
-                scale: Vec3::splat(weapon.scale),
-            },
+            weapon.weapon,
+            weapon.transform,
         ))
         .id();
 
+    observe_muzzle_flash(commands, weapon_entity);
     commands.entity(right_hand).add_children(&[weapon_entity]);
     commands.entity(enemy_entity).insert(EnemyWeapon(weapon_entity));
 }
@@ -353,7 +356,7 @@ fn build_animation_targets(
 }
 
 fn update_enemy_animations(
-    enemies: Query<(&EnemyActivity, &EnemyArmature)>,
+    enemies: Query<(&EnemyActivity, &EnemyArmature), Without<Dying>>,
     mut armatures: Query<(&mut ArmatureAnimation, &mut AnimationPlayer)>,
 ) {
     for (activity, armature) in &enemies {
@@ -388,37 +391,47 @@ type EnemyBehavior = (
 
 const ENEMY_COLLISION_RADIUS: f32 = 0.35;
 const ENEMY_COLLISION_CENTER_HEIGHT: f32 = 1.0;
+const GUNNER_ACCURACY: f64 = 0.65;
+const GUNNER_MISS_DISTANCE: f32 = 0.75;
+
+#[derive(SystemParam)]
+struct EnemyMovementContext<'w, 's> {
+    current_map: Res<'w, CurrentMap>,
+    time: Res<'w, Time>,
+    move_and_slide: MoveAndSlide<'w, 's>,
+    gravity: Res<'w, Gravity>,
+}
 
 fn update_behaviour(
-    current_map: Res<CurrentMap>,
-    time: Res<Time>,
-    move_and_slide: MoveAndSlide,
-    gravity: Res<Gravity>,
+    movement_context: EnemyMovementContext,
     player: Query<&Transform, (With<Player>, Without<Enemy>)>,
     mut enemies: Query<EnemyBehavior, (AliveEnemy, Without<Player>)>,
-    owned_bodies: Query<(Entity, &OwnedByEnemy)>,
+    enemy_weapons: Query<&EnemyWeapon>,
+    weapons: Query<(&Weapon, &GlobalTransform)>,
+    owned_bodies: Query<(Entity, &OwnedByCharacter)>,
+    mut weapon_fired: MessageWriter<WeaponFired>,
 ) {
-    if *current_map == CurrentMap::ColliderInspection {
+    if *movement_context.current_map == CurrentMap::ColliderInspection {
         return;
     }
     let Ok(player_transform) = player.single() else {
         return;
     };
-    let delta_secs = time.delta_secs();
+    let delta_secs = movement_context.time.delta_secs();
 
     for (enemy_entity, kind, mut enemy_transform, mut activity, mut velocity) in &mut enemies {
         activity.attack_cooldown -= delta_secs;
-        let filter = exclude_own_bodies(enemy_entity, &owned_bodies);
+        let filter = exclude_character_bodies(&[enemy_entity], &owned_bodies);
         let physics_world = PhysicsWorld::new(
-            &move_and_slide,
-            gravity.0.y,
+            &movement_context.move_and_slide,
+            movement_context.gravity.0.y,
             delta_secs,
             &filter,
             ENEMY_COLLISION_RADIUS,
             ENEMY_COLLISION_CENTER_HEIGHT,
             0.0,
         );
-        move_enemy(
+        let gunner_fired = move_enemy(
             &physics_world,
             player_transform,
             kind,
@@ -426,6 +439,27 @@ fn update_behaviour(
             &mut activity,
             &mut velocity,
         );
+        if !gunner_fired {
+            continue;
+        }
+        let Ok(enemy_weapon) = enemy_weapons.get(enemy_entity) else {
+            continue;
+        };
+        let Ok((weapon, weapon_transform)) = weapons.get(enemy_weapon.0) else {
+            continue;
+        };
+        let origin = weapon_transform.translation();
+        let target = calculate_gunner_target(player_transform.translation);
+        let Some(direction) = Dir3::new(target - origin).ok() else {
+            continue;
+        };
+        weapon_fired.write(WeaponFired {
+            shooter_entity: Some(enemy_entity),
+            weapon_entity: enemy_weapon.0,
+            weapon: *weapon,
+            origin,
+            direction,
+        });
     }
 }
 
@@ -436,19 +470,24 @@ fn move_enemy(
     enemy_transform: &mut Transform,
     activity: &mut EnemyActivity,
     velocity: &mut LinearVelocity,
-) {
+) -> bool {
     let previous_translation = enemy_transform.translation;
-    kind.update(player, enemy_transform, activity, physics_world);
+    let gunner_fired = kind.update(player, enemy_transform, activity, physics_world);
     let desired_translation = enemy_transform.translation - previous_translation;
     enemy_transform.translation = previous_translation + physics_world.slide(previous_translation, desired_translation);
     physics_world.integrate_fall(velocity, &mut enemy_transform.translation);
+    gunner_fired
 }
 
-fn exclude_own_bodies(enemy_entity: Entity, owned_bodies: &Query<(Entity, &OwnedByEnemy)>) -> SpatialQueryFilter {
-    SpatialQueryFilter::default().with_excluded_entities(
-        owned_bodies
-            .iter()
-            .filter(|(_, owner)| owner.0 == enemy_entity)
-            .map(|(body_entity, _)| body_entity),
-    )
+fn calculate_gunner_target(player_position: Vec3) -> Vec3 {
+    let mut random_number_generator = rand::rng();
+    if random_number_generator.random_bool(GUNNER_ACCURACY) {
+        return player_position;
+    }
+    let horizontal_shift = Vec2::new(
+        random_number_generator.random_range(-GUNNER_MISS_DISTANCE..=GUNNER_MISS_DISTANCE),
+        random_number_generator.random_range(-GUNNER_MISS_DISTANCE..=GUNNER_MISS_DISTANCE),
+    );
+    player_position + Vec3::new(horizontal_shift.x, horizontal_shift.y, 0.0)
 }
+
