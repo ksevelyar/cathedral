@@ -8,6 +8,7 @@ use std::time::Duration;
 use avian3d::prelude::{PhysicsPlugins, SubstepCount};
 use bevy::app::PluginGroup;
 use bevy::asset::RenderAssetUsages;
+use bevy::audio::{DefaultSpatialScale, SpatialScale};
 use bevy::camera::RenderTarget;
 use bevy::gltf::GltfPlugin;
 use bevy::image::{Image, ImageAddressMode, ImageSamplerDescriptor};
@@ -163,6 +164,7 @@ fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
 
 pub fn build_gui_app(configuration: Configuration) -> App {
     initialize_logging();
+    let spatial_scale = SpatialScale::new(0.1);
     let mut app = App::new();
     app.insert_resource(configuration);
     app.add_plugins(DefaultPlugins.build().disable::<LogPlugin>().set(ImagePlugin {
@@ -180,11 +182,13 @@ pub fn build_gui_app(configuration: Configuration) -> App {
         UiPlugin,
     ))
     .insert_resource(SubstepCount(30))
+    .insert_resource(DefaultSpatialScale(spatial_scale))
     .add_systems(Startup, crate::player::setup_player);
     app
 }
 
 pub fn build_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) -> App {
+    let spatial_scale = SpatialScale::new(0.1);
     let mut app = App::new();
     app.insert_resource(map);
     if let Some(player_position) = player_position {
@@ -215,6 +219,7 @@ pub fn build_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) 
     .init_asset::<StandardMaterial>()
     .init_asset::<Image>()
     .insert_resource(GizmoConfigStore::default())
+    .insert_resource(DefaultSpatialScale(spatial_scale))
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(16)))
     .add_systems(Startup, crate::player::setup_player);
     app.finish();
