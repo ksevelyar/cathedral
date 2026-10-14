@@ -1,6 +1,7 @@
 use avian3d::prelude::{
     Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation, SpatialQueryFilter,
 };
+use bevy::audio::SpatialListener;
 use bevy::camera::Exposure;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::light::VolumetricFog;
@@ -93,6 +94,7 @@ pub fn spawn_player(
 ) -> (Entity, Entity) {
     let camera_bloom_intensity = 0.01;
     let player_starting_health = 100.0;
+    let human_ear_gap = 0.15;
     let (yaw, pitch) = compute_look_angles(player_position.position, player_position.look_at);
     let player_entity = commands
         .spawn((
@@ -123,6 +125,7 @@ pub fn spawn_player(
                 ..default()
             },
             Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, 0.0, pitch, 0.0)),
+            SpatialListener::new(human_ear_gap),
             PlayerCamera,
         ))
         .id();
