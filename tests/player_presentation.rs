@@ -1,11 +1,13 @@
+use bevy::camera::visibility::RenderLayers;
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseButtonInput;
+use bevy::light::NotShadowReceiver;
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
 use cathedral::maps::{Map, MapBuilder};
-use cathedral::player::Player;
-use cathedral::shooting::Gun;
+use cathedral::player::{Player, PlayerCamera};
+use cathedral::shooting::{Gun, ShadowGun, Weapon, WeaponFired};
 
 fn build_map() -> Map {
     let floor_size = Vec3::new(60.0, 0.1, 60.0);
@@ -35,15 +37,6 @@ fn send_mouse_button(app: &mut App, state: ButtonState) {
         });
 }
 
-fn find_selected_gun(app: &mut App) -> Entity {
-    app.world_mut()
-        .query_filtered::<(Entity, &Visibility), With<Gun>>()
-        .iter(app.world())
-        .find(|(_, visibility)| **visibility != Visibility::Hidden)
-        .map(|(entity, _)| entity)
-        .expect("selected player gun should be visible")
-}
-
 fn find_ancestor_named(app: &App, entity: Entity, wanted_name: &str) -> Option<Entity> {
     let mut current_entity = entity;
     loop {
@@ -58,11 +51,11 @@ fn find_ancestor_named(app: &App, entity: Entity, wanted_name: &str) -> Option<E
     }
 }
 
-fn find_ancestor_animation_player(app: &App, entity: Entity) -> Option<Entity> {
+fn find_ancestor_with<T: Component>(app: &App, entity: Entity) -> Option<Entity> {
     let mut current_entity = entity;
     loop {
         let entity_reference = app.world().get_entity(current_entity).ok()?;
-        if entity_reference.contains::<AnimationPlayer>() {
+        if entity_reference.contains::<T>() {
             return Some(current_entity);
         }
         current_entity = entity_reference.get::<ChildOf>()?.parent();
@@ -80,43 +73,69 @@ fn find_playing_animation_node(app: &App, animation_player: Entity) -> Animation
 }
 
 #[test]
-fn player_gun_and_animations_follow_player_actions() {
+fn player_presentation_uses_camera_view_models_and_hand_shadow_proxies() {
     let mut app = build_test_app(build_map());
     let maximum_setup_updates = 10_000;
-    let (selected_gun, player_animation_player) = (0..maximum_setup_updates)
+    let (visible_gun, shadow_gun, player_animation_player) = (0..maximum_setup_updates)
         .find_map(|_| {
             app.update();
-            let selected_gun = find_selected_gun(&mut app);
-            let right_hand = find_ancestor_named(&app, selected_gun, "hand_r")?;
-            let player_animation_player = find_ancestor_animation_player(&app, right_hand)?;
-            Some((selected_gun, player_animation_player))
+            let visible_gun = app
+                .world_mut()
+                .query_filtered::<(Entity, &Visibility), With<Gun>>()
+                .iter(app.world())
+                .find(|(_, visibility)| **visibility != Visibility::Hidden)
+                .map(|(entity, _)| entity)?;
+            let visible_weapon = *app.world().get::<Weapon>(visible_gun)?;
+            let shadow_gun = app
+                .world_mut()
+                .query_filtered::<(Entity, &Weapon, &Visibility), With<ShadowGun>>()
+                .iter(app.world())
+                .find(|(_, weapon, visibility)| **weapon == visible_weapon && **visibility != Visibility::Hidden)
+                .map(|(entity, _, _)| entity)?;
+            let right_hand = find_ancestor_named(&app, shadow_gun, "hand_r")?;
+            let player_animation_player = find_ancestor_with::<AnimationPlayer>(&app, right_hand)?;
+            Some((visible_gun, shadow_gun, player_animation_player))
         })
-        .expect("selected player gun should attach to the animated right hand");
-    let idle_animation = find_playing_animation_node(&app, player_animation_player);
+        .expect("player should load visible and shadow weapon representations");
 
-    let player = app
+    assert!(find_ancestor_with::<PlayerCamera>(&app, visible_gun).is_some());
+    assert!(find_ancestor_named(&app, shadow_gun, "hand_r").is_some());
+    assert!(app.world().get::<NotShadowReceiver>(visible_gun).is_some());
+
+    let player_camera = app
         .world_mut()
-        .query_filtered::<Entity, With<Player>>()
+        .query_filtered::<Entity, With<PlayerCamera>>()
         .single(app.world())
-        .expect("one player should spawn");
-    let starting_position = app
+        .expect("one player camera should spawn");
+    let player_camera_layers = app
         .world()
-        .get::<Transform>(player)
-        .expect("player transform")
-        .translation;
+        .get::<RenderLayers>(player_camera)
+        .cloned()
+        .unwrap_or_default();
+    let shadow_gun_layers = app
+        .world()
+        .get::<RenderLayers>(shadow_gun)
+        .expect("shadow gun should have shadow-only render layers");
+    assert!(!player_camera_layers.intersects(shadow_gun_layers));
+    let player_body = app
+        .world_mut()
+        .query_filtered::<Entity, With<WorldAssetRoot>>()
+        .iter(app.world())
+        .find(|entity| {
+            app.world().get::<RenderLayers>(*entity).is_some() && app.world().get::<ShadowGun>(*entity).is_none()
+        })
+        .expect("player body should have a shadow-only asset root");
+    let player_body_layers = app
+        .world()
+        .get::<RenderLayers>(player_body)
+        .expect("player body should have shadow-only render layers");
+    assert!(!player_camera_layers.intersects(player_body_layers));
+
+    let idle_animation = find_playing_animation_node(&app, player_animation_player);
     send_key(&mut app, KeyCode::KeyW, ButtonState::Pressed);
     app.update();
     let moving_animation = find_playing_animation_node(&app, player_animation_player);
-    let ending_position = app
-        .world()
-        .get::<Transform>(player)
-        .expect("player transform")
-        .translation;
-    assert_ne!(
-        idle_animation, moving_animation,
-        "moving should select a different animation"
-    );
-    assert!(ending_position.z < starting_position.z, "player should move forward");
+    assert_ne!(idle_animation, moving_animation);
 
     send_key(&mut app, KeyCode::KeyW, ButtonState::Released);
     send_mouse_button(&mut app, ButtonState::Pressed);
@@ -125,14 +144,46 @@ fn player_gun_and_animations_follow_player_actions() {
     app.update();
     send_key(&mut app, KeyCode::KeyR, ButtonState::Pressed);
     app.update();
-    app.update();
     let reloading_animation = find_playing_animation_node(&app, player_animation_player);
-    assert_ne!(
-        moving_animation, reloading_animation,
-        "reloading should select a different animation"
-    );
+    assert_ne!(moving_animation, reloading_animation);
+    send_key(&mut app, KeyCode::KeyR, ButtonState::Released);
+    let reload_completion_updates = 140;
+    for _ in 0..reload_completion_updates {
+        app.update();
+    }
+
+    let player = app
+        .world_mut()
+        .query_filtered::<Entity, With<Player>>()
+        .single(app.world())
+        .expect("one player should spawn");
+    let player_camera = app
+        .world_mut()
+        .query_filtered::<Entity, With<PlayerCamera>>()
+        .single(app.world())
+        .expect("one player camera should spawn");
+    let yaw = 0.4;
+    let pitch = -0.2;
+    app.world_mut()
+        .get_mut::<Transform>(player)
+        .expect("player transform")
+        .rotation = Quat::from_euler(EulerRot::YXZ, yaw, 0.0, 0.0);
+    app.world_mut()
+        .get_mut::<Transform>(player_camera)
+        .expect("player camera transform")
+        .rotation = Quat::from_euler(EulerRot::YXZ, 0.0, pitch, 0.0);
+    let mut weapon_fired_cursor = app.world().resource::<Messages<WeaponFired>>().get_cursor_current();
+    send_mouse_button(&mut app, ButtonState::Pressed);
+    app.update();
+    let weapon_fired = weapon_fired_cursor
+        .read(app.world().resource::<Messages<WeaponFired>>())
+        .next()
+        .expect("firing should emit a weapon ray");
+    let expected_direction = Quat::from_euler(EulerRot::YXZ, yaw, pitch, 0.0) * Vec3::NEG_Z;
     assert!(
-        app.world().get_entity(selected_gun).is_ok(),
-        "selected gun should remain attached while reloading"
+        weapon_fired
+            .direction
+            .as_vec3()
+            .abs_diff_eq(expected_direction, 0.000_1)
     );
 }

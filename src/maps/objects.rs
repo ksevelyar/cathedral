@@ -1,5 +1,6 @@
 use avian3d::prelude::*;
 use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::RenderLayers;
 use bevy::gltf::GltfAssetLabel;
 use bevy::light::VolumetricLight;
 use bevy::mesh::{Indices, PrimitiveTopology};
@@ -416,6 +417,7 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
                 ..default()
             },
             VolumetricLight,
+            RenderLayers::layer(0).with(1),
             Transform::from_translation(diffuser_center)
                 .with_rotation(Quat::from_rotation_arc(Vec3::NEG_Z, Vec3::NEG_Y)),
         ));

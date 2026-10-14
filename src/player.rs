@@ -4,8 +4,9 @@ use avian3d::prelude::{
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::audio::SpatialListener;
 use bevy::camera::Exposure;
+use bevy::camera::visibility::RenderLayers;
 use bevy::input::mouse::AccumulatedMouseMotion;
-use bevy::light::VolumetricFog;
+use bevy::light::{NotShadowCaster, NotShadowReceiver, VolumetricFog};
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
@@ -18,7 +19,7 @@ use crate::ragdoll::{
     BoneMap, OwnedByCharacter, PendingRagdollImpactRequest, RagdollBodyPart, RagdollData, exclude_character_bodies,
     setup_ragdoll,
 };
-use crate::shooting::{Gun, PlayerGun, Reloading, WeaponSlot};
+use crate::shooting::{Gun, Reloading, ShadowGun, WeaponSlot};
 
 fn exclude_player_bodies(
     player_entity: Entity,
@@ -49,6 +50,8 @@ impl Plugin for PlayerPlugin {
                 .run_if(in_state(GameState::Playing)),
         );
         app.add_observer(prepare_player_animation)
+            .add_observer(configure_player_shadow_render_layers)
+            .add_observer(configure_view_model_shadow_behavior)
             .add_systems(
                 PostUpdate,
                 (
@@ -112,6 +115,8 @@ enum PlayerAnimationState {
 #[derive(Component)]
 struct HandAttachedPlayerGun;
 
+type PlayerShadowProxyQuery<'world, 'state> = Query<'world, 'state, (), Or<(With<PlayerVisual>, With<ShadowGun>)>>;
+
 #[derive(Component)]
 pub struct CameraState {
     pub yaw: f32,
@@ -132,7 +137,6 @@ const PLAYER_EYE_HEIGHT: f32 = 1.8;
 const PLAYER_BODY_ASSET_PATH: &str = "characters/bodies/female.gltf";
 const PLAYER_ANIMATION_ASSET_PATH: &str = "characters/animations/ual1-standard.glb";
 const PLAYER_BODY_CAMERA_OFFSET: Vec3 = Vec3::new(0.0, -1.85, 0.3);
-const PLAYER_CAMERA_OFFSET: Vec3 = Vec3::new(0.0, -0.25, 0.0);
 const PLAYER_IDLE_ANIMATION_INDEX: usize = 21;
 const PLAYER_RELOAD_ANIMATION_INDEX: usize = 22;
 const PLAYER_MOVING_ANIMATION_INDEX: usize = 36;
@@ -186,12 +190,7 @@ pub fn spawn_player(
                 step_count: 48,
                 ..default()
             },
-            Transform::from_translation(PLAYER_CAMERA_OFFSET).with_rotation(Quat::from_euler(
-                EulerRot::YXZ,
-                0.0,
-                pitch,
-                0.0,
-            )),
+            Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, 0.0, pitch, 0.0)),
             SpatialListener::new(human_ear_gap),
             PlayerCamera,
         ))
@@ -211,6 +210,7 @@ pub fn spawn_player(
                 ),
             },
             WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(PLAYER_BODY_ASSET_PATH))),
+            RenderLayers::layer(1),
             Transform::from_translation(PLAYER_BODY_CAMERA_OFFSET)
                 .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
         ))
@@ -228,6 +228,48 @@ fn prepare_player_animation(
 ) {
     if player_visuals.contains(scene_ready.entity) {
         commands.entity(scene_ready.entity).insert(PendingPlayerAnimation);
+    }
+}
+
+fn configure_player_shadow_render_layers(
+    scene_ready: On<WorldInstanceReady>,
+    mut commands: Commands,
+    player_shadow_proxies: PlayerShadowProxyQuery,
+    children: Query<&Children>,
+) {
+    if player_shadow_proxies.contains(scene_ready.entity) {
+        apply_shadow_render_layer(&mut commands, &children, scene_ready.entity);
+    }
+}
+
+fn configure_view_model_shadow_behavior(
+    scene_ready: On<WorldInstanceReady>,
+    mut commands: Commands,
+    visible_guns: Query<(), With<Gun>>,
+    children: Query<&Children>,
+) {
+    if visible_guns.contains(scene_ready.entity) {
+        prevent_view_model_shadows(&mut commands, &children, scene_ready.entity);
+    }
+}
+
+fn prevent_view_model_shadows(commands: &mut Commands, children: &Query<&Children>, entity: Entity) {
+    commands.entity(entity).insert((NotShadowCaster, NotShadowReceiver));
+    let Ok(entity_children) = children.get(entity) else {
+        return;
+    };
+    for child in entity_children.iter() {
+        prevent_view_model_shadows(commands, children, child);
+    }
+}
+
+fn apply_shadow_render_layer(commands: &mut Commands, children: &Query<&Children>, entity: Entity) {
+    commands.entity(entity).insert(RenderLayers::layer(1));
+    let Ok(entity_children) = children.get(entity) else {
+        return;
+    };
+    for child in entity_children.iter() {
+        apply_shadow_render_layer(commands, children, child);
     }
 }
 
@@ -307,7 +349,7 @@ fn build_animation_targets(
 fn attach_player_guns_to_hand(
     mut commands: Commands,
     player_visuals: Query<(&BoneMap, &PlayerArmature), With<PlayerVisual>>,
-    player_guns: Query<Entity, (With<PlayerGun>, Without<HandAttachedPlayerGun>)>,
+    shadow_guns: Query<Entity, (With<ShadowGun>, Without<HandAttachedPlayerGun>)>,
 ) {
     let Ok((bones, _)) = player_visuals.single() else {
         return;
@@ -315,16 +357,16 @@ fn attach_player_guns_to_hand(
     let Some(right_hand_entity) = bones.get("hand_r") else {
         return;
     };
-    for player_gun in &player_guns {
-        commands.entity(player_gun).insert(HandAttachedPlayerGun);
-        commands.entity(right_hand_entity).add_child(player_gun);
+    for shadow_gun in &shadow_guns {
+        commands.entity(shadow_gun).insert(HandAttachedPlayerGun);
+        commands.entity(right_hand_entity).add_child(shadow_gun);
     }
 }
 
 fn update_player_animation(
     players: Query<(&PlayerLocomotion, &Children), With<Player>>,
     player_visuals: Query<&PlayerArmature, With<PlayerVisual>>,
-    player_guns: Query<(), (With<PlayerGun>, With<Reloading>)>,
+    reloading_guns: Query<(), (With<Gun>, With<Reloading>)>,
     mut armatures: Query<(&mut PlayerArmatureAnimation, &mut AnimationPlayer)>,
 ) {
     let Ok((locomotion, player_children)) = players.single() else {
@@ -336,7 +378,7 @@ fn update_player_animation(
     let Ok((mut animation, mut animation_player)) = armatures.get_mut(player_armature.0) else {
         return;
     };
-    let animation_state = if !player_guns.is_empty() {
+    let animation_state = if !reloading_guns.is_empty() {
         PlayerAnimationState::Reloading
     } else if locomotion.is_moving {
         PlayerAnimationState::Moving
