@@ -3,7 +3,7 @@ use std::env;
 use std::fs::File;
 use std::io::{self, Write};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use avian3d::prelude::{PhysicsPlugins, SubstepCount};
 use bevy::app::PluginGroup;
@@ -106,6 +106,7 @@ use bevy::winit::WinitPlugin;
 use bevy::world_serialization::WorldSerializationPlugin;
 
 use crate::{
+    blood::BloodPlugin,
     enemies::EnemiesPlugin,
     health::HealthPlugin,
     maps::{Map, MapsPlugin, build_map01},
@@ -176,6 +177,7 @@ pub fn build_gui_app(configuration: Configuration) -> App {
         GameStatePlugin,
         MapsPlugin,
         HealthPlugin,
+        BloodPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
@@ -205,17 +207,17 @@ pub fn build_test_app(map: Map) -> App {
         StatesPlugin,
     ));
     app.insert_resource(SubstepCount(30));
+    app.init_asset::<StandardMaterial>().init_asset::<Image>();
     app.add_plugins((
         GameStatePlugin,
         MapsPlugin,
         HealthPlugin,
+        BloodPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
         ShootingPlugin,
     ))
-    .init_asset::<StandardMaterial>()
-    .init_asset::<Image>()
     .insert_resource(GizmoConfigStore::default())
     .insert_resource(DefaultSpatialScale(spatial_scale))
     .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(16)))
@@ -285,6 +287,7 @@ pub fn build_screenshot_app(
         GameStatePlugin,
         MapsPlugin,
         HealthPlugin,
+        BloodPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
@@ -352,19 +355,24 @@ fn attach_screenshot_camera(
 }
 
 pub fn run_until_screenshot_captured(app: &mut App) -> &CapturedScreenshots {
+    let screenshot_timeout = Duration::from_secs(1);
+    let screenshot_deadline = Instant::now() + screenshot_timeout;
     loop {
         app.update();
+        if !app.world().resource::<CapturedScreenshots>().0.is_empty() {
+            break;
+        }
+        let remaining_timeout = screenshot_deadline
+            .checked_duration_since(Instant::now())
+            .unwrap_or_else(|| panic!("screenshot capture did not finish within {screenshot_timeout:?}"));
         app.world()
             .resource::<RenderDevice>()
             .wgpu_device()
             .poll(PollType::Wait {
                 submission_index: None,
-                timeout: None,
+                timeout: Some(remaining_timeout),
             })
-            .unwrap();
-        if !app.world().resource::<CapturedScreenshots>().0.is_empty() {
-            break;
-        }
+            .unwrap_or_else(|error| panic!("screenshot capture did not finish within {screenshot_timeout:?}: {error}"));
     }
 
     app.world().resource::<CapturedScreenshots>()

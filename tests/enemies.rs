@@ -16,6 +16,7 @@ use cathedral::player::{PlayerCamera, PlayerDead};
 use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
 use cathedral::shooting::Weapon;
 use cathedral::state::GameState;
+use bevy::world_serialization::WorldAssetRoot;
 use std::time::Duration;
 
 fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
@@ -345,6 +346,57 @@ fn head_shot_kills_gunner() {
     support::assert_received_kick(&app, hit_body);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
+}
+
+#[test]
+fn gunner_loads_one_hairstyle() {
+    let (mut app, gunner) = simulate_enemy_near_player(EnemyKind::Gunner, 0, Vec3::new(5.0, 0.5, 0.0));
+    let maximum_asset_load_updates = 10_000;
+    let required_stable_updates = 64;
+    let mut stable_updates = 0;
+    for _ in 0..maximum_asset_load_updates {
+        app.update();
+        let hair_root_count = app
+            .world()
+            .get::<Children>(gunner)
+            .map(|children| {
+                children
+                    .iter()
+                    .filter(|child| app.world().get::<WorldAssetRoot>(*child).is_some())
+                    .count()
+            })
+            .unwrap_or_default();
+        stable_updates = if hair_root_count == 1 {
+            stable_updates + 1
+        } else {
+            0
+        };
+        if stable_updates == required_stable_updates {
+            return;
+        }
+        std::thread::yield_now();
+    }
+    panic!("gunner should load exactly one hairstyle");
+}
+
+#[test]
+fn player_bullet_adds_a_blood_mark_to_a_gunner() {
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 160, Vec3::new(5.0, 0.5, 0.0));
+    let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
+
+    support::shoot_entity(&mut app, hit_body);
+    run_updates(&mut app, 2);
+
+    let blood_mark_count = app
+        .world_mut()
+        .query::<&Name>()
+        .iter(app.world())
+        .filter(|name| name.as_str() == "Blood mark")
+        .count();
+    assert_eq!(
+        blood_mark_count, 1,
+        "a bullet hit should create one blood mark for {enemy:?}"
+    );
 }
 
 #[test]

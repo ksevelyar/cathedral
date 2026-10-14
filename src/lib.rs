@@ -1,6 +1,7 @@
 #![recursion_limit = "512"]
 
 pub mod app;
+pub mod blood;
 pub mod enemies;
 pub mod health;
 pub mod maps;
@@ -10,3 +11,4 @@ pub mod ragdoll;
 pub mod shooting;
 pub mod state;
 pub mod ui;
+pub mod viewer;
