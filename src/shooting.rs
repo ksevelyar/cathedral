@@ -15,6 +15,7 @@ pub use muzzle_flash::{
 
 pub(crate) use muzzle_flash::observe_muzzle_flash;
 
+use crate::blood::BulletHitCharacter;
 use crate::enemies::EnemyHit;
 use crate::health::{CharacterDamaged, Health};
 use crate::player::{Player, PlayerCamera};
@@ -162,7 +163,7 @@ const REVOLVER_2_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
     damage: 40.0,
     range: 100.0,
     attack_sound_path: "weapons/revolver.mp3",
-    attack_sound_start_position: Duration::from_millis(400),
+    attack_sound_start_position: Duration::from_millis(450),
     fire_mode: FireMode::SingleShot,
     magazine_capacity: 8,
     reload_duration: RELOAD_DURATION,
@@ -224,7 +225,7 @@ const PISTOL_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
     attack_sound_path: "weapons/pistol.mp3",
     attack_sound_start_position: Duration::from_millis(400),
     fire_mode: FireMode::SingleShot,
-    magazine_capacity: 1,
+    magazine_capacity: 9,
     reload_duration: RELOAD_DURATION,
     reload_sound_path: "weapons/pistol-reload.mp3",
 };
@@ -751,6 +752,7 @@ pub(crate) struct HitContext<'w, 's> {
 pub(crate) fn shoot(
     mut weapon_fired: MessageReader<WeaponFired>,
     mut character_damaged: MessageWriter<CharacterDamaged>,
+    mut bullet_hit_characters: MessageWriter<BulletHitCharacter>,
     spatial_query: SpatialQuery,
     hit_context: HitContext,
     mut prop_bodies: Query<Forces>,
@@ -782,6 +784,15 @@ pub(crate) fn shoot(
                 attacker: weapon_fired_message.shooter_entity,
                 body_part: Some(*body_part),
             });
+            if weapon_fired_message.shooter_entity.is_some() {
+                bullet_hit_characters.write(BulletHitCharacter {
+                    character: victim,
+                    origin,
+                    direction,
+                    maximum_distance: hit.distance + 1.0,
+                    collider_point: origin + direction.as_vec3() * hit.distance,
+                });
+            }
         }
         if let Ok((_, owner)) = hit_context.owners.get(hit.entity)
             && Some(owner.0) != weapon_fired_message.shooter_entity

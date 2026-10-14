@@ -1,12 +1,14 @@
 use avian3d::prelude::{Gravity, LinearVelocity, MoveAndSlide, Position};
 use bevy::ecs::system::SystemParam;
+use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
+use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 use rand::Rng;
 
 use super::{
-    AliveEnemy, AnimationSeed, AnimationState, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity,
-    EnemyDefinition, EnemyRig, EnemyWeapon, EquippedWeapon, find_player_head_position, flatten_direction, move_enemy,
-    spawn_enemy_base,
+    AliveEnemy, AnimationState, BoneMap, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity,
+    EnemyDefinition, EnemyRig, EnemyWeapon, EquippedWeapon, Seed, find_player_head_position, flatten_direction,
+    move_enemy, spawn_enemy_base,
 };
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
@@ -17,19 +19,34 @@ use crate::state::ColliderInspection;
 const GUNNER_ACCURACY: f64 = 0.65;
 const GUNNER_MISS_DISTANCE: f32 = 0.75;
 const PISTOL_SHOOT_ANIMATION_SECONDS: f32 = 0.633;
+const GUNNER_HAIR_ASSETS: [&str; 4] = [
+    "characters/hairstyles/rigged/hair-buns.gltf",
+    "characters/hairstyles/rigged/hair-buzzed-female.gltf",
+    "characters/hairstyles/rigged/hair-long.gltf",
+    "characters/hairstyles/rigged/hair-simple-parted.gltf",
+];
 
 pub(super) struct GunnerPlugin;
 
 impl Plugin for GunnerPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            update_gunners
-                .in_set(WeaponFiringSystems)
-                .run_if(in_state(crate::state::GameState::Playing))
-                .run_if(collider_inspection_is_disabled),
-        );
+        app.add_message::<WeaponFired>()
+            .add_message::<WeaponReloadStarted>()
+            .add_observer(spawn_gunner_hair)
+            .add_observer(retarget_gunner_hair)
+            .add_systems(
+                Update,
+                update_gunners
+                    .in_set(WeaponFiringSystems)
+                    .run_if(in_state(crate::state::GameState::Playing))
+                    .run_if(collider_inspection_is_disabled),
+            );
     }
+}
+
+#[derive(Component)]
+struct GunnerHair {
+    gunner: Entity,
 }
 
 #[derive(Component, Clone)]
@@ -60,11 +77,7 @@ impl Default for Gunner {
                 dance_animation_seconds: 1.0,
                 weapon: EquippedWeapon {
                     weapon: Weapon::Ranged(RangedWeapon::PISTOL),
-                    transform: Transform {
-                        translation: Vec3::new(-0.05, 0.0, 0.0),
-                        rotation: Quat::from_euler(EulerRot::YXZ, 1.5240, 0.0217, 1.3841),
-                        scale: Vec3::splat(0.15),
-                    },
+                    transform: get_weapon_mount_transform(),
                 },
             },
             move_speed: 4.0,
@@ -75,6 +88,67 @@ impl Default for Gunner {
             damage_coefficient: 0.5,
             starting_health: 20.0,
         }
+    }
+}
+
+fn spawn_gunner_hair(
+    scene_ready: On<WorldInstanceReady>,
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    gunners: Query<(), With<Gunner>>,
+    seeds: Query<&Seed>,
+) {
+    if !gunners.contains(scene_ready.entity) {
+        return;
+    }
+    let Ok(seed) = seeds.get(scene_ready.entity) else {
+        return;
+    };
+    let hair_index = (seed.calculate_unit_value(7) * GUNNER_HAIR_ASSETS.len() as f32) as usize;
+    let hair_asset_path = GUNNER_HAIR_ASSETS[hair_index];
+    commands.entity(scene_ready.entity).with_child((
+        GunnerHair {
+            gunner: scene_ready.entity,
+        },
+        WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(hair_asset_path))),
+    ));
+}
+
+fn retarget_gunner_hair(
+    scene_ready: On<WorldInstanceReady>,
+    hairs: Query<&GunnerHair>,
+    gunner_bones: Query<&BoneMap>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    mut skinned_meshes: Query<&mut SkinnedMesh>,
+) {
+    let Ok(hair) = hairs.get(scene_ready.entity) else {
+        return;
+    };
+    let Ok(bones) = gunner_bones.get(hair.gunner) else {
+        return;
+    };
+    for descendant in children.iter_descendants(scene_ready.entity) {
+        let Ok(mut skinned_mesh) = skinned_meshes.get_mut(descendant) else {
+            continue;
+        };
+        let joints = skinned_mesh
+            .joints
+            .iter()
+            .map(|hair_joint| names.get(*hair_joint).ok().and_then(|name| bones.get(name.as_str())))
+            .collect::<Option<Vec<_>>>();
+        let Some(joints) = joints else {
+            continue;
+        };
+        skinned_mesh.joints = joints;
+    }
+}
+
+fn get_weapon_mount_transform() -> Transform {
+    Transform {
+        translation: Vec3::new(-0.05, 0.0, 0.0),
+        rotation: Quat::from_euler(EulerRot::YXZ, 1.5240, 0.0217, 1.3841),
+        scale: Vec3::splat(0.15),
     }
 }
 
@@ -92,11 +166,11 @@ pub(super) fn spawn(
         starting_health: gunner.starting_health,
     };
     let gunner_entity = spawn_enemy_base(commands, asset_server, definition, sequence_number, transform, alive);
-    let animation_seed = AnimationSeed(sequence_number as u64);
+    let seed = Seed(sequence_number as u64);
     commands.entity(gunner_entity).insert((
         gunner,
         GunnerAttack::default(),
-        GunnerAttackJitter(animation_seed.calculate_unit_value(6)),
+        GunnerAttackJitter(seed.calculate_unit_value(6)),
     ));
     gunner_entity
 }

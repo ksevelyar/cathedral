@@ -3,6 +3,7 @@ use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 
+use crate::blood::BloodMarkCount;
 use crate::health::{CharacterDamaged, CharacterDied, Health};
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
@@ -115,10 +116,10 @@ pub enum AnimationState {
 }
 
 #[derive(Component, Clone, Copy)]
-pub struct AnimationSeed(u64);
+pub(crate) struct Seed(u64);
 
-impl AnimationSeed {
-    fn calculate_unit_value(self, salt: u64) -> f32 {
+impl Seed {
+    pub(crate) fn calculate_unit_value(self, salt: u64) -> f32 {
         let mixed_seed = self.0.wrapping_add(salt).wrapping_mul(0x9E37_79B9_7F4A_7C15);
         let mixed_seed = (mixed_seed ^ (mixed_seed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
         let mixed_seed = (mixed_seed ^ (mixed_seed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
@@ -156,6 +157,9 @@ struct ArmatureAnimation {
 struct EnemyArmature(Entity);
 
 #[derive(Component)]
+pub(crate) struct ManualAnimationControl;
+
+#[derive(Component)]
 struct EnemyWeapon(Entity);
 
 pub fn spawn_enemy(
@@ -189,12 +193,13 @@ pub(super) fn spawn_enemy_base(
     let rig = definition.rig.clone();
     let mut enemy = commands.spawn((
         Enemy,
-        AnimationSeed(sequence_number as u64),
+        Seed(sequence_number as u64),
         Name::new(format!("{} {}", definition.display_name, sequence_number + 1)),
         WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(definition.rig.scene))),
         definition.rig,
         transform,
         Health::new(definition.starting_health),
+        BloodMarkCount::default(),
     ));
     if alive {
         enemy.insert((
@@ -320,11 +325,12 @@ fn setup_external_animation(
     bone_maps: Query<&BoneMap>,
     children: Query<&Children>,
     names: Query<&Name>,
-    pending: Query<(Entity, &PendingAnimationSetup, &EnemyRig, &AnimationSeed)>,
+    pending: Query<(Entity, &PendingAnimationSetup, &EnemyRig, &Seed)>,
+
     mut graphs: ResMut<Assets<AnimationGraph>>,
     players: Query<&AnimationPlayer>,
 ) {
-    for (enemy_entity, setup, rig, animation_seed) in &pending {
+    for (enemy_entity, setup, rig, seed) in &pending {
         let Ok(bones) = bone_maps.get(enemy_entity) else {
             continue;
         };
@@ -342,12 +348,12 @@ fn setup_external_animation(
             .map(|reload_animation| graph.add_clip(reload_animation.clone(), 1.0, graph.root));
         let dancing = graph.add_clip(animations.dance.clone(), 1.0, graph.root);
         let graph_handle = graphs.add(graph);
-        let idle_phase_seconds = animation_seed.calculate_unit_value(1) * rig.idle_animation_seconds;
-        let moving_phase_seconds = animation_seed.calculate_unit_value(2) * rig.moving_animation_seconds;
-        let dance_phase_seconds = animation_seed.calculate_unit_value(3) * rig.dance_animation_seconds;
+        let idle_phase_seconds = seed.calculate_unit_value(1) * rig.idle_animation_seconds;
+        let moving_phase_seconds = seed.calculate_unit_value(2) * rig.moving_animation_seconds;
+        let dance_phase_seconds = seed.calculate_unit_value(3) * rig.dance_animation_seconds;
         let playback_speed_jitter = 0.1;
-        let idle_playback_speed = 1.0 + (animation_seed.calculate_unit_value(4) * 2.0 - 1.0) * playback_speed_jitter;
-        let moving_playback_speed = 1.0 + (animation_seed.calculate_unit_value(5) * 2.0 - 1.0) * playback_speed_jitter;
+        let idle_playback_speed = 1.0 + (seed.calculate_unit_value(4) * 2.0 - 1.0) * playback_speed_jitter;
+        let moving_playback_speed = 1.0 + (seed.calculate_unit_value(5) * 2.0 - 1.0) * playback_speed_jitter;
 
         if players.get(armature).is_err() {
             commands.entity(armature).insert(AnimationPlayer::default());
@@ -440,8 +446,15 @@ fn dance_when_player_is_dead(
     }
 }
 
+type EnemyAnimationQuery<'world, 'state> = Query<
+    'world,
+    'state,
+    (&'static EnemyActivity, &'static EnemyArmature),
+    (Without<Dying>, Without<ManualAnimationControl>),
+>;
+
 fn update_enemy_animations(
-    enemies: Query<(&EnemyActivity, &EnemyArmature), Without<Dying>>,
+    enemies: EnemyAnimationQuery,
     mut armatures: Query<(&mut ArmatureAnimation, &mut AnimationPlayer)>,
 ) {
     for (activity, armature) in &enemies {

@@ -2,9 +2,8 @@ use avian3d::prelude::{Gravity, LinearVelocity, MoveAndSlide};
 use bevy::prelude::*;
 
 use super::{
-    AliveEnemy, AnimationSeed, AnimationState, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity,
-    EnemyDefinition, EnemyRig, EquippedWeapon, deliver_pending_melee_hit, flatten_direction, move_enemy,
-    spawn_enemy_base,
+    AliveEnemy, AnimationState, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity, EnemyDefinition,
+    EnemyRig, EquippedWeapon, Seed, deliver_pending_melee_hit, flatten_direction, move_enemy, spawn_enemy_base,
 };
 use crate::health::CharacterDamaged;
 use crate::movement::PhysicsWorld;
@@ -78,9 +77,9 @@ pub(super) fn spawn(
         starting_health: fighter.starting_health,
     };
     let fighter_entity = spawn_enemy_base(commands, asset_server, definition, sequence_number, transform, alive);
-    let animation_seed = AnimationSeed(sequence_number as u64);
+    let seed = Seed(sequence_number as u64);
     let cooldown_jitter_range = 0.15;
-    let cooldown_multiplier = 1.0 + (animation_seed.calculate_unit_value(6) * 2.0 - 1.0) * cooldown_jitter_range;
+    let cooldown_multiplier = 1.0 + (seed.calculate_unit_value(6) * 2.0 - 1.0) * cooldown_jitter_range;
     commands
         .entity(fighter_entity)
         .insert((fighter.clone(), FighterAttackJitter(cooldown_multiplier)));
