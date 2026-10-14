@@ -7,7 +7,6 @@ use super::{
     EnemyDefinition, EnemyRig, EnemyWeapon, EquippedWeapon, find_player_head_position, flatten_direction, move_enemy,
     spawn_enemy_base,
 };
-use crate::maps::CurrentMap;
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
 use crate::ragdoll::{OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies};
@@ -100,12 +99,7 @@ pub(super) fn spawn(
     gunner_entity
 }
 
-type GunnerMovementContext<'world, 'state> = (
-    Res<'world, CurrentMap>,
-    Res<'world, Time>,
-    MoveAndSlide<'world, 'state>,
-    Res<'world, Gravity>,
-);
+type GunnerMovementContext<'world, 'state> = (Res<'world, Time>, MoveAndSlide<'world, 'state>, Res<'world, Gravity>);
 type PlayerTargetQuery<'world, 'state> =
     Query<'world, 'state, (Entity, &'static Transform), (With<Player>, Without<super::Enemy>)>;
 type GunnerWeaponContext<'world, 'state> = (
@@ -144,7 +138,7 @@ fn collider_inspection_is_disabled(collider_inspection: Res<ColliderInspection>)
 }
 
 fn update_gunners(
-    (current_map, time, move_and_slide, gravity): GunnerMovementContext,
+    (time, move_and_slide, gravity): GunnerMovementContext,
     player: PlayerTargetQuery,
     player_children: Query<&Children, With<Player>>,
     owned_bodies: Query<(Entity, &OwnedByCharacter)>,
@@ -152,9 +146,6 @@ fn update_gunners(
     mut gunners: GunnerQuery,
     mut weapon_fired: MessageWriter<WeaponFired>,
 ) {
-    if *current_map == CurrentMap::ColliderInspection {
-        return;
-    }
     let Ok((player_entity, player_transform)) = player.single() else {
         return;
     };

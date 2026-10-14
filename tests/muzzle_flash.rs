@@ -2,11 +2,27 @@ use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::enemies::{Enemy, EnemyKind, spawn_enemy};
-use cathedral::maps::CurrentMap;
+use cathedral::enemies::{Enemy, EnemyKind};
+use cathedral::maps::{Map, MapBuilder};
 use cathedral::shooting::{Gun, MUZZLE_FLASH_LIGHT_INTENSITY_BOUNDS, MUZZLE_FLASH_LIGHT_RANGE_BOUNDS, MuzzleFlash};
 
 pub mod support;
+
+const FLOOR_SIZE: Vec3 = Vec3::new(60.0, 0.1, 60.0);
+
+fn build_map_with_gunner_and_fighter() -> Map {
+    let gunner_position = Vec3::new(-2.0, 0.5, 0.0);
+    let fighter_position = Vec3::new(2.0, 0.5, 0.0);
+    MapBuilder::new("muzzle_flash")
+        .with_floor(FLOOR_SIZE)
+        .with_enemy(gunner_position, EnemyKind::Gunner)
+        .with_enemy(fighter_position, EnemyKind::Fighter)
+        .build()
+}
+
+fn build_empty_map() -> Map {
+    MapBuilder::new("muzzle_flash").with_floor(FLOOR_SIZE).build()
+}
 
 fn has_visible_gun_ancestor(app: &App, mut entity: Entity) -> bool {
     loop {
@@ -25,7 +41,7 @@ fn has_visible_gun_ancestor(app: &App, mut entity: Entity) -> bool {
 
 #[test]
 fn firing_player_weapon_shows_and_hides_muzzle_flash() {
-    let mut app = build_test_app(CurrentMap::FlatFloor, None);
+    let mut app = build_test_app(build_empty_map());
     let maximum_setup_updates = 10_000;
     let mut muzzle_flash = None;
     for _ in 0..maximum_setup_updates {
@@ -101,29 +117,9 @@ fn count_weapon_entities(app: &mut App) -> usize {
         .count()
 }
 
-fn spawn_enemies(mut commands: Commands, asset_server: Res<AssetServer>) {
-    spawn_enemy(
-        &mut commands,
-        &asset_server,
-        EnemyKind::Gunner,
-        0,
-        Transform::from_xyz(-2.0, 0.5, 0.0),
-        true,
-    );
-    spawn_enemy(
-        &mut commands,
-        &asset_server,
-        EnemyKind::Fighter,
-        0,
-        Transform::from_xyz(2.0, 0.5, 0.0),
-        true,
-    );
-}
-
 #[test]
 fn gunner_weapon_has_muzzle_flash_but_fighter_weapon_does_not() {
-    let mut app = build_test_app(CurrentMap::FlatFloor, None);
-    app.add_systems(Startup, spawn_enemies);
+    let mut app = build_test_app(build_map_with_gunner_and_fighter());
     let maximum_setup_updates = 10_000;
     for _ in 0..maximum_setup_updates {
         app.update();

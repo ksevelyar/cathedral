@@ -1,7 +1,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::maps::CurrentMap;
+use cathedral::maps::build_map01;
 use std::time::Duration;
 
 pub mod support;
@@ -86,7 +86,7 @@ const MINIMUM_COMPLETE_SWING_COUNT: usize = 5;
 
 fn create_lamp_test_app() -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
-    let mut app = build_test_app(CurrentMap::Map01, None);
+    let mut app = build_test_app(build_map01());
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
     app
 }

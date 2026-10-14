@@ -5,9 +5,11 @@ use super::{EnemySpawn, FogVolumeSettings, Map, PlayerPosition};
 use crate::enemies::EnemyKind;
 
 pub(super) fn build_map() -> Map {
+    let name = "map01";
     let indirect_light_color = Color::srgb(0.45, 0.5, 0.58);
     let indirect_light_brightness = 50.0;
     Map {
+        name,
         ambient: GlobalAmbientLight {
             color: indirect_light_color,
             brightness: indirect_light_brightness,

@@ -2,21 +2,21 @@ use avian3d::prelude::*;
 use bevy::ecs::world::CommandQueue;
 use bevy::prelude::*;
 
+pub mod support;
+
 fn get_current_game_state(app: &mut App) -> GameState {
     app.world().resource::<State<GameState>>().get().clone()
 }
 use cathedral::app::build_test_app;
 use cathedral::enemies::{Dying, EnemyKind, spawn_enemy};
 use cathedral::health::Health;
-use cathedral::maps::{CurrentMap, PlayerPosition};
+use cathedral::maps::{Map, MapBuilder};
 use cathedral::player::Player;
 use cathedral::player::{PlayerCamera, PlayerDead};
 use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
 use cathedral::shooting::Weapon;
 use cathedral::state::GameState;
 use std::time::Duration;
-
-pub mod support;
 
 fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
     let minimum_ragdoll_bodies = 14;
@@ -41,9 +41,17 @@ fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
     panic!("alive enemy ragdoll colliders did not spawn");
 }
 
+fn build_map(player_position: Vec3) -> Map {
+    let floor_size = Vec3::new(60.0, 0.1, 60.0);
+    MapBuilder::new("enemies")
+        .with_player_position(player_position, player_position + Vec3::NEG_Z)
+        .with_floor(floor_size)
+        .build()
+}
+
 fn simulate_enemy_near_player(kind: EnemyKind, walking_updates: usize, player_position: Vec3) -> (App, Entity) {
     let fixed_timestep = Duration::from_secs_f64(support::FIXED_TIMESTEP_SECONDS);
-    let mut app = build_test_app(CurrentMap::FlatFloor, Some(PlayerPosition::new(player_position)));
+    let mut app = build_test_app(build_map(player_position));
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
     app.world_mut()
         .resource_mut::<NextState<GameState>>()

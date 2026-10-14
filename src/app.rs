@@ -108,11 +108,11 @@ use bevy::world_serialization::WorldSerializationPlugin;
 use crate::{
     enemies::EnemiesPlugin,
     health::HealthPlugin,
-    maps::{CurrentMap, MapsPlugin, PlayerPosition},
+    maps::{Map, MapsPlugin, build_map01},
     player::{CameraState, PlayerCamera, PlayerPlugin},
     ragdoll::RagdollPlugin,
     shooting::ShootingPlugin,
-    state::{GameState, GameStatePlugin},
+    state::{ColliderInspection, GameState, GameStatePlugin},
     ui::UiPlugin,
 };
 
@@ -167,6 +167,7 @@ pub fn build_gui_app(configuration: Configuration) -> App {
     let spatial_scale = SpatialScale::new(0.1);
     let mut app = App::new();
     app.insert_resource(configuration);
+    app.insert_resource(build_map01());
     app.add_plugins(DefaultPlugins.build().disable::<LogPlugin>().set(ImagePlugin {
         default_sampler: make_tiling_image_sampler(),
     }));
@@ -187,13 +188,10 @@ pub fn build_gui_app(configuration: Configuration) -> App {
     app
 }
 
-pub fn build_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) -> App {
+pub fn build_test_app(map: Map) -> App {
     let spatial_scale = SpatialScale::new(0.1);
     let mut app = App::new();
     app.insert_resource(map);
-    if let Some(player_position) = player_position {
-        app.insert_resource(player_position);
-    }
     app.add_plugins((
         MinimalPlugins,
         TransformPlugin,
@@ -250,7 +248,7 @@ struct ScreenshotName(&'static str);
 pub struct CapturedScreenshots(pub Vec<Image>);
 
 pub fn build_screenshot_app(
-    map: CurrentMap,
+    map: Map,
     configuration: Configuration,
     render_width: u32,
     render_height: u32,
@@ -259,6 +257,7 @@ pub fn build_screenshot_app(
 ) -> App {
     initialize_logging();
     let viewpoint = configuration.viewpoint;
+    let show_colliders = configuration.show_colliders;
     let render_plugin = RenderPlugin {
         synchronous_pipeline_compilation: true,
         ..default()
@@ -295,6 +294,7 @@ pub fn build_screenshot_app(
     .insert_resource(SubstepCount(30))
     .add_systems(Startup, crate::player::setup_player)
     .insert_resource(map)
+    .insert_resource(ColliderInspection(show_colliders))
     .insert_resource(ScreenshotDir(screenshot_dir))
     .insert_resource(ScreenshotName(screenshot_name))
     .insert_resource(CapturedScreenshots::default())

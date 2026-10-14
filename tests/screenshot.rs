@@ -6,7 +6,8 @@ use std::process;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use cathedral::app::{Configuration, build_screenshot_app, run_until_screenshot_captured};
-use cathedral::maps::CurrentMap;
+use cathedral::enemies::EnemyKind;
+use cathedral::maps::{Map, MapBuilder, build_map01};
 use cathedral::shooting::Gun;
 
 const RENDER_WIDTH: u32 = 64;
@@ -15,12 +16,22 @@ const COLLIDER_RENDER_WIDTH: u32 = 1440;
 const COLLIDER_RENDER_HEIGHT: u32 = 1440;
 const BLACK_CHANNEL_THRESHOLD: u8 = 32;
 
+fn build_collider_inspection_map() -> Map {
+    let name = "collider-inspection";
+    let floor_size = Vec3::new(60.0, 0.1, 60.0);
+    MapBuilder::new(name)
+        .with_player_position(Vec3::new(0.0, 1.8, 3.0), Vec3::new(0.0, 1.0, 0.0))
+        .with_floor(floor_size)
+        .with_enemy(Vec3::ZERO, EnemyKind::Fighter)
+        .build()
+}
+
 #[test]
 fn screenshot_app_captures_map01_frame() {
     let screenshot_dir = create_temp_screenshot_dir("map01");
     let viewpoint = (Vec3::new(0.0, 1.85, 6.0), Vec3::new(0.0, 2.0, -6.0));
     let mut app = build_screenshot_app(
-        CurrentMap::Map01,
+        build_map01(),
         Configuration {
             viewpoint: Some(viewpoint),
             ..default()
@@ -82,7 +93,7 @@ fn screenshot_app_captures_map01_frame() {
 fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
     let screenshot_dir = create_temp_screenshot_dir("collider-inspection");
     let mut app = build_screenshot_app(
-        CurrentMap::ColliderInspection,
+        build_collider_inspection_map(),
         Configuration {
             show_colliders: true,
             ..default()
