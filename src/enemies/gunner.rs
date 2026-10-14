@@ -1,4 +1,5 @@
 use avian3d::prelude::{Gravity, LinearVelocity, MoveAndSlide, Position};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use rand::Rng;
 
@@ -10,13 +11,12 @@ use super::{
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
 use crate::ragdoll::{OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies};
-use crate::shooting::{RangedWeapon, Weapon, WeaponFired};
+use crate::shooting::{Magazine, RangedWeapon, Weapon, WeaponFired, WeaponFiringSystems, WeaponReloadStarted};
 use crate::state::ColliderInspection;
 
 const GUNNER_ACCURACY: f64 = 0.65;
 const GUNNER_MISS_DISTANCE: f32 = 0.75;
 const PISTOL_SHOOT_ANIMATION_SECONDS: f32 = 0.633;
-const PISTOL_SHOT_CONTACT_SECONDS: f32 = 0.25;
 
 pub(super) struct GunnerPlugin;
 
@@ -25,6 +25,7 @@ impl Plugin for GunnerPlugin {
         app.add_systems(
             Update,
             update_gunners
+                .in_set(WeaponFiringSystems)
                 .run_if(in_state(crate::state::GameState::Playing))
                 .run_if(collider_inspection_is_disabled),
         );
@@ -52,12 +53,13 @@ impl Default for Gunner {
                 idle_animation: 21,
                 moving_animation: 36,
                 attack_animation: 23,
+                reload_animation: Some(22),
                 dance_animation: 3,
                 idle_animation_seconds: 1.667,
                 moving_animation_seconds: 0.667,
                 dance_animation_seconds: 1.0,
                 weapon: EquippedWeapon {
-                    weapon: Weapon::Ranged(RangedWeapon::Pistol),
+                    weapon: Weapon::Ranged(RangedWeapon::PISTOL),
                     transform: Transform {
                         translation: Vec3::new(-0.05, 0.0, 0.0),
                         rotation: Quat::from_euler(EulerRot::YXZ, 1.5240, 0.0217, 1.3841),
@@ -104,7 +106,7 @@ type PlayerTargetQuery<'world, 'state> =
     Query<'world, 'state, (Entity, &'static Transform), (With<Player>, Without<super::Enemy>)>;
 type GunnerWeaponContext<'world, 'state> = (
     Query<'world, 'state, &'static EnemyWeapon>,
-    Query<'world, 'state, (&'static Weapon, &'static GlobalTransform)>,
+    Query<'world, 'state, (&'static Weapon, &'static GlobalTransform, &'static mut Magazine)>,
     Query<'world, 'state, &'static RagdollData>,
     Query<'world, 'state, &'static Position, With<RagdollBodyPart>>,
 );
@@ -112,11 +114,17 @@ type GunnerWeaponContext<'world, 'state> = (
 struct GunnerAttack {
     remaining_cooldown_seconds: Option<f32>,
     firing_elapsed_seconds: Option<f32>,
-    fired: bool,
+    reload_elapsed_seconds: Option<f32>,
 }
 
 #[derive(Component)]
 struct GunnerAttackJitter(f32);
+
+#[derive(SystemParam)]
+struct GunnerMessageContext<'w> {
+    weapon_fired: MessageWriter<'w, WeaponFired>,
+    weapon_reload_started: MessageWriter<'w, WeaponReloadStarted>,
+}
 
 type GunnerQuery<'world, 'state> = Query<
     'world,
@@ -142,9 +150,9 @@ fn update_gunners(
     player: PlayerTargetQuery,
     player_children: Query<&Children, With<Player>>,
     owned_bodies: Query<(Entity, &OwnedByCharacter)>,
-    (enemy_weapons, weapons, ragdoll_roots, ragdoll_body_positions): GunnerWeaponContext,
+    (enemy_weapons, mut weapons, ragdoll_roots, ragdoll_body_positions): GunnerWeaponContext,
     mut gunners: GunnerQuery,
-    mut weapon_fired: MessageWriter<WeaponFired>,
+    mut gunner_messages: GunnerMessageContext,
 ) {
     let Ok((player_entity, player_transform)) = player.single() else {
         return;
@@ -177,15 +185,27 @@ fn update_gunners(
             *attack = GunnerAttack::default();
             continue;
         }
-        if !advance_gunner_attack(gunner, attack_jitter, &mut attack, &mut activity, delta_secs) {
-            continue;
-        }
         let Ok(enemy_weapon) = enemy_weapons.get(gunner_entity) else {
             continue;
         };
-        let Ok((weapon, weapon_transform)) = weapons.get(enemy_weapon.0) else {
+        let Ok((weapon, weapon_transform, mut magazine)) = weapons.get_mut(enemy_weapon.0) else {
             continue;
         };
+        if update_gunner_reload(*weapon, &mut magazine, &mut attack, &mut activity, delta_secs) {
+            continue;
+        }
+        if !advance_gunner_attack(gunner, attack_jitter, &mut attack, &mut activity, delta_secs) {
+            continue;
+        }
+        if !magazine.consume_round() {
+            begin_gunner_reload(
+                *weapon,
+                &mut attack,
+                &mut activity,
+                &mut gunner_messages.weapon_reload_started,
+            );
+            continue;
+        }
         let origin = weapon_transform.translation();
         let aim_target =
             find_player_head_position(player_entity, &player_children, &ragdoll_roots, &ragdoll_body_positions)
@@ -194,7 +214,7 @@ fn update_gunners(
         let Some(direction) = Dir3::new(target - origin).ok() else {
             continue;
         };
-        weapon_fired.write(WeaponFired {
+        gunner_messages.weapon_fired.write(WeaponFired {
             shooter_entity: Some(gunner_entity),
             weapon_entity: enemy_weapon.0,
             weapon: *weapon,
@@ -202,7 +222,50 @@ fn update_gunners(
             origin,
             direction,
         });
+        if magazine.get_current_ammunition() == 0 {
+            begin_gunner_reload(
+                *weapon,
+                &mut attack,
+                &mut activity,
+                &mut gunner_messages.weapon_reload_started,
+            );
+        }
     }
+}
+
+fn update_gunner_reload(
+    weapon: Weapon,
+    magazine: &mut Magazine,
+    attack: &mut GunnerAttack,
+    activity: &mut EnemyActivity,
+    delta_secs: f32,
+) -> bool {
+    let Some(reload_elapsed_seconds) = attack.reload_elapsed_seconds.as_mut() else {
+        return false;
+    };
+    *reload_elapsed_seconds += delta_secs;
+    activity.state = AnimationState::Reloading;
+    let Some(reload_duration) = weapon.get_reload_duration() else {
+        return false;
+    };
+    if *reload_elapsed_seconds >= reload_duration.as_secs_f32() {
+        magazine.refill(weapon);
+        attack.reload_elapsed_seconds = None;
+    }
+    true
+}
+
+fn begin_gunner_reload(
+    weapon: Weapon,
+    attack: &mut GunnerAttack,
+    activity: &mut EnemyActivity,
+    weapon_reload_started: &mut MessageWriter<WeaponReloadStarted>,
+) {
+    attack.remaining_cooldown_seconds = None;
+    attack.firing_elapsed_seconds = None;
+    attack.reload_elapsed_seconds = Some(0.0);
+    activity.state = AnimationState::Reloading;
+    weapon_reload_started.write(WeaponReloadStarted(weapon));
 }
 
 fn advance_gunner_attack(
@@ -219,13 +282,11 @@ fn advance_gunner_attack(
     if let Some(firing_elapsed_seconds) = attack.firing_elapsed_seconds.as_mut() {
         *firing_elapsed_seconds += delta_secs;
         activity.state = AnimationState::Attacking;
-        let shot_reached_contact = !attack.fired && *firing_elapsed_seconds >= PISTOL_SHOT_CONTACT_SECONDS;
-        attack.fired |= shot_reached_contact;
         if *firing_elapsed_seconds >= gunner.attack_animation_seconds {
             attack.firing_elapsed_seconds = None;
             attack.remaining_cooldown_seconds = Some(cooldown_seconds);
         }
-        return shot_reached_contact;
+        return false;
     }
 
     let remaining_cooldown_seconds = attack.remaining_cooldown_seconds.get_or_insert(cooldown_seconds);
@@ -237,9 +298,8 @@ fn advance_gunner_attack(
 
     attack.remaining_cooldown_seconds = None;
     attack.firing_elapsed_seconds = Some(0.0);
-    attack.fired = false;
     activity.state = AnimationState::Attacking;
-    false
+    true
 }
 
 fn calculate_gunner_target(player_position: Vec3) -> Vec3 {

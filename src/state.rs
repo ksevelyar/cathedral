@@ -144,7 +144,7 @@ fn restart_game(
         &mut restart_context.commands,
         &restart_context.asset_server,
     );
-    let (_, player_camera_entity) = player::spawn_player(
+    let (player_entity, _) = player::spawn_player(
         &mut restart_context.commands,
         &restart_context.asset_server,
         *restart_context.player_position,
@@ -152,7 +152,7 @@ fn restart_game(
     shooting::spawn_player_guns(
         &mut restart_context.commands,
         &restart_context.asset_server,
-        player_camera_entity,
+        player_entity,
     );
     next_state.set(GameState::Playing);
 }

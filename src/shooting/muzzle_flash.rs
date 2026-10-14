@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 
-use super::{Weapon, WeaponFired};
+use super::{Weapon, WeaponFired, WeaponFiringSystems};
 use crate::state::GameState;
 
 #[derive(Component)]
@@ -23,8 +23,9 @@ pub(super) fn configure(app: &mut App) {
         (activate_muzzle_flash, update_muzzle_flash)
             .chain()
             .run_if(in_state(GameState::Playing))
-            .after(super::fire_weapon),
-    );
+            .after(WeaponFiringSystems),
+    )
+    .add_systems(OnExit(GameState::Playing), hide_muzzle_flashes);
 }
 
 pub(crate) fn observe_muzzle_flash(commands: &mut Commands, weapon_entity: Entity) {
@@ -92,6 +93,12 @@ fn activate_muzzle_flash(
             point_light.range = *MUZZLE_FLASH_LIGHT_RANGE_BOUNDS.start();
             *visibility = Visibility::Visible;
         }
+    }
+}
+
+fn hide_muzzle_flashes(mut muzzle_flashes: Query<&mut Visibility, With<MuzzleFlash>>) {
+    for mut visibility in &mut muzzle_flashes {
+        *visibility = Visibility::Hidden;
     }
 }
 

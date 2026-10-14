@@ -1,22 +1,24 @@
 use avian3d::prelude::{
     Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation, SpatialQueryFilter,
 };
+use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::audio::SpatialListener;
 use bevy::camera::Exposure;
 use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::light::VolumetricFog;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::world_serialization::WorldInstanceReady;
 
 use crate::enemies::Dying;
 use crate::health::{CharacterDied, Health};
 use crate::maps::PlayerPosition;
 use crate::movement::PhysicsWorld;
 use crate::ragdoll::{
-    OwnedByCharacter, PendingRagdollImpactRequest, RagdollBodyPart, RagdollData, exclude_character_bodies,
+    BoneMap, OwnedByCharacter, PendingRagdollImpactRequest, RagdollBodyPart, RagdollData, exclude_character_bodies,
     setup_ragdoll,
 };
-use crate::shooting::{Gun, WeaponSlot};
+use crate::shooting::{Gun, PlayerGun, Reloading, WeaponSlot};
 
 fn exclude_player_bodies(
     player_entity: Entity,
@@ -46,7 +48,22 @@ impl Plugin for PlayerPlugin {
             )
                 .run_if(in_state(GameState::Playing)),
         );
-        app.add_systems(PostUpdate, fall_camera_to_head_on_death);
+        app.add_observer(prepare_player_animation)
+            .add_systems(
+                PostUpdate,
+                (
+                    setup_player_animation,
+                    attach_player_guns_to_hand,
+                    fall_camera_to_head_on_death,
+                )
+                    .chain(),
+            )
+            .add_systems(
+                Update,
+                update_player_animation
+                    .after(move_player)
+                    .run_if(in_state(GameState::Playing)),
+            );
     }
 }
 
@@ -55,6 +72,45 @@ pub struct Player;
 
 #[derive(Component)]
 pub struct PlayerCamera;
+
+#[derive(Component)]
+struct PlayerVisual;
+
+#[derive(Component, Default)]
+pub struct PlayerLocomotion {
+    is_moving: bool,
+}
+
+#[derive(Component)]
+struct PlayerAnimations {
+    idle: Handle<AnimationClip>,
+    moving: Handle<AnimationClip>,
+    reloading: Handle<AnimationClip>,
+}
+
+#[derive(Component)]
+struct PendingPlayerAnimation;
+
+#[derive(Component)]
+struct PlayerArmature(Entity);
+
+#[derive(Component)]
+struct PlayerArmatureAnimation {
+    idle: AnimationNodeIndex,
+    moving: AnimationNodeIndex,
+    reloading: AnimationNodeIndex,
+    current: Option<PlayerAnimationState>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PlayerAnimationState {
+    Idle,
+    Moving,
+    Reloading,
+}
+
+#[derive(Component)]
+struct HandAttachedPlayerGun;
 
 #[derive(Component)]
 pub struct CameraState {
@@ -74,7 +130,12 @@ const CAMERA_PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 const PLAYER_COLLISION_RADIUS: f32 = 0.4;
 const PLAYER_EYE_HEIGHT: f32 = 1.8;
 const PLAYER_BODY_ASSET_PATH: &str = "characters/bodies/female.gltf";
+const PLAYER_ANIMATION_ASSET_PATH: &str = "characters/animations/ual1-standard.glb";
 const PLAYER_BODY_CAMERA_OFFSET: Vec3 = Vec3::new(0.0, -1.85, 0.3);
+const PLAYER_CAMERA_OFFSET: Vec3 = Vec3::new(0.0, -0.25, 0.0);
+const PLAYER_IDLE_ANIMATION_INDEX: usize = 21;
+const PLAYER_RELOAD_ANIMATION_INDEX: usize = 22;
+const PLAYER_MOVING_ANIMATION_INDEX: usize = 36;
 
 pub fn setup_player(
     mut commands: Commands,
@@ -106,6 +167,7 @@ pub fn spawn_player(
             )),
             CameraState { yaw, pitch },
             LinearVelocity::default(),
+            PlayerLocomotion::default(),
             Name::new("Player"),
             Health::new(player_starting_health),
             Player,
@@ -124,21 +186,177 @@ pub fn spawn_player(
                 step_count: 48,
                 ..default()
             },
-            Transform::from_rotation(Quat::from_euler(EulerRot::YXZ, 0.0, pitch, 0.0)),
+            Transform::from_translation(PLAYER_CAMERA_OFFSET).with_rotation(Quat::from_euler(
+                EulerRot::YXZ,
+                0.0,
+                pitch,
+                0.0,
+            )),
             SpatialListener::new(human_ear_gap),
             PlayerCamera,
         ))
         .id();
     let player_body_entity = commands
         .spawn((
+            PlayerVisual,
+            PlayerAnimations {
+                idle: asset_server.load(
+                    GltfAssetLabel::Animation(PLAYER_IDLE_ANIMATION_INDEX).from_asset(PLAYER_ANIMATION_ASSET_PATH),
+                ),
+                moving: asset_server.load(
+                    GltfAssetLabel::Animation(PLAYER_MOVING_ANIMATION_INDEX).from_asset(PLAYER_ANIMATION_ASSET_PATH),
+                ),
+                reloading: asset_server.load(
+                    GltfAssetLabel::Animation(PLAYER_RELOAD_ANIMATION_INDEX).from_asset(PLAYER_ANIMATION_ASSET_PATH),
+                ),
+            },
             WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(PLAYER_BODY_ASSET_PATH))),
-            Transform::from_translation(PLAYER_BODY_CAMERA_OFFSET),
+            Transform::from_translation(PLAYER_BODY_CAMERA_OFFSET)
+                .with_rotation(Quat::from_rotation_y(std::f32::consts::PI)),
         ))
         .id();
     commands.entity(player_body_entity).observe(setup_ragdoll);
     commands.entity(player_entity).add_child(player_body_entity);
     commands.entity(player_entity).add_child(player_camera_entity);
     (player_entity, player_camera_entity)
+}
+
+fn prepare_player_animation(
+    scene_ready: On<WorldInstanceReady>,
+    mut commands: Commands,
+    player_visuals: Query<(), With<PlayerVisual>>,
+) {
+    if player_visuals.contains(scene_ready.entity) {
+        commands.entity(scene_ready.entity).insert(PendingPlayerAnimation);
+    }
+}
+
+fn setup_player_animation(
+    mut commands: Commands,
+    pending_visuals: Query<(Entity, &PlayerAnimations, &BoneMap), With<PendingPlayerAnimation>>,
+    children: Query<&Children>,
+    names: Query<&Name>,
+    animation_players: Query<&AnimationPlayer>,
+    mut graphs: ResMut<Assets<AnimationGraph>>,
+) {
+    for (visual_entity, animations, bones) in &pending_visuals {
+        let Some(armature_entity) = bones.get("Armature") else {
+            continue;
+        };
+        let (mut animation_graph, idle_animation) = AnimationGraph::from_clip(animations.idle.clone());
+        let moving_animation = animation_graph.add_clip(animations.moving.clone(), 1.0, animation_graph.root);
+        let reloading_animation = animation_graph.add_clip(animations.reloading.clone(), 1.0, animation_graph.root);
+        let animation_graph_handle = graphs.add(animation_graph);
+        if animation_players.get(armature_entity).is_err() {
+            commands.entity(armature_entity).insert(AnimationPlayer::default());
+            build_animation_targets(
+                &mut commands,
+                &children,
+                &names,
+                armature_entity,
+                armature_entity,
+                vec![],
+            );
+        }
+        commands.entity(armature_entity).insert((
+            AnimationGraphHandle(animation_graph_handle),
+            PlayerArmatureAnimation {
+                idle: idle_animation,
+                moving: moving_animation,
+                reloading: reloading_animation,
+                current: None,
+            },
+        ));
+        commands
+            .entity(visual_entity)
+            .insert(PlayerArmature(armature_entity))
+            .remove::<PendingPlayerAnimation>();
+    }
+}
+
+fn build_animation_targets(
+    commands: &mut Commands,
+    children: &Query<&Children>,
+    names: &Query<&Name>,
+    animation_root: Entity,
+    current: Entity,
+    path: Vec<Name>,
+) {
+    if let Ok(name) = names.get(current) {
+        let mut animation_path = path;
+        animation_path.push(name.clone());
+        commands.entity(current).insert((
+            AnimationTargetId::from_names(animation_path.iter()),
+            AnimatedBy(animation_root),
+        ));
+        if let Ok(descendants) = children.get(current) {
+            for descendant in descendants.iter() {
+                build_animation_targets(
+                    commands,
+                    children,
+                    names,
+                    animation_root,
+                    descendant,
+                    animation_path.clone(),
+                );
+            }
+        }
+    }
+}
+
+fn attach_player_guns_to_hand(
+    mut commands: Commands,
+    player_visuals: Query<(&BoneMap, &PlayerArmature), With<PlayerVisual>>,
+    player_guns: Query<Entity, (With<PlayerGun>, Without<HandAttachedPlayerGun>)>,
+) {
+    let Ok((bones, _)) = player_visuals.single() else {
+        return;
+    };
+    let Some(right_hand_entity) = bones.get("hand_r") else {
+        return;
+    };
+    for player_gun in &player_guns {
+        commands.entity(player_gun).insert(HandAttachedPlayerGun);
+        commands.entity(right_hand_entity).add_child(player_gun);
+    }
+}
+
+fn update_player_animation(
+    players: Query<(&PlayerLocomotion, &Children), With<Player>>,
+    player_visuals: Query<&PlayerArmature, With<PlayerVisual>>,
+    player_guns: Query<(), (With<PlayerGun>, With<Reloading>)>,
+    mut armatures: Query<(&mut PlayerArmatureAnimation, &mut AnimationPlayer)>,
+) {
+    let Ok((locomotion, player_children)) = players.single() else {
+        return;
+    };
+    let Some(player_armature) = player_children.iter().find_map(|child| player_visuals.get(child).ok()) else {
+        return;
+    };
+    let Ok((mut animation, mut animation_player)) = armatures.get_mut(player_armature.0) else {
+        return;
+    };
+    let animation_state = if !player_guns.is_empty() {
+        PlayerAnimationState::Reloading
+    } else if locomotion.is_moving {
+        PlayerAnimationState::Moving
+    } else {
+        PlayerAnimationState::Idle
+    };
+    if animation.current == Some(animation_state) {
+        return;
+    }
+    let (animation_node, repeats) = match animation_state {
+        PlayerAnimationState::Idle => (animation.idle, true),
+        PlayerAnimationState::Moving => (animation.moving, true),
+        PlayerAnimationState::Reloading => (animation.reloading, false),
+    };
+    animation_player.stop_all();
+    let active_animation = animation_player.start(animation_node);
+    if repeats {
+        active_animation.repeat();
+    }
+    animation.current = Some(animation_state);
 }
 
 #[derive(Component)]
@@ -336,9 +554,18 @@ pub fn move_player(
     gravity: Res<Gravity>,
     owned_bodies: Query<(Entity, &OwnedByCharacter)>,
     player_children: Query<&Children>,
-    mut query: Query<(Entity, &mut Transform, &CameraState, &mut LinearVelocity), With<Player>>,
+    mut query: Query<
+        (
+            Entity,
+            &mut Transform,
+            &CameraState,
+            &mut LinearVelocity,
+            &mut PlayerLocomotion,
+        ),
+        With<Player>,
+    >,
 ) {
-    let Ok((player_entity, mut transform, camera_state, mut velocity)) = query.single_mut() else {
+    let Ok((player_entity, mut transform, camera_state, mut velocity, mut locomotion)) = query.single_mut() else {
         return;
     };
 
@@ -370,10 +597,14 @@ pub fn move_player(
         PLAYER_EYE_HEIGHT,
     );
 
+    locomotion.is_moving = false;
     if movement_direction != Vec3::ZERO {
         let desired_translation = movement_direction.normalize() * PLAYER_MOVE_SPEED * time.delta_secs();
         let position = transform.translation;
-        transform.translation += physics_world.slide(position, desired_translation);
+        let actual_translation = physics_world.slide(position, desired_translation);
+        let minimum_movement_distance_squared = 0.000_001;
+        locomotion.is_moving = actual_translation.xz().length_squared() > minimum_movement_distance_squared;
+        transform.translation += actual_translation;
     }
     physics_world.integrate_fall(&mut velocity, &mut transform.translation);
 }

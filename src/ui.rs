@@ -6,7 +6,7 @@ use bevy::window::{CursorGrabMode, CursorOptions};
 use crate::app::Configuration;
 use crate::health::Health;
 use crate::player::Player;
-use crate::shooting::{Crosshair, Gun};
+use crate::shooting::{Crosshair, Gun, Magazine, SelectedWeapon, WeaponSlot};
 use crate::state::{ColliderInspection, GameState};
 
 pub struct UiPlugin;
@@ -31,8 +31,8 @@ impl Plugin for UiPlugin {
                 },
             )
             .add_systems(OnEnter(GameState::Playing), lock_cursor)
-            .add_systems(Startup, setup_health_display)
-            .add_systems(Update, update_health_display)
+            .add_systems(Startup, (setup_health_display, setup_ammunition_display))
+            .add_systems(Update, (update_health_display, update_ammunition_display))
             .add_systems(OnEnter(GameState::Paused), show_cursor)
             .add_systems(OnEnter(GameState::Paused), setup_pause_menu)
             .add_systems(OnEnter(GameState::GameOver), setup_game_over_menu)
@@ -84,6 +84,48 @@ fn update_health_display(
     let health_text = format!("HP {:.0}", player_health.get_current());
     for mut health_display in &mut health_displays {
         health_display.0 = health_text.clone();
+    }
+}
+
+#[derive(Component)]
+struct AmmunitionDisplay;
+
+fn setup_ammunition_display(mut commands: Commands) {
+    let ammunition_font_size_px = 40.0;
+    commands.spawn((
+        AmmunitionDisplay,
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(12),
+            left: px(12),
+            ..default()
+        },
+        Text::new("-- / --"),
+        TextFont {
+            font_size: FontSize::Px(ammunition_font_size_px),
+            ..default()
+        },
+        TextColor(Color::WHITE),
+    ));
+}
+
+fn update_ammunition_display(
+    selected_weapon: Res<SelectedWeapon>,
+    weapon_slots: Query<(&WeaponSlot, &Magazine), With<Gun>>,
+    mut ammunition_displays: Query<&mut Text, With<AmmunitionDisplay>>,
+) {
+    let Some((weapon_slot, magazine)) = weapon_slots
+        .iter()
+        .find(|(weapon_slot, _)| weapon_slot.0 == **selected_weapon)
+    else {
+        return;
+    };
+    let Some(magazine_capacity) = weapon_slot.0.get_magazine_capacity() else {
+        return;
+    };
+    let ammunition_text = format!("{} / {magazine_capacity}", magazine.get_current_ammunition());
+    for mut ammunition_display in &mut ammunition_displays {
+        ammunition_display.0.clone_from(&ammunition_text);
     }
 }
 

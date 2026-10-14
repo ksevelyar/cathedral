@@ -45,6 +45,7 @@ impl Default for Fighter {
                 idle_animation: 40,
                 moving_animation: 36,
                 attack_animation: 39,
+                reload_animation: None,
                 dance_animation: 3,
                 idle_animation_seconds: 1.667,
                 moving_animation_seconds: 0.667,
