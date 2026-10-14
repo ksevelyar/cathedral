@@ -256,10 +256,14 @@ fn hide_weapons_for_collider_inspection(mut weapons: Query<&mut Visibility, With
     }
 }
 
+type GunVisibilityQuery<'world, 'state> =
+    Query<'world, 'state, (&'static WeaponSlot, &'static mut Visibility), (With<Gun>, Without<Crosshair>)>;
+
 fn update_crosshair_and_gun_visibility(
     state: Res<State<GameState>>,
     mut crosshair_query: Query<&mut Visibility, With<Crosshair>>,
-    mut gun_query: Query<&mut Visibility, (With<Gun>, Without<Crosshair>)>,
+    selected_weapon: Res<SelectedWeapon>,
+    mut gun_query: GunVisibilityQuery,
 ) {
     let should_be_visible = matches!(state.get(), GameState::Playing);
 
@@ -271,8 +275,8 @@ fn update_crosshair_and_gun_visibility(
         };
     }
 
-    if let Ok(mut gun_visibility) = gun_query.single_mut() {
-        *gun_visibility = if should_be_visible {
+    for (weapon_slot, mut gun_visibility) in &mut gun_query {
+        *gun_visibility = if should_be_visible && weapon_slot.0 == **selected_weapon {
             Visibility::Visible
         } else {
             Visibility::Hidden

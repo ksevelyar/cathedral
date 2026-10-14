@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use avian3d::prelude::*;
 use bevy::audio::AudioPlugin;
+use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
@@ -325,7 +326,25 @@ impl MeleeWeapon {
     }
 }
 
-fn create_hand_weapon_transform() -> Transform {
+fn create_view_model_transform(weapon: Weapon) -> Transform {
+    let (translation, scale) = if weapon == Weapon::Ranged(RangedWeapon::SHOTGUN_SHORT_STOCK) {
+        (Vec3::new(0.2, -0.22, -0.45), 0.15)
+    } else if weapon == Weapon::Ranged(RangedWeapon::SHOTGUN_SAWED_OFF) {
+        (Vec3::new(0.2, -0.24, -0.38), 0.15)
+    } else if weapon == Weapon::Ranged(RangedWeapon::SUBMACHINE_GUN_3) {
+        (Vec3::new(0.2, -0.2, -0.45), 0.15)
+    } else {
+        (Vec3::new(0.2, -0.2, -0.4), 0.15)
+    };
+    let rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
+    Transform {
+        translation,
+        rotation,
+        scale: Vec3::splat(scale),
+    }
+}
+
+fn create_shadow_gun_transform() -> Transform {
     Transform {
         translation: Vec3::new(-0.05, 0.0, 0.0),
         rotation: Quat::from_euler(EulerRot::YXZ, 1.5240, 0.0217, 1.3841),
@@ -340,13 +359,13 @@ enum FireMode {
 }
 
 #[derive(Message, Clone, Copy)]
-pub(crate) struct WeaponFired {
-    pub(crate) shooter_entity: Option<Entity>,
-    pub(crate) weapon_entity: Entity,
-    pub(crate) weapon: Weapon,
-    pub(crate) damage_coefficient: f32,
-    pub(crate) origin: Vec3,
-    pub(crate) direction: Dir3,
+pub struct WeaponFired {
+    pub shooter_entity: Option<Entity>,
+    pub weapon_entity: Entity,
+    pub weapon: Weapon,
+    pub damage_coefficient: f32,
+    pub origin: Vec3,
+    pub direction: Dir3,
 }
 
 #[derive(Message, Clone, Copy)]
@@ -456,46 +475,77 @@ pub(crate) struct SelectedWeapon(pub Weapon);
 pub(crate) struct WeaponSlot(pub Weapon);
 
 #[derive(Component)]
-pub(crate) struct PlayerGun;
+pub struct ShadowGun;
 
-fn setup_gun(mut commands: Commands, asset_server: Res<AssetServer>, players: Query<Entity, With<Player>>) {
+fn setup_gun(
+    mut commands: Commands,
+    asset_server: Res<AssetServer>,
+    players: Query<Entity, With<Player>>,
+    player_cameras: Query<Entity, With<PlayerCamera>>,
+) {
     let Ok(player_entity) = players.single() else {
         return;
     };
-    spawn_player_guns(&mut commands, &asset_server, player_entity);
+    let Ok(player_camera_entity) = player_cameras.single() else {
+        return;
+    };
+    spawn_player_guns(&mut commands, &asset_server, player_entity, player_camera_entity);
 }
 
-pub(crate) fn spawn_player_guns(commands: &mut Commands, asset_server: &AssetServer, player_entity: Entity) {
+pub(crate) fn spawn_player_guns(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    player_entity: Entity,
+    player_camera_entity: Entity,
+) {
     let selectable_weapons = [
         Weapon::Ranged(RangedWeapon::REVOLVER_2),
         Weapon::Ranged(RangedWeapon::SHOTGUN_SHORT_STOCK),
         Weapon::Ranged(RangedWeapon::SHOTGUN_SAWED_OFF),
         Weapon::Ranged(RangedWeapon::SUBMACHINE_GUN_3),
     ];
-    let hand_weapon_transform = create_hand_weapon_transform();
-    let mut weapon_entities = Vec::with_capacity(selectable_weapons.len());
+    let shadow_gun_transform = create_shadow_gun_transform();
+    let mut visible_gun_entities = Vec::with_capacity(selectable_weapons.len());
+    let mut shadow_gun_entities = Vec::with_capacity(selectable_weapons.len());
     for weapon in selectable_weapons {
-        let mut weapon_entity = commands.spawn((
+        let visibility = if weapon == Weapon::Ranged(RangedWeapon::REVOLVER_2) {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        let mut visible_gun_entity = commands.spawn((
             Gun,
-            PlayerGun,
             weapon,
             WeaponSlot(weapon),
-            Visibility::Hidden,
+            visibility,
             WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(weapon.get_model_asset_path()))),
-            hand_weapon_transform,
+            create_view_model_transform(weapon),
         ));
         if weapon.get_magazine_capacity().is_some() {
-            weapon_entity.insert(Magazine::create_full(weapon));
+            visible_gun_entity.insert(Magazine::create_full(weapon));
         }
-        let weapon_entity_id = weapon_entity.id();
-        if weapon == Weapon::Ranged(RangedWeapon::REVOLVER_2) {
-            weapon_entity.insert(Visibility::Inherited);
-        }
-        observe_muzzle_flash(commands, weapon_entity_id);
-        weapon_entities.push(weapon_entity_id);
+        let visible_gun_entity = visible_gun_entity.id();
+        observe_muzzle_flash(commands, visible_gun_entity);
+        visible_gun_entities.push(visible_gun_entity);
+
+        let shadow_gun_entity = commands
+            .spawn((
+                ShadowGun,
+                weapon,
+                WeaponSlot(weapon),
+                visibility,
+                RenderLayers::layer(1),
+                WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(weapon.get_model_asset_path()))),
+                shadow_gun_transform,
+            ))
+            .id();
+        shadow_gun_entities.push(shadow_gun_entity);
     }
     commands.insert_resource(SelectedWeapon(Weapon::Ranged(RangedWeapon::REVOLVER_2)));
-    commands.entity(player_entity).add_children(&weapon_entities);
+    commands
+        .entity(player_camera_entity)
+        .add_children(&visible_gun_entities);
+    commands.entity(player_entity).add_children(&shadow_gun_entities);
 }
 
 fn switch_weapon(
@@ -614,12 +664,14 @@ fn fire_weapon(
         return;
     };
     let camera_rotation = player_transform.rotation * camera_local_transform.rotation;
+    let camera_translation =
+        player_transform.translation + player_transform.rotation * camera_local_transform.translation;
     let weapon_fired_message = WeaponFired {
         shooter_entity: Some(shooter_entity),
         weapon_entity,
         weapon: weapon_slot.0,
         damage_coefficient: 1.0,
-        origin: player_transform.translation,
+        origin: camera_translation,
         direction: Dir3::new(camera_rotation * Vec3::NEG_Z).unwrap(),
     };
     if reloading.is_some() {
