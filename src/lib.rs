@@ -2,6 +2,7 @@
 
 pub mod app;
 pub mod enemies;
+pub mod health;
 pub mod maps;
 pub(crate) mod movement;
 pub mod player;

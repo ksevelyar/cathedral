@@ -4,8 +4,10 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 
 use crate::app::Configuration;
+use crate::health::Health;
+use crate::player::Player;
 use crate::shooting::{Crosshair, Gun};
-use crate::state::GameState;
+use crate::state::{ColliderInspection, GameState};
 
 pub struct UiPlugin;
 
@@ -29,6 +31,8 @@ impl Plugin for UiPlugin {
                 },
             )
             .add_systems(OnEnter(GameState::Playing), lock_cursor)
+            .add_systems(Startup, setup_health_display)
+            .add_systems(Update, update_health_display)
             .add_systems(OnEnter(GameState::Paused), show_cursor)
             .add_systems(OnEnter(GameState::Paused), setup_pause_menu)
             .add_systems(OnEnter(GameState::GameOver), setup_game_over_menu)
@@ -44,6 +48,42 @@ impl Plugin for UiPlugin {
                 .add_systems(Startup, setup_fps_display)
                 .add_systems(Update, update_fps_display);
         }
+    }
+}
+
+#[derive(Component)]
+struct HealthDisplay;
+
+fn setup_health_display(mut commands: Commands) {
+    let crosshair_height_px = 20.0;
+    let health_font_size_px = crosshair_height_px * 2.0;
+    commands.spawn((
+        HealthDisplay,
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: px(12),
+            right: px(12),
+            ..default()
+        },
+        Text::new("HP --"),
+        TextFont {
+            font_size: FontSize::Px(health_font_size_px),
+            ..default()
+        },
+        TextColor(Color::WHITE),
+    ));
+}
+
+fn update_health_display(
+    mut health_displays: Query<&mut Text, With<HealthDisplay>>,
+    players: Query<&Health, With<Player>>,
+) {
+    let Ok(player_health) = players.single() else {
+        return;
+    };
+    let health_text = format!("HP {:.0}", player_health.get_current());
+    for mut health_display in &mut health_displays {
+        health_display.0 = health_text.clone();
     }
 }
 
@@ -155,15 +195,16 @@ fn toggle_physics_pause(
     keyboard: Res<ButtonInput<KeyCode>>,
     mut physics_time: ResMut<Time<Physics>>,
     mut gizmo_configs: ResMut<GizmoConfigStore>,
+    mut collider_inspection: ResMut<ColliderInspection>,
 ) {
     if keyboard.just_pressed(KeyCode::KeyP) {
-        let pause = !physics_time.is_paused();
-        if pause {
+        collider_inspection.0 = !collider_inspection.0;
+        if collider_inspection.0 {
             physics_time.pause();
         } else {
             physics_time.unpause();
         }
-        gizmo_configs.config_mut::<PhysicsGizmos>().0.enabled = pause;
+        gizmo_configs.config_mut::<PhysicsGizmos>().0.enabled = collider_inspection.0;
     }
 }
 

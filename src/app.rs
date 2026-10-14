@@ -9,7 +9,6 @@ use avian3d::prelude::{PhysicsPlugins, SubstepCount};
 use bevy::app::PluginGroup;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::RenderTarget;
-use bevy::diagnostic::FrameCount;
 use bevy::gltf::GltfPlugin;
 use bevy::image::{Image, ImageAddressMode, ImageSamplerDescriptor};
 use bevy::input::InputPlugin;
@@ -88,7 +87,8 @@ fn initialize_logging() {
                 .with_ansi(false)
                 .with_writer(log_file),
         )
-        .init();
+        .try_init()
+        .ok();
 }
 use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
@@ -106,15 +106,14 @@ use bevy::world_serialization::WorldSerializationPlugin;
 
 use crate::{
     enemies::EnemiesPlugin,
+    health::HealthPlugin,
     maps::{CurrentMap, MapsPlugin, PlayerPosition},
     player::{CameraState, PlayerCamera, PlayerPlugin},
     ragdoll::RagdollPlugin,
     shooting::ShootingPlugin,
-    state::GameStatePlugin,
+    state::{GameState, GameStatePlugin},
     ui::UiPlugin,
 };
-
-const FIRST_CAPTURE_FRAME: u32 = 200;
 
 #[derive(Resource, Default)]
 pub struct Configuration {
@@ -173,6 +172,7 @@ pub fn build_gui_app(configuration: Configuration) -> App {
         PhysicsPlugins::default(),
         GameStatePlugin,
         MapsPlugin,
+        HealthPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
@@ -206,6 +206,7 @@ pub fn build_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) 
     app.add_plugins((
         GameStatePlugin,
         MapsPlugin,
+        HealthPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
@@ -238,6 +239,7 @@ pub fn build_screenshot_app(
     screenshot_dir: String,
     screenshot_name: &'static str,
 ) -> App {
+    initialize_logging();
     let viewpoint = configuration.viewpoint;
     let render_plugin = RenderPlugin {
         synchronous_pipeline_compilation: true,
@@ -265,6 +267,7 @@ pub fn build_screenshot_app(
         PhysicsPlugins::default(),
         GameStatePlugin,
         MapsPlugin,
+        HealthPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
@@ -278,7 +281,8 @@ pub fn build_screenshot_app(
     .insert_resource(ScreenshotName(screenshot_name))
     .insert_resource(CapturedScreenshots::default())
     .insert_resource(Viewpoint(viewpoint))
-    .add_systems(Update, (attach_screenshot_camera, capture_screenshots));
+    .add_systems(Update, attach_screenshot_camera)
+    .add_systems(OnEnter(GameState::Playing), capture_screenshots);
     let render_target = create_render_target(&mut app, render_width, render_height);
     app.insert_resource(ScreenshotRenderTarget(render_target));
 
@@ -355,15 +359,11 @@ struct Viewpoint(Option<(Vec3, Vec3)>);
 struct ScreenshotCamera;
 
 fn capture_screenshots(
-    frame_count: Res<FrameCount>,
     screenshot_dir: Res<ScreenshotDir>,
     screenshot_name: Res<ScreenshotName>,
     screenshot_target: Res<ScreenshotRenderTarget>,
     mut commands: Commands,
 ) {
-    if frame_count.0 != FIRST_CAPTURE_FRAME {
-        return;
-    }
     commands
         .spawn(Screenshot::image(screenshot_target.0.clone()))
         .observe(save_to_disk(format!(

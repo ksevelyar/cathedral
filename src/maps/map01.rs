@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use super::objects::Object;
 use super::{EnemySpawn, FogVolumeSettings, Map, PlayerPosition};
-use crate::enemies::{EnemyKind, Gunner};
+use crate::enemies::EnemyKind;
 
 pub(super) fn build_map() -> Map {
     let indirect_light_color = Color::srgb(0.45, 0.5, 0.58);
@@ -48,7 +48,7 @@ fn build_gunners_in_arc_before_player() -> Vec<EnemySpawn> {
             let gunner_direction = Quat::from_rotation_y(gunner_angle).mul_vec3(forward_direction);
             EnemySpawn {
                 position: player_position + gunner_direction * arc_radius,
-                kind: EnemyKind::Gunner(Gunner::default()),
+                kind: EnemyKind::Gunner,
             }
         })
         .collect()

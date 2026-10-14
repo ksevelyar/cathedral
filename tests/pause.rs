@@ -9,7 +9,15 @@ use cathedral::ui::setup_pause_menu;
 fn create_test_app() -> App {
     let mut app = build_test_app(CurrentMap::FlatFloor, None);
     app.add_systems(OnEnter(GameState::Paused), setup_pause_menu);
-    app
+    let maximum_loading_updates = 10_000;
+    for _ in 0..maximum_loading_updates {
+        app.update();
+        if matches!(app.world().resource::<State<GameState>>().get(), GameState::Playing) {
+            return app;
+        }
+        std::thread::yield_now();
+    }
+    panic!("test map should finish loading");
 }
 
 fn get_current_state(app: &App) -> GameState {

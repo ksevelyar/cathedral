@@ -15,7 +15,8 @@ pub use muzzle_flash::{
 pub(crate) use muzzle_flash::observe_muzzle_flash;
 
 use crate::enemies::EnemyHit;
-use crate::player::PlayerCamera;
+use crate::health::{CharacterDamaged, Health};
+use crate::player::{Player, PlayerCamera};
 use crate::ragdoll::{OBJECTS_GROUP, OwnedByCharacter, RAGDOLL_GROUP, RagdollBodyPart};
 use crate::state::GameState;
 
@@ -67,6 +68,20 @@ impl Weapon {
             Self::Melee(melee_weapon) => melee_weapon.get_collider_half_extents(),
         }
     }
+
+    pub fn get_damage(self) -> f32 {
+        match self {
+            Self::Ranged(ranged_weapon) => ranged_weapon.get_damage(),
+            Self::Melee(melee_weapon) => melee_weapon.get_damage(),
+        }
+    }
+
+    pub fn get_range(self) -> f32 {
+        match self {
+            Self::Ranged(ranged_weapon) => ranged_weapon.get_range(),
+            Self::Melee(melee_weapon) => melee_weapon.get_range(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -114,9 +129,27 @@ impl RangedWeapon {
         }
     }
 
+    fn get_damage(self) -> f32 {
+        match self {
+            Self::Revolver2 => 40.0,
+            Self::Pistol => 25.0,
+            Self::ShotgunShortStock | Self::ShotgunSawedOff => 30.0,
+            Self::SubmachineGun3 => 12.0,
+        }
+    }
+
+    fn get_range(self) -> f32 {
+        match self {
+            Self::Revolver2 | Self::ShotgunShortStock | Self::ShotgunSawedOff | Self::SubmachineGun3 | Self::Pistol => {
+                100.0
+            }
+        }
+    }
+
     fn get_attack_sound_path(self) -> &'static str {
         match self {
-            Self::Revolver2 | Self::Pistol => "weapons/revolver.mp3",
+            Self::Revolver2 => "weapons/revolver.mp3",
+            Self::Pistol => "weapons/pistol.mp3",
             Self::ShotgunShortStock | Self::ShotgunSawedOff => "weapons/shotgun.mp3",
             Self::SubmachineGun3 => "weapons/submachine-gun.mp3",
         }
@@ -155,6 +188,18 @@ impl MeleeWeapon {
             Self::Katana => Vec3::new(0.01, 0.04, 0.35),
         }
     }
+
+    pub fn get_damage(self) -> f32 {
+        match self {
+            Self::Katana => 40.0,
+        }
+    }
+
+    pub fn get_range(self) -> f32 {
+        match self {
+            Self::Katana => 2.0,
+        }
+    }
 }
 
 fn create_view_model_transform(model_translation: Vec3, model_scale: f32) -> Transform {
@@ -182,6 +227,7 @@ pub struct WeaponFired {
     pub(crate) shooter_entity: Option<Entity>,
     pub(crate) weapon_entity: Entity,
     pub(crate) weapon: Weapon,
+    pub(crate) damage_coefficient: f32,
     pub(crate) origin: Vec3,
     pub(crate) direction: Dir3,
 }
@@ -258,6 +304,10 @@ fn setup_gun(
     let Ok(player_camera) = player_camera.single() else {
         return;
     };
+    spawn_player_guns(&mut commands, &asset_server, player_camera);
+}
+
+pub fn spawn_player_guns(commands: &mut Commands, asset_server: &AssetServer, player_camera: Entity) {
     let selectable_weapons = [
         (
             Weapon::Ranged(RangedWeapon::Revolver2),
@@ -290,7 +340,7 @@ fn setup_gun(
         if weapon == Weapon::Ranged(RangedWeapon::Revolver2) {
             weapon_entity.insert(Visibility::Inherited);
         }
-        observe_muzzle_flash(&mut commands, weapon_entity_id);
+        observe_muzzle_flash(commands, weapon_entity_id);
         weapon_entities.push(weapon_entity_id);
     }
     commands.insert_resource(SelectedWeapon(Weapon::Ranged(RangedWeapon::Revolver2)));
@@ -331,11 +381,20 @@ fn switch_weapon(
     }
 }
 
+type PlayerAimQuery<'w, 's> = Query<'w, 's, (Entity, &'static Transform), With<Player>>;
+type PlayerCameraAimQuery<'w, 's> = Query<'w, 's, &'static Transform, (With<PlayerCamera>, Without<Player>)>;
+
+#[derive(SystemParam)]
+struct WeaponAimContext<'w, 's> {
+    player: PlayerAimQuery<'w, 's>,
+    player_camera: PlayerCameraAimQuery<'w, 's>,
+}
+
 fn fire_weapon(
     mouse_button: Res<ButtonInput<MouseButton>>,
     selected_weapon: Res<SelectedWeapon>,
     weapon_slots: Query<(Entity, &WeaponSlot), With<Gun>>,
-    player_camera: Query<(Entity, &ChildOf, &GlobalTransform), With<PlayerCamera>>,
+    aim_context: WeaponAimContext,
     time: Res<Time>,
     mut weapon_fire_cooldown: ResMut<WeaponFireCooldown>,
     mut weapon_fired: MessageWriter<WeaponFired>,
@@ -349,15 +408,22 @@ fn fire_weapon(
     let Weapon::Ranged(ranged_weapon) = weapon_slot.0 else {
         return;
     };
-    let Ok((_, camera_parent, player_camera_transform)) = player_camera.single() else {
+    let Ok((shooter_entity, player_transform)) = aim_context.player.single() else {
         return;
     };
+    let Ok(camera_local_transform) = aim_context.player_camera.single() else {
+        return;
+    };
+    let camera_rotation = player_transform.rotation * camera_local_transform.rotation;
+    let camera_translation =
+        player_transform.translation + player_transform.rotation * camera_local_transform.translation;
     let weapon_fired_message = WeaponFired {
-        shooter_entity: Some(camera_parent.0),
+        shooter_entity: Some(shooter_entity),
         weapon_entity,
         weapon: weapon_slot.0,
-        origin: player_camera_transform.translation(),
-        direction: Dir3::new(*player_camera_transform.forward()).unwrap(),
+        damage_coefficient: 1.0,
+        origin: camera_translation,
+        direction: Dir3::new(camera_rotation * Vec3::NEG_Z).unwrap(),
     };
     match ranged_weapon.get_fire_mode() {
         FireMode::SingleShot => {
@@ -382,8 +448,6 @@ fn fire_weapon(
         }
     }
 }
-
-const SHOT_DISTANCE: f32 = 100.0;
 
 fn exclude_shooter_bodies(
     shooter_entity: Option<Entity>,
@@ -416,15 +480,16 @@ fn compute_bullet_momentum(weapon: Weapon) -> Option<f32> {
 pub(crate) struct HitContext<'w, 's> {
     owners: Query<'w, 's, (Entity, &'static OwnedByCharacter)>,
     ragdoll_bodies: Query<'w, 's, (&'static OwnedByCharacter, &'static RagdollBodyPart)>,
-    names: Query<'w, 's, &'static Name>,
+    characters: Query<'w, 's, (&'static Name, Option<&'static Health>)>,
+    character_children: Query<'w, 's, &'static Children>,
+    collider_parents: Query<'w, 's, &'static ChildOf>,
 }
 
 pub(crate) fn shoot(
     mut weapon_fired: MessageReader<WeaponFired>,
+    mut character_damaged: MessageWriter<CharacterDamaged>,
     spatial_query: SpatialQuery,
     hit_context: HitContext,
-    character_children: Query<&Children>,
-    collider_parents: Query<&ChildOf>,
     mut prop_bodies: Query<Forces>,
     mut commands: Commands,
 ) {
@@ -437,20 +502,23 @@ pub(crate) fn shoot(
         let ray_filter = exclude_shooter_bodies(
             weapon_fired_message.shooter_entity,
             &hit_context.owners,
-            &character_children,
+            &hit_context.character_children,
         );
-        let Some(hit) = spatial_query.cast_ray(origin, direction, SHOT_DISTANCE, true, &ray_filter) else {
+        let shot_distance = weapon_fired_message.weapon.get_range();
+        let Some(hit) = spatial_query.cast_ray(origin, direction, shot_distance, true, &ray_filter) else {
             continue;
         };
         if let Ok((hit_owner, body_part)) = hit_context.ragdoll_bodies.get(hit.entity)
             && Some(hit_owner.0) != weapon_fired_message.shooter_entity
         {
-            let shooter_name = weapon_fired_message
-                .shooter_entity
-                .and_then(|shooter_entity| hit_context.names.get(shooter_entity).ok())
-                .map(|name| name.to_string())
-                .unwrap_or_else(|| "unknown shooter".to_string());
-            info!("player {body_part:?} damaged by {shooter_name}");
+            let victim = find_health_owner(hit_owner.0, &hit_context.characters, &hit_context.collider_parents);
+            let shot_damage = weapon_fired_message.weapon.get_damage() * weapon_fired_message.damage_coefficient;
+            character_damaged.write(CharacterDamaged {
+                character: victim,
+                amount: shot_damage,
+                attacker: weapon_fired_message.shooter_entity,
+                body_part: Some(*body_part),
+            });
         }
         if let Ok((_, owner)) = hit_context.owners.get(hit.entity)
             && Some(owner.0) != weapon_fired_message.shooter_entity
@@ -465,7 +533,7 @@ pub(crate) fn shoot(
         }
 
         let point = origin + direction.as_vec3() * hit.distance;
-        if let Some(body_entity) = find_dynamic_body_ancestor(hit.entity, &collider_parents, &prop_bodies)
+        if let Some(body_entity) = find_dynamic_body_ancestor(hit.entity, &hit_context.collider_parents, &prop_bodies)
             && let Ok(mut forces) = prop_bodies.get_mut(body_entity)
         {
             let impulse = direction.as_vec3() * bullet_momentum;
@@ -485,6 +553,22 @@ fn get_attack_sound_start_position(weapon: Weapon) -> Duration {
     match weapon {
         Weapon::Ranged(ranged_weapon) => ranged_weapon.get_attack_sound_start_position(),
         Weapon::Melee(_) => unreachable!("melee weapons cannot fire"),
+    }
+}
+
+fn find_health_owner(
+    mut character: Entity,
+    characters: &Query<'_, '_, (&'static Name, Option<&'static Health>)>,
+    parents: &Query<&ChildOf>,
+) -> Entity {
+    loop {
+        if characters.get(character).is_ok_and(|(_, health)| health.is_some()) {
+            return character;
+        }
+        let Ok(parent) = parents.get(character) else {
+            return character;
+        };
+        character = parent.parent();
     }
 }
 

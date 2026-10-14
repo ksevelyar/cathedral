@@ -17,24 +17,18 @@ pub struct RagdollPlugin;
 
 impl Plugin for RagdollPlugin {
     fn build(&self, app: &mut App) {
-        app.add_observer(wake_ragdoll_bodies_on_hit)
-            .add_systems(
-                PostUpdate,
-                (
-                    spawn_ragdoll_bodies,
-                    synchronize_ragdoll_bodies,
-                    activate_ragdoll_on_death,
-                    apply_ragdoll_pose,
-                )
-                    .chain()
-                    .after(TransformSystems::Propagate),
+        app.add_observer(wake_ragdoll_bodies_on_hit).add_systems(
+            PostUpdate,
+            (
+                spawn_ragdoll_bodies,
+                synchronize_ragdoll_bodies,
+                activate_ragdoll_on_death,
+                apply_pending_impacts,
+                apply_ragdoll_pose,
             )
-            .add_systems(
-                FixedPostUpdate,
-                apply_pending_impacts
-                    .after(PhysicsSystems::Prepare)
-                    .before(PhysicsSystems::StepSimulation),
-            );
+                .chain()
+                .after(TransformSystems::Propagate),
+        );
     }
 }
 
@@ -73,15 +67,24 @@ impl BoneMap {
 struct PendingRagdoll;
 
 #[derive(Component)]
-struct RagdollData {
+pub(crate) struct RagdollData {
     bones: BoneMap,
     limbs: HashMap<RagdollBodyPart, MeasuredLimb>,
     parts: Vec<RigPart>,
 }
 
-struct RigPart {
-    entity: Entity,
-    body_part: RagdollBodyPart,
+impl RagdollData {
+    pub(crate) fn find_part(&self, wanted_part: RagdollBodyPart) -> Option<Entity> {
+        self.parts
+            .iter()
+            .find(|part| part.body_part == wanted_part)
+            .map(|part| part.entity)
+    }
+}
+
+pub(crate) struct RigPart {
+    pub(crate) entity: Entity,
+    pub(crate) body_part: RagdollBodyPart,
     initial: GlobalTransform,
     bones: Vec<(Entity, GlobalTransform)>,
 }
@@ -105,6 +108,12 @@ pub(crate) fn exclude_character_bodies(
 #[derive(Component)]
 #[relationship_target(relationship = OwnedByCharacter, linked_spawn)]
 pub struct CharacterPhysicsEntities(Vec<Entity>);
+
+impl CharacterPhysicsEntities {
+    pub fn list_bodies(&self) -> &[Entity] {
+        &self.0
+    }
+}
 
 #[derive(Component)]
 #[relationship(relationship_target = JointsAnchoredToBody)]
@@ -139,10 +148,10 @@ pub(crate) struct PendingRagdollImpact {
 }
 
 #[derive(Component)]
-struct PendingRagdollImpactRequest {
-    body_part: RagdollBodyPart,
-    impulse: Vec3,
-    point: Vec3,
+pub(crate) struct PendingRagdollImpactRequest {
+    pub(crate) body_part: RagdollBodyPart,
+    pub(crate) impulse: Vec3,
+    pub(crate) point: Vec3,
 }
 
 fn apply_pending_impacts(mut commands: Commands, mut impacted_bodies: Query<(Entity, &PendingRagdollImpact, Forces)>) {
@@ -1023,17 +1032,21 @@ fn synchronize_ragdoll_bodies(
     }
 }
 
-fn activate_ragdoll_on_death(
-    mut commands: Commands,
-    pending: Query<(
+type DyingRagdollRequestQuery<'w, 's> = Query<
+    'w,
+    's,
+    (
         Entity,
-        &PendingRagdollImpactRequest,
-        &RagdollData,
-        Option<&LinearVelocity>,
-    )>,
-) {
-    for (root, impact, ragdoll, character_velocity) in &pending {
-        if ragdoll.limbs.len() != LIMBS.len() {
+        &'static PendingRagdollImpactRequest,
+        &'static RagdollData,
+        Option<&'static LinearVelocity>,
+        Has<Dying>,
+    ),
+>;
+
+fn activate_ragdoll_on_death(mut commands: Commands, pending: DyingRagdollRequestQuery) {
+    for (root, impact, ragdoll, character_velocity, dying) in &pending {
+        if !dying || ragdoll.limbs.len() != LIMBS.len() {
             continue;
         }
 

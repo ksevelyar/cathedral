@@ -1,28 +1,24 @@
-use avian3d::prelude::{Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation};
+use avian3d::prelude::{Collider, LinearVelocity, Position, RigidBody, Rotation};
 use bevy::animation::{AnimatedBy, AnimationTargetId};
-use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
-use rand::Rng;
 
-use crate::maps::CurrentMap;
+use crate::health::{CharacterDamaged, CharacterDied, Health};
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
-use crate::ragdoll::{BoneMap, OwnedByCharacter, exclude_character_bodies, setup_ragdoll};
-use crate::shooting::{Weapon, WeaponFired, observe_muzzle_flash};
+use crate::ragdoll::{BoneMap, OwnedByCharacter, RagdollBodyPart, RagdollData, setup_ragdoll};
+use crate::shooting::{Weapon, observe_muzzle_flash};
 use crate::state::GameState;
 
 mod fighter;
 mod gunner;
 
-pub use fighter::Fighter;
-pub use gunner::Gunner;
-
 pub struct EnemiesPlugin;
 
 impl Plugin for EnemiesPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, update_behaviour.run_if(in_state(GameState::Playing)))
+        app.add_plugins((fighter::FighterPlugin, gunner::GunnerPlugin))
+            .add_systems(Update, kill_enemy_on_death.run_if(in_state(GameState::Playing)))
             .add_systems(PostUpdate, (setup_external_animation, update_enemy_animations));
     }
 }
@@ -41,46 +37,14 @@ pub(crate) struct EnemyHit {
     pub(crate) point: Vec3,
 }
 
-#[derive(Component, Clone)]
+#[derive(Clone, Copy)]
 pub enum EnemyKind {
-    Fighter(Fighter),
-    Gunner(Gunner),
+    Fighter,
+    Gunner,
 }
 
-impl EnemyKind {
-    pub fn get_display_name(&self) -> String {
-        match self {
-            Self::Fighter(_) => "Fighter".to_string(),
-            Self::Gunner(_) => "Gunner".to_string(),
-        }
-    }
-
-    fn get_rig(&self) -> &EnemyRig {
-        match self {
-            Self::Fighter(fighter) => &fighter.rig,
-            Self::Gunner(gunner) => &gunner.rig,
-        }
-    }
-
-    fn update(
-        &self,
-        player: &Transform,
-        enemy: &mut Transform,
-        activity: &mut EnemyActivity,
-        physics_world: &PhysicsWorld,
-    ) -> bool {
-        match self {
-            Self::Fighter(fighter) => {
-                fighter.update(player, enemy, activity, physics_world);
-                false
-            }
-            Self::Gunner(gunner) => gunner.update(player, enemy, activity, physics_world),
-        }
-    }
-}
-
-#[derive(Clone)]
-struct EnemyRig {
+#[derive(Component, Clone)]
+pub(super) struct EnemyRig {
     scene: &'static str,
     animation_source: &'static str,
     idle_animation: usize,
@@ -90,8 +54,8 @@ struct EnemyRig {
 }
 
 #[derive(Clone)]
-struct EquippedWeapon {
-    weapon: Weapon,
+pub(super) struct EquippedWeapon {
+    pub(crate) weapon: Weapon,
     transform: Transform,
 }
 
@@ -106,10 +70,13 @@ fn flatten_direction(player: &Transform, enemy: &Transform) -> Option<(Vec3, f32
 pub struct EnemyActivity {
     pub state: AnimationState,
     attack_cooldown: f32,
+    pub(super) pending_melee_hit: Option<f32>,
+    pub(super) pending_melee_damage: f32,
+    pub(super) pending_melee_range: f32,
 }
 
 impl EnemyActivity {
-    fn attack_on_cooldown(&mut self, cooldown_seconds: f32, animation_seconds: f32) -> bool {
+    pub(super) fn attack_on_cooldown(&mut self, cooldown_seconds: f32, animation_seconds: f32) -> bool {
         let attack_started = self.attack_cooldown <= 0.0;
         if attack_started {
             self.attack_cooldown = cooldown_seconds;
@@ -162,13 +129,34 @@ pub fn spawn_enemy(
     transform: Transform,
     alive: bool,
 ) -> Entity {
-    let rig = kind.get_rig().clone();
+    match kind {
+        EnemyKind::Fighter => fighter::spawn(commands, asset_server, sequence_number, transform, alive),
+        EnemyKind::Gunner => gunner::spawn(commands, asset_server, sequence_number, transform, alive),
+    }
+}
+
+pub(super) struct EnemyDefinition {
+    pub(super) display_name: &'static str,
+    pub(super) rig: EnemyRig,
+    pub(super) starting_health: f32,
+}
+
+pub(super) fn spawn_enemy_base(
+    commands: &mut Commands,
+    asset_server: &AssetServer,
+    definition: EnemyDefinition,
+    sequence_number: usize,
+    transform: Transform,
+    alive: bool,
+) -> Entity {
+    let rig = definition.rig.clone();
     let mut enemy = commands.spawn((
         Enemy,
-        Name::new(format!("{} {}", kind.get_display_name(), sequence_number + 1)),
-        WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(rig.scene))),
-        kind,
+        Name::new(format!("{} {}", definition.display_name, sequence_number + 1)),
+        WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(definition.rig.scene))),
+        definition.rig,
         transform,
+        Health::new(definition.starting_health),
     ));
     if alive {
         enemy.insert((
@@ -187,49 +175,64 @@ pub fn spawn_enemy(
     } else {
         enemy.insert(Dying);
     }
-    enemy
-        .observe(setup_ragdoll)
-        .observe(prepare_enemy_animation)
-        .observe(kill_enemy_on_hit)
-        .id()
+    enemy.observe(setup_ragdoll).observe(prepare_enemy_animation).id()
 }
 
-fn kill_enemy_on_hit(
-    hit: On<EnemyHit>,
+fn kill_enemy_on_death(
+    mut deaths: MessageReader<CharacterDied>,
     mut commands: Commands,
     armatures: Query<&EnemyArmature>,
     mut animation_players: Query<&mut AnimationPlayer>,
-    enemies: Query<(&EnemyKind, &EnemyWeapon)>,
+    enemies: Query<(&EnemyRig, &EnemyWeapon)>,
     weapon_transforms: Query<&GlobalTransform>,
     alive_enemies: Query<(), AliveEnemy>,
 ) {
-    if !alive_enemies.contains(hit.entity) {
-        return;
+    for death in deaths.read() {
+        if !alive_enemies.contains(death.character) {
+            continue;
+        }
+        kill_enemy(
+            death.character,
+            &mut commands,
+            &armatures,
+            &mut animation_players,
+            &enemies,
+            &weapon_transforms,
+        );
     }
+}
 
-    commands.entity(hit.entity).insert(Dying);
-    if let Ok(mut player) = armatures
-        .get(hit.entity)
+fn kill_enemy(
+    enemy: Entity,
+    commands: &mut Commands,
+    armatures: &Query<&EnemyArmature>,
+    animation_players: &mut Query<&mut AnimationPlayer>,
+    enemies: &Query<(&EnemyRig, &EnemyWeapon)>,
+    weapon_transforms: &Query<&GlobalTransform>,
+) {
+    commands.entity(enemy).insert(Dying);
+    if let Ok(mut animation_player) = armatures
+        .get(enemy)
         .and_then(|armature| animation_players.get_mut(armature.0))
     {
-        player.stop_all();
+        animation_player.stop_all();
     }
-    drop_weapon(hit.entity, &mut commands, &enemies, &weapon_transforms);
+    drop_weapon(enemy, commands, enemies, weapon_transforms);
 }
 
 fn drop_weapon(
     enemy: Entity,
     commands: &mut Commands,
-    enemies: &Query<(&EnemyKind, &EnemyWeapon)>,
+    enemies: &Query<(&EnemyRig, &EnemyWeapon)>,
     weapon_transforms: &Query<&GlobalTransform>,
 ) {
-    let Ok((kind, weapon)) = enemies.get(enemy) else {
+    let Ok((rig, weapon)) = enemies.get(enemy) else {
         return;
     };
     let Ok(global) = weapon_transforms.get(weapon.0) else {
         return;
     };
-    let collider_half_extents = kind.get_rig().weapon.weapon.get_collider_half_extents();
+    let collider_half_extents = rig.weapon.weapon.get_collider_half_extents();
 
     let (scale, rotation, translation) = global.to_scale_rotation_translation();
     commands.entity(weapon.0).remove::<ChildOf>();
@@ -274,11 +277,11 @@ fn setup_external_animation(
     bone_maps: Query<&BoneMap>,
     children: Query<&Children>,
     names: Query<&Name>,
-    pending: Query<(Entity, &PendingAnimationSetup, &EnemyKind)>,
+    pending: Query<(Entity, &PendingAnimationSetup, &EnemyRig)>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
     players: Query<&AnimationPlayer>,
 ) {
-    for (enemy_entity, setup, kind) in &pending {
+    for (enemy_entity, setup, rig) in &pending {
         let Ok(bones) = bone_maps.get(enemy_entity) else {
             continue;
         };
@@ -310,7 +313,7 @@ fn setup_external_animation(
             .entity(enemy_entity)
             .insert(EnemyArmature(armature))
             .remove::<PendingAnimationSetup>();
-        attach_weapon(&mut commands, enemy_entity, bones, &animations, &kind.get_rig().weapon);
+        attach_weapon(&mut commands, enemy_entity, bones, &animations, &rig.weapon);
     }
 }
 
@@ -388,98 +391,18 @@ fn update_enemy_animations(
 }
 
 pub(crate) type AliveEnemy = (With<Enemy>, Without<Dying>);
-type EnemyBehavior = (
-    Entity,
-    &'static EnemyKind,
-    &'static mut Transform,
-    &'static mut EnemyActivity,
-    &'static mut LinearVelocity,
-);
+pub(super) const ENEMY_COLLISION_RADIUS: f32 = 0.35;
+pub(super) const ENEMY_COLLISION_CENTER_HEIGHT: f32 = 1.0;
 
-const ENEMY_COLLISION_RADIUS: f32 = 0.35;
-const ENEMY_COLLISION_CENTER_HEIGHT: f32 = 1.0;
-const GUNNER_ACCURACY: f64 = 0.65;
-const GUNNER_MISS_DISTANCE: f32 = 0.75;
-
-#[derive(SystemParam)]
-struct EnemyMovementContext<'w, 's> {
-    current_map: Res<'w, CurrentMap>,
-    time: Res<'w, Time>,
-    move_and_slide: MoveAndSlide<'w, 's>,
-    gravity: Res<'w, Gravity>,
-}
-
-fn update_behaviour(
-    movement_context: EnemyMovementContext,
-    player: Query<&Transform, (With<Player>, Without<Enemy>)>,
-    mut enemies: Query<EnemyBehavior, (AliveEnemy, Without<Player>)>,
-    enemy_weapons: Query<&EnemyWeapon>,
-    weapons: Query<(&Weapon, &GlobalTransform)>,
-    owned_bodies: Query<(Entity, &OwnedByCharacter)>,
-    mut weapon_fired: MessageWriter<WeaponFired>,
-) {
-    if *movement_context.current_map == CurrentMap::ColliderInspection {
-        return;
-    }
-    let Ok(player_transform) = player.single() else {
-        return;
-    };
-    let delta_secs = movement_context.time.delta_secs();
-
-    for (enemy_entity, kind, mut enemy_transform, mut activity, mut velocity) in &mut enemies {
-        activity.attack_cooldown -= delta_secs;
-        let filter = exclude_character_bodies(&[enemy_entity], &owned_bodies);
-        let physics_world = PhysicsWorld::new(
-            &movement_context.move_and_slide,
-            movement_context.gravity.0.y,
-            delta_secs,
-            &filter,
-            ENEMY_COLLISION_RADIUS,
-            ENEMY_COLLISION_CENTER_HEIGHT,
-            0.0,
-        );
-        let gunner_fired = move_enemy(
-            &physics_world,
-            player_transform,
-            kind,
-            &mut enemy_transform,
-            &mut activity,
-            &mut velocity,
-        );
-        if !gunner_fired {
-            continue;
-        }
-        let Ok(enemy_weapon) = enemy_weapons.get(enemy_entity) else {
-            continue;
-        };
-        let Ok((weapon, weapon_transform)) = weapons.get(enemy_weapon.0) else {
-            continue;
-        };
-        let origin = weapon_transform.translation();
-        let target = calculate_gunner_target(player_transform.translation);
-        let Some(direction) = Dir3::new(target - origin).ok() else {
-            continue;
-        };
-        weapon_fired.write(WeaponFired {
-            shooter_entity: Some(enemy_entity),
-            weapon_entity: enemy_weapon.0,
-            weapon: *weapon,
-            origin,
-            direction,
-        });
-    }
-}
-
-fn move_enemy(
+pub(super) fn move_enemy(
     physics_world: &PhysicsWorld,
-    player: &Transform,
-    kind: &EnemyKind,
     enemy_transform: &mut Transform,
     activity: &mut EnemyActivity,
     velocity: &mut LinearVelocity,
+    update_enemy: impl FnOnce(&mut Transform, &mut EnemyActivity, &PhysicsWorld) -> bool,
 ) -> bool {
     let previous_translation = enemy_transform.translation;
-    let gunner_fired = kind.update(player, enemy_transform, activity, physics_world);
+    let attack_started = update_enemy(enemy_transform, activity, physics_world);
     let desired_translation = enemy_transform.translation - previous_translation;
     enemy_transform.translation = previous_translation + physics_world.slide(previous_translation, desired_translation);
     physics_world.integrate_fall(velocity, &mut enemy_transform.translation);
@@ -499,17 +422,46 @@ fn move_enemy(
         velocity.y,
         horizontal_run_velocity.z,
     ));
-    gunner_fired
+    attack_started
 }
 
-fn calculate_gunner_target(player_position: Vec3) -> Vec3 {
-    let mut random_number_generator = rand::rng();
-    if random_number_generator.random_bool(GUNNER_ACCURACY) {
-        return player_position;
+pub(super) fn deliver_pending_melee_hit(
+    enemy_entity: Entity,
+    player_entity: Entity,
+    player_transform: &Transform,
+    enemy_transform: &mut Transform,
+    activity: &mut EnemyActivity,
+    delta_secs: f32,
+    character_damaged: &mut MessageWriter<CharacterDamaged>,
+) {
+    let Some(remaining) = activity.pending_melee_hit.as_mut() else {
+        return;
+    };
+    *remaining -= delta_secs;
+    if *remaining > 0.0 {
+        return;
     }
-    let horizontal_shift = Vec2::new(
-        random_number_generator.random_range(-GUNNER_MISS_DISTANCE..=GUNNER_MISS_DISTANCE),
-        random_number_generator.random_range(-GUNNER_MISS_DISTANCE..=GUNNER_MISS_DISTANCE),
-    );
-    player_position + Vec3::new(horizontal_shift.x, horizontal_shift.y, 0.0)
+    activity.pending_melee_hit = None;
+    let weapon_range = activity.pending_melee_range;
+    if flatten_direction(player_transform, enemy_transform).is_some_and(|(_, distance)| distance <= weapon_range) {
+        let damage = activity.pending_melee_damage;
+        character_damaged.write(CharacterDamaged {
+            character: player_entity,
+            amount: damage,
+            attacker: Some(enemy_entity),
+            body_part: None,
+        });
+    }
+}
+
+pub(super) fn find_player_head_position(
+    player_entity: Entity,
+    player_children: &Query<&Children, With<Player>>,
+    ragdoll_roots: &Query<&RagdollData>,
+    ragdoll_body_positions: &Query<&Position, With<RagdollBodyPart>>,
+) -> Option<Vec3> {
+    let player_children = player_children.get(player_entity).ok()?;
+    let ragdoll_root = player_children.iter().find(|child| ragdoll_roots.contains(*child))?;
+    let head_body = ragdoll_roots.get(ragdoll_root).ok()?.find_part(RagdollBodyPart::Head)?;
+    Some(ragdoll_body_positions.get(head_body).ok()?.0)
 }

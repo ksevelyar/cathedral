@@ -141,7 +141,7 @@ fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &
         spawn_enemy(
             commands,
             asset_server,
-            enemy_spawn.kind.clone(),
+            enemy_spawn.kind,
             enemy_index,
             Transform::from_translation(enemy_spawn.position),
             true,
