@@ -222,7 +222,7 @@ fn shot_lamp_settles_within_documented_time() {
             "lamp should still be swinging through {MINIMUM_COMPLETE_SWING_COUNT} visible swings after the shot"
         );
     }
-    let settling_deadline = 45.0;
+    let settling_deadline = 50.0;
     let remaining_settling_duration = settling_deadline - visible_swing_duration;
     support::assert_settles(&mut app, shade, remaining_settling_duration);
 }

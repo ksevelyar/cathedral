@@ -48,6 +48,7 @@ features = [
   "bevy_window",
   "bevy_winit",
   "bevy_world_serialization",
+  "debug",
   "default_font",
   "gltf_animation",
   "jpeg",
