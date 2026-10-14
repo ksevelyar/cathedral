@@ -57,7 +57,11 @@ impl Default for LoadingStarted {
 struct WorldAssetReady;
 
 fn mark_world_asset_ready(world_instance_ready: On<WorldInstanceReady>, mut commands: Commands) {
-    commands.entity(world_instance_ready.entity).insert(WorldAssetReady);
+    commands
+        .entity(world_instance_ready.entity)
+        .queue_silenced(|mut world_asset_entity: EntityWorldMut| {
+            world_asset_entity.insert(WorldAssetReady);
+        });
 }
 
 fn finish_asset_loading(
