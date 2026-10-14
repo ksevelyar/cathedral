@@ -6,7 +6,7 @@ use std::time::Duration;
 
 pub mod support;
 
-use support::{FIXED_TIMESTEP_SECONDS, shoot_entity, wait_for_named_body};
+use support::{FIXED_TIMESTEP_SECONDS, find_named_body, shoot_entity};
 
 struct SwingSample {
     horizontal_displacement: Vec2,
@@ -105,7 +105,7 @@ fn record_shot_swing_trace(app: &mut App, shade: Entity) -> Vec<f32> {
 #[test]
 fn lamp_hangs_still_on_spawn() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_named_body(&mut app, "Lamp shade");
+    let shade = find_named_body(&mut app, "Lamp shade");
 
     let settling_deadline = 1.0;
     support::assert_settles(&mut app, shade, settling_deadline);
@@ -114,7 +114,7 @@ fn lamp_hangs_still_on_spawn() {
 #[test]
 fn lamp_completes_five_swings_within_fifteen_seconds() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_named_body(&mut app, "Lamp shade");
+    let shade = find_named_body(&mut app, "Lamp shade");
 
     let displacement = record_shot_swing_trace(&mut app, shade);
     let peaks = find_half_swing_peaks(&displacement);
@@ -135,7 +135,7 @@ fn lamp_completes_five_swings_within_fifteen_seconds() {
 #[test]
 fn lamp_swing_period_matches_cable_length() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_named_body(&mut app, "Lamp shade");
+    let shade = find_named_body(&mut app, "Lamp shade");
 
     let displacement = record_shot_swing_trace(&mut app, shade);
     let crossings = find_swing_zero_crossings(&displacement);
@@ -164,7 +164,7 @@ fn lamp_swing_period_matches_cable_length() {
 #[test]
 fn lamp_swing_amplitude_decays_monotonically() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_named_body(&mut app, "Lamp shade");
+    let shade = find_named_body(&mut app, "Lamp shade");
 
     let displacement = record_shot_swing_trace(&mut app, shade);
     let peaks = find_half_swing_peaks(&displacement);
@@ -189,7 +189,7 @@ fn lamp_swing_amplitude_decays_monotonically() {
 #[test]
 fn lamp_swing_amplitude_matches_bullet_momentum() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_named_body(&mut app, "Lamp shade");
+    let shade = find_named_body(&mut app, "Lamp shade");
 
     let displacement = record_shot_swing_trace(&mut app, shade);
     let first_peak = displacement
@@ -209,7 +209,7 @@ fn lamp_swing_amplitude_matches_bullet_momentum() {
 #[test]
 fn shot_lamp_settles_within_documented_time() {
     let mut app = create_lamp_test_app();
-    let shade = wait_for_named_body(&mut app, "Lamp shade");
+    let shade = find_named_body(&mut app, "Lamp shade");
 
     shoot_entity(&mut app, shade);
     support::assert_received_kick(&app, shade);

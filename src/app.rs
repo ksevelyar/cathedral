@@ -224,7 +224,20 @@ pub fn build_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) 
     .add_systems(Startup, crate::player::setup_player);
     app.finish();
     app.cleanup();
+    wait_initialization(&mut app);
     app
+}
+
+fn wait_initialization(app: &mut App) {
+    let maximum_initialization_updates = 10_000;
+    for _ in 0..maximum_initialization_updates {
+        app.update();
+        if matches!(app.world().resource::<State<GameState>>().get(), GameState::Playing) {
+            return;
+        }
+        std::thread::yield_now();
+    }
+    panic!("test application should enter the playing state within {maximum_initialization_updates} updates");
 }
 
 #[derive(Resource)]

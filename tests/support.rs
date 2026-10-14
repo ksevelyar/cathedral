@@ -4,28 +4,17 @@ use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use cathedral::player::Player;
-use cathedral::state::GameState;
 use std::collections::{HashSet, VecDeque};
 
 pub const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
 
-pub fn wait_for_named_body(app: &mut App, body_name: &str) -> Entity {
-    for _ in 0..600 {
-        app.update();
-        if let Some((entity, _)) = app
-            .world_mut()
-            .query_filtered::<(Entity, &Name), With<RigidBody>>()
-            .iter(app.world())
-            .find(|(_, name)| name.as_str() == body_name)
-        {
-            while !matches!(app.world().resource::<State<GameState>>().get(), GameState::Playing) {
-                app.update();
-                std::thread::yield_now();
-            }
-            return entity;
-        }
-    }
-    panic!("body {body_name} should spawn within 600 frames");
+pub fn find_named_body(app: &mut App, body_name: &str) -> Entity {
+    app.world_mut()
+        .query_filtered::<(Entity, &Name), With<RigidBody>>()
+        .iter(app.world())
+        .find(|(_, name)| name.as_str() == body_name)
+        .map(|(entity, _)| entity)
+        .unwrap_or_else(|| panic!("body {body_name} should exist after the game enters the playing state"))
 }
 
 pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {
