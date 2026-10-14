@@ -7,7 +7,6 @@ use super::{
     spawn_enemy_base,
 };
 use crate::health::CharacterDamaged;
-use crate::maps::CurrentMap;
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
 use crate::ragdoll::{OwnedByCharacter, exclude_character_bodies};
@@ -93,12 +92,7 @@ pub(super) fn spawn(
     fighter_entity
 }
 
-type FighterMovementContext<'world, 'state> = (
-    Res<'world, CurrentMap>,
-    Res<'world, Time>,
-    MoveAndSlide<'world, 'state>,
-    Res<'world, Gravity>,
-);
+type FighterMovementContext<'world, 'state> = (Res<'world, Time>, MoveAndSlide<'world, 'state>, Res<'world, Gravity>);
 type PlayerTargetQuery<'world, 'state> =
     Query<'world, 'state, (Entity, &'static Transform), (With<Player>, Without<super::Enemy>)>;
 #[derive(Component)]
@@ -123,15 +117,12 @@ fn collider_inspection_is_disabled(collider_inspection: Res<ColliderInspection>)
 }
 
 fn update_fighters(
-    (current_map, time, move_and_slide, gravity): FighterMovementContext,
+    (time, move_and_slide, gravity): FighterMovementContext,
     player: PlayerTargetQuery,
     owned_bodies: Query<(Entity, &OwnedByCharacter)>,
     mut fighters: FighterQuery,
     mut character_damaged: MessageWriter<CharacterDamaged>,
 ) {
-    if *current_map == CurrentMap::ColliderInspection {
-        return;
-    }
     let Ok((player_entity, player_transform)) = player.single() else {
         return;
     };

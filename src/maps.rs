@@ -1,7 +1,6 @@
 mod map01;
 mod meshes;
 mod objects;
-pub mod test_maps;
 
 use bevy::light::FogVolume;
 use bevy::prelude::*;
@@ -9,15 +8,13 @@ use bevy::transform::TransformSystems;
 
 use crate::enemies::{EnemyKind, spawn_enemy};
 use crate::player;
-use objects::Object;
-use objects::ObjectSpawnContext;
+use objects::{Object, ObjectSpawnContext};
 
 pub struct MapsPlugin;
 
 impl Plugin for MapsPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<CurrentMap>()
-            .add_systems(Startup, load_current_map.before(player::setup_player))
+        app.add_systems(Startup, spawn_map.before(player::setup_player))
             .add_systems(
                 FixedPostUpdate,
                 objects::update_lamp_wires.after(TransformSystems::Propagate),
@@ -25,14 +22,76 @@ impl Plugin for MapsPlugin {
     }
 }
 
-#[derive(Resource, Default, Clone, Copy, PartialEq, Debug)]
-pub enum CurrentMap {
-    #[default]
-    Map01,
-    FlatFloor,
-    TallPillar,
-    Staircase,
-    ColliderInspection,
+pub fn build_map01() -> Map {
+    map01::build_map()
+}
+
+#[derive(Clone)]
+pub struct MapBuilder {
+    name: &'static str,
+    ambient: GlobalAmbientLight,
+    clear_color: ClearColor,
+    fog_volume: Option<FogVolumeSettings>,
+    player_position: PlayerPosition,
+    enemies: Vec<EnemySpawn>,
+    objects: Vec<Object>,
+}
+
+impl MapBuilder {
+    pub fn new(name: &'static str) -> Self {
+        Self {
+            name,
+            ambient: GlobalAmbientLight::default(),
+            clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
+            fog_volume: None,
+            player_position: PlayerPosition::new(Vec3::new(0.0, 0.5, 0.0)),
+            enemies: vec![],
+            objects: vec![],
+        }
+    }
+
+    pub fn with_player_position(self, position: Vec3, look_at: Vec3) -> Self {
+        Self {
+            player_position: PlayerPosition { position, look_at },
+            ..self
+        }
+    }
+
+    pub fn with_floor(self, size: Vec3) -> Self {
+        self.with_object(Object::Floor {
+            transform: Transform::IDENTITY,
+            size,
+        })
+    }
+
+    pub fn with_wall(self, position: Vec3, size: Vec3) -> Self {
+        self.with_object(Object::Wall {
+            transform: Transform::from_translation(position),
+            size,
+        })
+    }
+
+    pub fn with_enemy(mut self, position: Vec3, kind: EnemyKind) -> Self {
+        self.enemies.push(EnemySpawn::new(position, kind));
+        self
+    }
+
+    fn with_object(mut self, object: Object) -> Self {
+        self.objects.push(object);
+        self
+    }
+
+    pub fn build(self) -> Map {
+        Map {
+            name: self.name,
+            ambient: self.ambient,
+            clear_color: self.clear_color,
+            fog_volume: self.fog_volume,
+            player_position: self.player_position,
+            enemies: self.enemies,
+            objects: self.objects,
+        }
+    }
 }
 
 #[derive(Resource, Clone, Copy)]
@@ -50,70 +109,51 @@ impl PlayerPosition {
     }
 }
 
-struct Map {
-    ambient: GlobalAmbientLight,
-    clear_color: ClearColor,
-    fog_volume: Option<FogVolumeSettings>,
-    player_position: PlayerPosition,
-    enemies: Vec<EnemySpawn>,
-    objects: Vec<Object>,
+#[derive(Resource, Clone)]
+pub struct Map {
+    pub(crate) name: &'static str,
+    pub(crate) ambient: GlobalAmbientLight,
+    pub(crate) clear_color: ClearColor,
+    pub(crate) fog_volume: Option<FogVolumeSettings>,
+    pub(crate) player_position: PlayerPosition,
+    pub(crate) enemies: Vec<EnemySpawn>,
+    pub(crate) objects: Vec<Object>,
 }
 
-struct FogVolumeSettings {
-    center: Vec3,
-    size: Vec3,
-    color: Color,
-    density: f32,
-    absorption: f32,
-    scattering: f32,
-    scattering_asymmetry: f32,
+#[derive(Clone, Copy)]
+pub(crate) struct FogVolumeSettings {
+    pub center: Vec3,
+    pub size: Vec3,
+    pub color: Color,
+    pub density: f32,
+    pub absorption: f32,
+    pub scattering: f32,
+    pub scattering_asymmetry: f32,
 }
 
-struct EnemySpawn {
-    position: Vec3,
-    kind: EnemyKind,
+#[derive(Clone, Copy)]
+pub(crate) struct EnemySpawn {
+    pub position: Vec3,
+    pub kind: EnemyKind,
 }
 
-fn build_map(map: &CurrentMap) -> Map {
-    match map {
-        CurrentMap::Map01 => map01::build_map(),
-        CurrentMap::FlatFloor | CurrentMap::TallPillar | CurrentMap::Staircase | CurrentMap::ColliderInspection => {
-            test_maps::build_map(map)
-        }
+impl EnemySpawn {
+    pub fn new(position: Vec3, kind: EnemyKind) -> Self {
+        Self { position, kind }
     }
 }
 
-fn load_current_map(
-    current: Res<CurrentMap>,
-    player_position: Option<Res<PlayerPosition>>,
+fn spawn_map(
+    map: Res<Map>,
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    let override_position = player_position.map(|player_position| *player_position);
-    spawn_map(
-        &current,
-        override_position,
-        &mut commands,
-        &asset_server,
-        &mut meshes,
-        &mut materials,
-    );
-}
-
-fn spawn_map(
-    current: &CurrentMap,
-    override_position: Option<PlayerPosition>,
-    commands: &mut Commands,
-    asset_server: &AssetServer,
-    meshes: &mut Assets<Mesh>,
-    materials: &mut Assets<StandardMaterial>,
-) {
-    let map = build_map(current);
-    commands.insert_resource(override_position.unwrap_or(map.player_position));
-    commands.insert_resource(map.ambient);
-    commands.insert_resource(map.clear_color);
+    info!("spawning map {}", map.name);
+    commands.insert_resource(map.player_position);
+    commands.insert_resource(map.ambient.clone());
+    commands.insert_resource(map.clear_color.clone());
     if let Some(fog_volume) = map.fog_volume {
         commands.spawn((
             FogVolume {
@@ -128,12 +168,13 @@ fn spawn_map(
         ));
     }
     {
-        let mut object_spawn_context = ObjectSpawnContext::new(commands, asset_server, meshes, materials);
-        for object in map.objects {
+        let mut object_spawn_context =
+            ObjectSpawnContext::new(&mut commands, &asset_server, &mut meshes, &mut materials);
+        for object in map.objects.clone() {
             object.spawn(&mut object_spawn_context);
         }
     }
-    spawn_enemies(commands, asset_server, &map.enemies);
+    spawn_enemies(&mut commands, &asset_server, &map.enemies);
 }
 
 fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &[EnemySpawn]) {
@@ -150,13 +191,12 @@ fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &
 }
 
 pub(crate) fn restart(
-    current: &mut CurrentMap,
+    map: &mut Map,
     player_position: &mut PlayerPosition,
     commands: &mut Commands,
     asset_server: &AssetServer,
 ) {
-    *current = CurrentMap::Map01;
-    let map = build_map(current);
+    *map = build_map01();
     *player_position = map.player_position;
     spawn_enemies(commands, asset_server, &map.enemies);
 }

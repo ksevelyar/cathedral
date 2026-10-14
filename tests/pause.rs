@@ -2,14 +2,19 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::maps::CurrentMap;
+use cathedral::maps::{Map, MapBuilder};
 use cathedral::state::GameState;
 use cathedral::ui::setup_pause_menu;
 
 fn create_test_app() -> App {
-    let mut app = build_test_app(CurrentMap::FlatFloor, None);
+    let mut app = build_test_app(pause_map());
     app.add_systems(OnEnter(GameState::Paused), setup_pause_menu);
     app
+}
+
+fn pause_map() -> Map {
+    let floor_size = Vec3::new(60.0, 0.1, 60.0);
+    MapBuilder::new("pause").with_floor(floor_size).build()
 }
 
 fn get_current_state(app: &App) -> GameState {

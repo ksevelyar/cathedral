@@ -3,11 +3,16 @@ use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::maps::CurrentMap;
+use cathedral::maps::{Map, MapBuilder};
 use cathedral::player::{CameraState, Player, PlayerCamera};
 
 fn create_test_app() -> App {
-    build_test_app(CurrentMap::FlatFloor, None)
+    build_test_app(mouse_look_map())
+}
+
+fn mouse_look_map() -> Map {
+    let floor_size = Vec3::new(60.0, 0.1, 60.0);
+    MapBuilder::new("mouse_look").with_floor(floor_size).build()
 }
 
 fn find_player_entity(app: &mut App) -> Entity {

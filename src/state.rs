@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
 use crate::enemies::Enemy;
-use crate::maps::{self, CurrentMap, PlayerPosition};
+use crate::maps::{self, Map, PlayerPosition};
 use crate::player;
 use crate::player::Player;
 use crate::ragdoll::CharacterPhysicsEntities;
@@ -112,7 +112,7 @@ struct GameRestartContext<'w, 's> {
     enemy_query: Query<'w, 's, Entity, With<Enemy>>,
     player_bodies: Query<'w, 's, &'static CharacterPhysicsEntities, With<Player>>,
     dead_players: Query<'w, 's, Entity, With<Player>>,
-    current_map: ResMut<'w, CurrentMap>,
+    map: ResMut<'w, Map>,
     player_position: ResMut<'w, PlayerPosition>,
     asset_server: Res<'w, AssetServer>,
 }
@@ -139,7 +139,7 @@ fn restart_game(
     }
 
     maps::restart(
-        &mut restart_context.current_map,
+        &mut restart_context.map,
         &mut restart_context.player_position,
         &mut restart_context.commands,
         &restart_context.asset_server,

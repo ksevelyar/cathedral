@@ -4,14 +4,15 @@ use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
 use cathedral::enemies::{AnimationState, EnemyActivity, EnemyKind, spawn_enemy};
-use cathedral::maps::test_maps::{TALL_PILLAR_POSITION, TALL_PILLAR_SIZE};
-use cathedral::maps::{CurrentMap, PlayerPosition};
+use cathedral::maps::{Map, MapBuilder};
 use cathedral::player::{CameraState, Player};
 use std::time::Duration;
 
 const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
 const PATH_FINDING_UPDATES: usize = 2048;
 const PLAYER_BLOCKER_UPDATES: usize = 1024;
+const TALL_PILLAR_POSITION: Vec3 = Vec3::new(0.0, 10.0, 0.0);
+const TALL_PILLAR_SIZE: Vec3 = Vec3::new(1.0, 20.0, 1.0);
 const FIGHTER_START_POSITION: Vec3 = Vec3::new(-6.0, 0.5, 0.0);
 const PLAYER_START_POSITION: Vec3 = Vec3::new(6.0, 0.5, 0.0);
 const BLOCKED_PLAYER_START_POSITION: Vec3 = Vec3::new(-6.0, 1.5, 0.0);
@@ -24,9 +25,37 @@ const REACH_MARGIN: f32 = 0.5;
 const MINIMUM_PROGRESS: f32 = 0.5;
 const STAIR_CROSSING_POSITION: f32 = -1.0;
 
-fn create_test_app(map: CurrentMap, player_position: Option<PlayerPosition>) -> App {
+fn build_tall_pillar_map(player_position: Vec3) -> Map {
+    let floor_size = Vec3::new(60.0, 0.1, 60.0);
+    MapBuilder::new("path_finding")
+        .with_player_position(player_position, player_position + Vec3::NEG_Z)
+        .with_floor(floor_size)
+        .with_wall(TALL_PILLAR_POSITION, TALL_PILLAR_SIZE)
+        .build()
+}
+
+fn build_staircase_map(player_position: Vec3) -> Map {
+    let floor_size = Vec3::new(60.0, 0.1, 60.0);
+    let staircase_step_size = Vec3::new(4.0, 0.5, 1.0);
+    let apex_position = Vec3::new(0.0, 1.025, 0.0);
+    let apex_size = Vec3::new(4.0, 2.05, 1.0);
+    let mut map_builder = MapBuilder::new("path_finding")
+        .with_player_position(player_position, player_position + Vec3::NEG_Z)
+        .with_floor(floor_size);
+    for step_index in 0..4u32 {
+        let step_center_height = 0.3 + step_index as f32 * 0.5;
+        let up_z = 4.5 - step_index as f32;
+        let down_z = -4.5 + step_index as f32;
+        for step_z in [up_z, down_z] {
+            map_builder = map_builder.with_wall(Vec3::new(0.0, step_center_height, step_z), staircase_step_size);
+        }
+    }
+    map_builder.with_wall(apex_position, apex_size).build()
+}
+
+fn create_test_app(map: Map) -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
-    let mut app = build_test_app(map, player_position);
+    let mut app = build_test_app(map);
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
     app.update();
     app
@@ -90,10 +119,7 @@ fn press_forward(app: &mut App) {
 
 #[test]
 fn player_pressing_w_is_blocked_by_pillar() {
-    let mut app = create_test_app(
-        CurrentMap::TallPillar,
-        Some(PlayerPosition::new(BLOCKED_PLAYER_START_POSITION)),
-    );
+    let mut app = create_test_app(build_tall_pillar_map(BLOCKED_PLAYER_START_POSITION));
     aim_player_yaw(&mut app, -std::f32::consts::FRAC_PI_2);
     press_forward(&mut app);
 
@@ -114,10 +140,7 @@ fn player_pressing_w_is_blocked_by_pillar() {
 
 #[test]
 fn player_pressing_w_is_stopped_by_the_pillar_south_face() {
-    let mut app = create_test_app(
-        CurrentMap::TallPillar,
-        Some(PlayerPosition::new(SOUTH_FACE_PLAYER_START_POSITION)),
-    );
+    let mut app = create_test_app(build_tall_pillar_map(SOUTH_FACE_PLAYER_START_POSITION));
     press_forward(&mut app);
 
     for _ in 0..PLAYER_BLOCKER_UPDATES {
@@ -134,10 +157,7 @@ fn player_pressing_w_is_stopped_by_the_pillar_south_face() {
 
 #[test]
 fn player_walks_over_the_staircase() {
-    let mut app = create_test_app(
-        CurrentMap::Staircase,
-        Some(PlayerPosition::new(STAIR_PLAYER_START_POSITION)),
-    );
+    let mut app = create_test_app(build_staircase_map(STAIR_PLAYER_START_POSITION));
     press_forward(&mut app);
 
     let player = find_player_entity(&mut app);
@@ -161,10 +181,7 @@ fn player_walks_over_the_staircase() {
 
 #[test]
 fn fighter_walks_over_the_staircase_to_player() {
-    let mut app = create_test_app(
-        CurrentMap::Staircase,
-        Some(PlayerPosition::new(STAIR_PLAYER_WAITING_POSITION)),
-    );
+    let mut app = create_test_app(build_staircase_map(STAIR_PLAYER_WAITING_POSITION));
     let enemy = app
         .world_mut()
         .run_system_once(spawn_fighter_on_staircase)
@@ -198,7 +215,7 @@ fn fighter_walks_over_the_staircase_to_player() {
 
 #[test]
 fn fighter_walks_around_pillar_to_reach_player() {
-    let mut app = create_test_app(CurrentMap::TallPillar, Some(PlayerPosition::new(PLAYER_START_POSITION)));
+    let mut app = create_test_app(build_tall_pillar_map(PLAYER_START_POSITION));
     let enemy = app
         .world_mut()
         .run_system_once(spawn_fighter)

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::maps::CurrentMap;
+use cathedral::maps::build_map01;
 use std::time::Duration;
 
 pub mod support;
@@ -9,7 +9,7 @@ use support::{FIXED_TIMESTEP_SECONDS, assert_received_kick, assert_settles, find
 
 fn create_map_test_app() -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
-    let mut app = build_test_app(CurrentMap::Map01, None);
+    let mut app = build_test_app(build_map01());
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
     app
 }

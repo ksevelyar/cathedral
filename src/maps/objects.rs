@@ -8,7 +8,8 @@ use bevy::prelude::*;
 use super::meshes::{CYLINDER_RADIAL_SEGMENTS, build_cuboid_mesh, make_cylinder_mesh};
 use crate::ragdoll::{OBJECTS_GROUP, WORLD_GROUP};
 
-pub(super) enum Object {
+#[derive(Clone)]
+pub enum Object {
     Desk(Transform),
     Laptop(Transform),
     Stool(Transform),
