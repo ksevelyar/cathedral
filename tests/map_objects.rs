@@ -5,7 +5,7 @@ use std::time::Duration;
 
 pub mod support;
 
-use support::{FIXED_TIMESTEP_SECONDS, assert_received_kick, assert_settles, shoot_entity, wait_for_named_body};
+use support::{FIXED_TIMESTEP_SECONDS, assert_received_kick, assert_settles, find_named_body, shoot_entity};
 
 fn create_map_test_app() -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);
@@ -17,7 +17,7 @@ fn create_map_test_app() -> App {
 #[test]
 fn shooting_laptop_applies_momentum_and_laptop_settles() {
     let mut app = create_map_test_app();
-    let laptop = wait_for_named_body(&mut app, "laptop");
+    let laptop = find_named_body(&mut app, "laptop");
 
     shoot_entity(&mut app, laptop);
     assert_received_kick(&app, laptop);

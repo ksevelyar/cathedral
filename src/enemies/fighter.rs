@@ -2,8 +2,9 @@ use avian3d::prelude::{Gravity, LinearVelocity, MoveAndSlide};
 use bevy::prelude::*;
 
 use super::{
-    AliveEnemy, AnimationState, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity, EnemyDefinition,
-    EnemyRig, EquippedWeapon, deliver_pending_melee_hit, flatten_direction, move_enemy, spawn_enemy_base,
+    AliveEnemy, AnimationSeed, AnimationState, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity,
+    EnemyDefinition, EnemyRig, EquippedWeapon, deliver_pending_melee_hit, flatten_direction, move_enemy,
+    spawn_enemy_base,
 };
 use crate::health::CharacterDamaged;
 use crate::maps::CurrentMap;
@@ -45,6 +46,10 @@ impl Default for Fighter {
                 idle_animation: 40,
                 moving_animation: 36,
                 attack_animation: 39,
+                dance_animation: 3,
+                idle_animation_seconds: 1.667,
+                moving_animation_seconds: 0.667,
+                dance_animation_seconds: 1.0,
                 weapon: EquippedWeapon {
                     weapon: Weapon::Melee(MeleeWeapon::Katana),
                     transform: Transform::default(),
@@ -73,7 +78,18 @@ pub(super) fn spawn(
         starting_health: fighter.starting_health,
     };
     let fighter_entity = spawn_enemy_base(commands, asset_server, definition, sequence_number, transform, alive);
-    commands.entity(fighter_entity).insert(fighter);
+    let animation_seed = AnimationSeed(sequence_number as u64);
+    let cooldown_jitter_range = 0.15;
+    let cooldown_multiplier = 1.0 + (animation_seed.calculate_unit_value(6) * 2.0 - 1.0) * cooldown_jitter_range;
+    commands
+        .entity(fighter_entity)
+        .insert((fighter.clone(), FighterAttackJitter(cooldown_multiplier)));
+    if alive {
+        commands.entity(fighter_entity).insert(EnemyActivity {
+            attack_cooldown: fighter.attack_cooldown * cooldown_multiplier,
+            ..default()
+        });
+    }
     fighter_entity
 }
 
@@ -85,12 +101,16 @@ type FighterMovementContext<'world, 'state> = (
 );
 type PlayerTargetQuery<'world, 'state> =
     Query<'world, 'state, (Entity, &'static Transform), (With<Player>, Without<super::Enemy>)>;
+#[derive(Component)]
+struct FighterAttackJitter(f32);
+
 type FighterQuery<'world, 'state> = Query<
     'world,
     'state,
     (
         Entity,
         &'static Fighter,
+        &'static FighterAttackJitter,
         &'static mut Transform,
         &'static mut EnemyActivity,
         &'static mut LinearVelocity,
@@ -117,7 +137,7 @@ fn update_fighters(
     };
     let delta_secs = time.delta_secs();
 
-    for (fighter_entity, fighter, mut fighter_transform, mut activity, mut velocity) in &mut fighters {
+    for (fighter_entity, fighter, attack_jitter, mut fighter_transform, mut activity, mut velocity) in &mut fighters {
         activity.attack_cooldown -= delta_secs;
         deliver_pending_melee_hit(
             fighter_entity,
@@ -144,7 +164,13 @@ fn update_fighters(
             &mut activity,
             &mut velocity,
             |fighter_transform, activity, physics_world| {
-                fighter.update(player_transform, fighter_transform, activity, physics_world)
+                fighter.update(
+                    player_transform,
+                    fighter_transform,
+                    activity,
+                    physics_world,
+                    attack_jitter.0,
+                )
             },
         );
         if attack_started {
@@ -160,13 +186,17 @@ impl Fighter {
         enemy: &mut Transform,
         activity: &mut EnemyActivity,
         physics_world: &PhysicsWorld,
+        attack_cooldown_multiplier: f32,
     ) -> bool {
         let Some((direction, distance)) = flatten_direction(player, enemy) else {
             return false;
         };
         let weapon_range = self.rig.weapon.weapon.get_range();
         if distance <= weapon_range {
-            activity.attack_on_cooldown(self.attack_cooldown, self.attack_animation_seconds)
+            activity.attack_on_cooldown(
+                self.attack_cooldown * attack_cooldown_multiplier,
+                self.attack_animation_seconds,
+            )
         } else {
             activity.state = AnimationState::Moving;
             enemy.look_to(-direction, Vec3::Y);

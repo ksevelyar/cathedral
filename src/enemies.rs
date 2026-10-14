@@ -19,7 +19,15 @@ impl Plugin for EnemiesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((fighter::FighterPlugin, gunner::GunnerPlugin))
             .add_systems(Update, kill_enemy_on_death.run_if(in_state(GameState::Playing)))
-            .add_systems(PostUpdate, (setup_external_animation, update_enemy_animations));
+            .add_systems(
+                PostUpdate,
+                (
+                    setup_external_animation,
+                    dance_when_player_is_dead,
+                    update_enemy_animations,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -50,6 +58,10 @@ pub(super) struct EnemyRig {
     idle_animation: usize,
     moving_animation: usize,
     attack_animation: usize,
+    dance_animation: usize,
+    idle_animation_seconds: f32,
+    moving_animation_seconds: f32,
+    dance_animation_seconds: f32,
     weapon: EquippedWeapon,
 }
 
@@ -97,6 +109,20 @@ pub enum AnimationState {
     Idle,
     Moving,
     Attacking,
+    Dancing,
+}
+
+#[derive(Component, Clone, Copy)]
+pub struct AnimationSeed(u64);
+
+impl AnimationSeed {
+    fn calculate_unit_value(self, salt: u64) -> f32 {
+        let mixed_seed = self.0.wrapping_add(salt).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        let mixed_seed = (mixed_seed ^ (mixed_seed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        let mixed_seed = (mixed_seed ^ (mixed_seed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        let random_bits = mixed_seed ^ (mixed_seed >> 31);
+        (random_bits >> 40) as f32 / ((1_u32 << 24) - 1) as f32
+    }
 }
 
 #[derive(Clone, Component)]
@@ -104,6 +130,7 @@ struct EnemyAnimations {
     idle: Handle<AnimationClip>,
     moving: Handle<AnimationClip>,
     attack: Handle<AnimationClip>,
+    dance: Handle<AnimationClip>,
     weapon: Handle<WorldAsset>,
 }
 
@@ -112,6 +139,12 @@ struct ArmatureAnimation {
     idle: AnimationNodeIndex,
     moving: AnimationNodeIndex,
     attacking: AnimationNodeIndex,
+    dancing: AnimationNodeIndex,
+    idle_phase_seconds: f32,
+    moving_phase_seconds: f32,
+    dance_phase_seconds: f32,
+    idle_playback_speed: f32,
+    moving_playback_speed: f32,
     current: Option<AnimationState>,
 }
 
@@ -152,6 +185,7 @@ pub(super) fn spawn_enemy_base(
     let rig = definition.rig.clone();
     let mut enemy = commands.spawn((
         Enemy,
+        AnimationSeed(sequence_number as u64),
         Name::new(format!("{} {}", definition.display_name, sequence_number + 1)),
         WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(definition.rig.scene))),
         definition.rig,
@@ -166,6 +200,8 @@ pub(super) fn spawn_enemy_base(
                     .load(GltfAssetLabel::Animation(rig.moving_animation).from_asset(rig.animation_source)),
                 attack: asset_server
                     .load(GltfAssetLabel::Animation(rig.attack_animation).from_asset(rig.animation_source)),
+                dance: asset_server
+                    .load(GltfAssetLabel::Animation(rig.dance_animation).from_asset(rig.animation_source)),
                 weapon: asset_server
                     .load(GltfAssetLabel::Scene(0).from_asset(rig.weapon.weapon.get_model_asset_path())),
             },
@@ -277,11 +313,11 @@ fn setup_external_animation(
     bone_maps: Query<&BoneMap>,
     children: Query<&Children>,
     names: Query<&Name>,
-    pending: Query<(Entity, &PendingAnimationSetup, &EnemyRig)>,
+    pending: Query<(Entity, &PendingAnimationSetup, &EnemyRig, &AnimationSeed)>,
     mut graphs: ResMut<Assets<AnimationGraph>>,
     players: Query<&AnimationPlayer>,
 ) {
-    for (enemy_entity, setup, rig) in &pending {
+    for (enemy_entity, setup, rig, animation_seed) in &pending {
         let Ok(bones) = bone_maps.get(enemy_entity) else {
             continue;
         };
@@ -293,7 +329,14 @@ fn setup_external_animation(
         let (mut graph, idle) = AnimationGraph::from_clip(animations.idle.clone());
         let moving = graph.add_clip(animations.moving.clone(), 1.0, graph.root);
         let attacking = graph.add_clip(animations.attack.clone(), 1.0, graph.root);
+        let dancing = graph.add_clip(animations.dance.clone(), 1.0, graph.root);
         let graph_handle = graphs.add(graph);
+        let idle_phase_seconds = animation_seed.calculate_unit_value(1) * rig.idle_animation_seconds;
+        let moving_phase_seconds = animation_seed.calculate_unit_value(2) * rig.moving_animation_seconds;
+        let dance_phase_seconds = animation_seed.calculate_unit_value(3) * rig.dance_animation_seconds;
+        let playback_speed_jitter = 0.1;
+        let idle_playback_speed = 1.0 + (animation_seed.calculate_unit_value(4) * 2.0 - 1.0) * playback_speed_jitter;
+        let moving_playback_speed = 1.0 + (animation_seed.calculate_unit_value(5) * 2.0 - 1.0) * playback_speed_jitter;
 
         if players.get(armature).is_err() {
             commands.entity(armature).insert(AnimationPlayer::default());
@@ -305,6 +348,12 @@ fn setup_external_animation(
                 idle,
                 moving,
                 attacking,
+                dancing,
+                idle_phase_seconds,
+                moving_phase_seconds,
+                dance_phase_seconds,
+                idle_playback_speed,
+                moving_playback_speed,
                 current: None,
             },
         ));
@@ -365,6 +414,18 @@ fn build_animation_targets(
     }
 }
 
+fn dance_when_player_is_dead(
+    players: Query<(), (With<Player>, With<crate::player::PlayerDead>)>,
+    mut enemies: Query<&mut EnemyActivity, (With<Enemy>, Without<Dying>)>,
+) {
+    if players.is_empty() {
+        return;
+    }
+    for mut activity in &mut enemies {
+        activity.state = AnimationState::Dancing;
+    }
+}
+
 fn update_enemy_animations(
     enemies: Query<(&EnemyActivity, &EnemyArmature), Without<Dying>>,
     mut armatures: Query<(&mut ArmatureAnimation, &mut AnimationPlayer)>,
@@ -382,10 +443,29 @@ fn update_enemy_animations(
             AnimationState::Idle => armature_animation.idle,
             AnimationState::Moving => armature_animation.moving,
             AnimationState::Attacking => armature_animation.attacking,
+            AnimationState::Dancing => armature_animation.dancing,
+        };
+        let (phase_seconds, playback_speed, repeats) = match activity.state {
+            AnimationState::Idle => (
+                armature_animation.idle_phase_seconds,
+                armature_animation.idle_playback_speed,
+                true,
+            ),
+            AnimationState::Moving => (
+                armature_animation.moving_phase_seconds,
+                armature_animation.moving_playback_speed,
+                true,
+            ),
+            AnimationState::Attacking => (0.0, 1.0, false),
+            AnimationState::Dancing => (armature_animation.dance_phase_seconds, 1.0, true),
         };
 
         player.stop_all();
-        player.start(node_index).repeat();
+        let active_animation = player.start(node_index);
+        active_animation.set_seek_time(phase_seconds).set_speed(playback_speed);
+        if repeats {
+            active_animation.repeat();
+        }
         armature_animation.current = Some(activity.state);
     }
 }

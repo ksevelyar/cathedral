@@ -3,8 +3,9 @@ use bevy::prelude::*;
 use rand::Rng;
 
 use super::{
-    AliveEnemy, AnimationState, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity, EnemyDefinition,
-    EnemyRig, EnemyWeapon, EquippedWeapon, find_player_head_position, flatten_direction, move_enemy, spawn_enemy_base,
+    AliveEnemy, AnimationSeed, AnimationState, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity,
+    EnemyDefinition, EnemyRig, EnemyWeapon, EquippedWeapon, find_player_head_position, flatten_direction, move_enemy,
+    spawn_enemy_base,
 };
 use crate::maps::CurrentMap;
 use crate::movement::PhysicsWorld;
@@ -15,6 +16,8 @@ use crate::state::ColliderInspection;
 
 const GUNNER_ACCURACY: f64 = 0.65;
 const GUNNER_MISS_DISTANCE: f32 = 0.75;
+const PISTOL_SHOOT_ANIMATION_SECONDS: f32 = 0.633;
+const PISTOL_SHOT_CONTACT_SECONDS: f32 = 0.25;
 
 pub(super) struct GunnerPlugin;
 
@@ -50,6 +53,10 @@ impl Default for Gunner {
                 idle_animation: 21,
                 moving_animation: 36,
                 attack_animation: 23,
+                dance_animation: 3,
+                idle_animation_seconds: 1.667,
+                moving_animation_seconds: 0.667,
+                dance_animation_seconds: 1.0,
                 weapon: EquippedWeapon {
                     weapon: Weapon::Ranged(RangedWeapon::Pistol),
                     transform: Transform {
@@ -63,7 +70,7 @@ impl Default for Gunner {
             flee_distance: 4.0,
             attack_distance: 12.0,
             attack_cooldown: 4.0,
-            attack_animation_seconds: 1.0,
+            attack_animation_seconds: PISTOL_SHOOT_ANIMATION_SECONDS,
             damage_coefficient: 0.5,
             starting_health: 20.0,
         }
@@ -84,7 +91,12 @@ pub(super) fn spawn(
         starting_health: gunner.starting_health,
     };
     let gunner_entity = spawn_enemy_base(commands, asset_server, definition, sequence_number, transform, alive);
-    commands.entity(gunner_entity).insert(gunner);
+    let animation_seed = AnimationSeed(sequence_number as u64);
+    commands.entity(gunner_entity).insert((
+        gunner,
+        GunnerAttack::default(),
+        GunnerAttackJitter(animation_seed.calculate_unit_value(6)),
+    ));
     gunner_entity
 }
 
@@ -102,12 +114,24 @@ type GunnerWeaponContext<'world, 'state> = (
     Query<'world, 'state, &'static RagdollData>,
     Query<'world, 'state, &'static Position, With<RagdollBodyPart>>,
 );
+#[derive(Component, Default)]
+struct GunnerAttack {
+    remaining_cooldown_seconds: Option<f32>,
+    firing_elapsed_seconds: Option<f32>,
+    fired: bool,
+}
+
+#[derive(Component)]
+struct GunnerAttackJitter(f32);
+
 type GunnerQuery<'world, 'state> = Query<
     'world,
     'state,
     (
         Entity,
         &'static Gunner,
+        &'static GunnerAttackJitter,
+        &'static mut GunnerAttack,
         &'static mut Transform,
         &'static mut EnemyActivity,
         &'static mut LinearVelocity,
@@ -136,8 +160,9 @@ fn update_gunners(
     };
     let delta_secs = time.delta_secs();
 
-    for (gunner_entity, gunner, mut gunner_transform, mut activity, mut velocity) in &mut gunners {
-        activity.attack_cooldown -= delta_secs;
+    for (gunner_entity, gunner, attack_jitter, mut attack, mut gunner_transform, mut activity, mut velocity) in
+        &mut gunners
+    {
         let filter = exclude_character_bodies(&[gunner_entity], &owned_bodies);
         let physics_world = PhysicsWorld::new(
             &move_and_slide,
@@ -148,7 +173,7 @@ fn update_gunners(
             ENEMY_COLLISION_CENTER_HEIGHT,
             0.0,
         );
-        let attack_started = move_enemy(
+        let player_is_in_attack_range = move_enemy(
             &physics_world,
             &mut gunner_transform,
             &mut activity,
@@ -157,7 +182,11 @@ fn update_gunners(
                 gunner.update(player_transform, gunner_transform, activity, physics_world)
             },
         );
-        if !attack_started {
+        if !player_is_in_attack_range {
+            *attack = GunnerAttack::default();
+            continue;
+        }
+        if !advance_gunner_attack(gunner, attack_jitter, &mut attack, &mut activity, delta_secs) {
             continue;
         }
         let Ok(enemy_weapon) = enemy_weapons.get(gunner_entity) else {
@@ -183,6 +212,43 @@ fn update_gunners(
             direction,
         });
     }
+}
+
+fn advance_gunner_attack(
+    gunner: &Gunner,
+    attack_jitter: &GunnerAttackJitter,
+    attack: &mut GunnerAttack,
+    activity: &mut EnemyActivity,
+    delta_secs: f32,
+) -> bool {
+    let cooldown_jitter_range = 0.15;
+    let cooldown_multiplier = 1.0 + (attack_jitter.0 * 2.0 - 1.0) * cooldown_jitter_range;
+    let cooldown_seconds = gunner.attack_cooldown * cooldown_multiplier;
+
+    if let Some(firing_elapsed_seconds) = attack.firing_elapsed_seconds.as_mut() {
+        *firing_elapsed_seconds += delta_secs;
+        activity.state = AnimationState::Attacking;
+        let shot_reached_contact = !attack.fired && *firing_elapsed_seconds >= PISTOL_SHOT_CONTACT_SECONDS;
+        attack.fired |= shot_reached_contact;
+        if *firing_elapsed_seconds >= gunner.attack_animation_seconds {
+            attack.firing_elapsed_seconds = None;
+            attack.remaining_cooldown_seconds = Some(cooldown_seconds);
+        }
+        return shot_reached_contact;
+    }
+
+    let remaining_cooldown_seconds = attack.remaining_cooldown_seconds.get_or_insert(cooldown_seconds);
+    *remaining_cooldown_seconds -= delta_secs;
+    if *remaining_cooldown_seconds > 0.0 {
+        activity.state = AnimationState::Idle;
+        return false;
+    }
+
+    attack.remaining_cooldown_seconds = None;
+    attack.firing_elapsed_seconds = Some(0.0);
+    attack.fired = false;
+    activity.state = AnimationState::Attacking;
+    false
 }
 
 fn calculate_gunner_target(player_position: Vec3) -> Vec3 {
@@ -225,7 +291,8 @@ impl Gunner {
             activity.state = AnimationState::Moving;
         } else {
             enemy.look_to(-direction, Vec3::Y);
-            return activity.attack_on_cooldown(self.attack_cooldown, self.attack_animation_seconds);
+            activity.state = AnimationState::Idle;
+            return true;
         }
         false
     }
