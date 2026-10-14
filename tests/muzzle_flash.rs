@@ -2,7 +2,7 @@ use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::enemies::{Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
+use cathedral::enemies::{Enemy, EnemyKind, spawn_enemy};
 use cathedral::maps::CurrentMap;
 use cathedral::shooting::{Gun, MUZZLE_FLASH_LIGHT_INTENSITY_BOUNDS, MUZZLE_FLASH_LIGHT_RANGE_BOUNDS, MuzzleFlash};
 
@@ -105,7 +105,7 @@ fn spawn_enemies(mut commands: Commands, asset_server: Res<AssetServer>) {
     spawn_enemy(
         &mut commands,
         &asset_server,
-        EnemyKind::Gunner(Gunner::default()),
+        EnemyKind::Gunner,
         0,
         Transform::from_xyz(-2.0, 0.5, 0.0),
         true,
@@ -113,7 +113,7 @@ fn spawn_enemies(mut commands: Commands, asset_server: Res<AssetServer>) {
     spawn_enemy(
         &mut commands,
         &asset_server,
-        EnemyKind::Fighter(Fighter::default()),
+        EnemyKind::Fighter,
         0,
         Transform::from_xyz(2.0, 0.5, 0.0),
         true,

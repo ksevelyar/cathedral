@@ -3,7 +3,7 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::enemies::{AnimationState, EnemyActivity, EnemyKind, Fighter, spawn_enemy};
+use cathedral::enemies::{AnimationState, EnemyActivity, EnemyKind, spawn_enemy};
 use cathedral::maps::test_maps::{TALL_PILLAR_POSITION, TALL_PILLAR_SIZE};
 use cathedral::maps::{CurrentMap, PlayerPosition};
 use cathedral::player::{CameraState, Player};
@@ -36,7 +36,7 @@ fn spawn_fighter(mut commands: Commands, asset_server: Res<AssetServer>) -> Enti
     spawn_enemy(
         &mut commands,
         &asset_server,
-        EnemyKind::Fighter(Fighter::default()),
+        EnemyKind::Fighter,
         0,
         Transform::from_translation(FIGHTER_START_POSITION),
         true,
@@ -47,7 +47,7 @@ fn spawn_fighter_on_staircase(mut commands: Commands, asset_server: Res<AssetSer
     spawn_enemy(
         &mut commands,
         &asset_server,
-        EnemyKind::Fighter(Fighter::default()),
+        EnemyKind::Fighter,
         0,
         Transform::from_translation(STAIR_FIGHTER_START_POSITION),
         true,

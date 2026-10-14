@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use super::objects::Object;
 use super::{CurrentMap, EnemySpawn, Map, PlayerPosition};
-use crate::enemies::{EnemyKind, Fighter};
+use crate::enemies::EnemyKind;
 
 pub const TEST_FLOOR_SIZE: Vec3 = Vec3::new(60.0, 0.1, 60.0);
 pub const TALL_PILLAR_POSITION: Vec3 = Vec3::new(0.0, 10.0, 0.0);
@@ -46,7 +46,7 @@ pub(super) fn build_map(map: &CurrentMap) -> Map {
             },
             enemies: vec![EnemySpawn {
                 position: Vec3::ZERO,
-                kind: EnemyKind::Fighter(Fighter::default()),
+                kind: EnemyKind::Fighter,
             }],
             objects: vec![build_floor()],
         },

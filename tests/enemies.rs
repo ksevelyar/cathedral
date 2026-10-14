@@ -1,11 +1,19 @@
 use avian3d::prelude::*;
 use bevy::ecs::world::CommandQueue;
 use bevy::prelude::*;
+
+fn get_current_game_state(app: &mut App) -> GameState {
+    app.world().resource::<State<GameState>>().get().clone()
+}
 use cathedral::app::build_test_app;
-use cathedral::enemies::{Dying, Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
+use cathedral::enemies::{Dying, EnemyKind, spawn_enemy};
+use cathedral::health::Health;
 use cathedral::maps::{CurrentMap, PlayerPosition};
+use cathedral::player::Player;
+use cathedral::player::{PlayerCamera, PlayerDead};
 use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
 use cathedral::shooting::Weapon;
+use cathedral::state::GameState;
 use std::time::Duration;
 
 pub mod support;
@@ -37,6 +45,9 @@ fn simulate_enemy_near_player(kind: EnemyKind, walking_updates: usize, player_po
     let fixed_timestep = Duration::from_secs_f64(support::FIXED_TIMESTEP_SECONDS);
     let mut app = build_test_app(CurrentMap::FlatFloor, Some(PlayerPosition::new(player_position)));
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
+    app.world_mut()
+        .resource_mut::<NextState<GameState>>()
+        .set(GameState::Paused);
     let mut command_queue = CommandQueue::default();
     let asset_server = app.world().resource::<AssetServer>().clone();
     let enemy = spawn_enemy(
@@ -49,6 +60,9 @@ fn simulate_enemy_near_player(kind: EnemyKind, walking_updates: usize, player_po
     );
     command_queue.apply(app.world_mut());
     wait_for_inert_ragdoll(&mut app, enemy);
+    app.world_mut()
+        .resource_mut::<NextState<GameState>>()
+        .set(GameState::Playing);
     run_updates(&mut app, walking_updates);
     (app, enemy)
 }
@@ -110,6 +124,17 @@ fn run_updates(app: &mut App, update_count: usize) {
     }
 }
 
+fn wait_until_dying(app: &mut App, enemy: Entity) {
+    let death_wait_updates = 64;
+    for _ in 0..death_wait_updates {
+        app.update();
+        if app.world().entity(enemy).contains::<Dying>() {
+            return;
+        }
+    }
+    panic!("shot enemy {enemy:?} should become dying within {death_wait_updates} updates");
+}
+
 fn assert_animator_stays_stopped(app: &mut App, animator: Entity) {
     let settle_updates = 512;
     run_updates(app, settle_updates);
@@ -139,7 +164,7 @@ fn assert_death(app: &mut App, enemy: Entity) {
 }
 
 fn killed_enemy_drops_weapon(kind: EnemyKind) {
-    let (mut app, enemy) = simulate_enemy_near_player(kind, 512, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(kind, 160, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
@@ -147,7 +172,7 @@ fn killed_enemy_drops_weapon(kind: EnemyKind) {
 }
 
 fn killed_enemy_stops_attacking_animation(kind: EnemyKind) {
-    let (mut app, enemy) = simulate_enemy_near_player(kind, 512, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(kind, 160, Vec3::new(5.0, 0.5, 0.0));
     let animator = find_enemy_animator(&mut app, enemy);
     update_until_animator_plays(&mut app, animator, "alive");
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
@@ -157,23 +182,86 @@ fn killed_enemy_stops_attacking_animation(kind: EnemyKind) {
 }
 
 #[test]
+fn player_damages_fighter_on_first_hit_and_kills_on_second() {
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 160, Vec3::new(5.0, 0.5, 0.0));
+    let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
+    let revolver_damage = 40.0;
+    let fighter_starting_health = 40.0;
+    let one_hit_survivable_health = fighter_starting_health + revolver_damage;
+    app.world_mut()
+        .entity_mut(enemy)
+        .insert(Health::new(one_hit_survivable_health));
+
+    support::shoot_entity(&mut app, hit_body);
+    run_updates(&mut app, 32);
+    let health_after_first_hit = app
+        .world()
+        .get::<Health>(enemy)
+        .expect("shot enemy should keep its health")
+        .get_current();
+    assert_eq!(health_after_first_hit, one_hit_survivable_health - revolver_damage);
+    assert!(!app.world().entity(enemy).contains::<Dying>());
+
+    support::shoot_entity(&mut app, hit_body);
+    assert_death(&mut app, enemy);
+}
+
+#[test]
+fn fighter_damages_player_on_first_hit_and_kills_on_second() {
+    let (mut app, _) = simulate_enemy_near_player(EnemyKind::Fighter, 16, Vec3::new(1.0, 0.5, 0.0));
+    let player_entity = app
+        .world_mut()
+        .query_filtered::<Entity, With<Player>>()
+        .single(app.world())
+        .expect("one player should spawn");
+    let katana_damage = 20.0;
+    let survivable_health = katana_damage + 10.0;
+    app.world_mut()
+        .entity_mut(player_entity)
+        .insert(Health::new(survivable_health));
+
+    run_until_first_melee_hit(&mut app, survivable_health);
+    let health_after_first_hit = get_player_health(&mut app);
+    assert!(health_after_first_hit > 0.0);
+    assert_eq!(health_after_first_hit, survivable_health - katana_damage);
+    assert!(app.world().get::<PlayerDead>(player_entity).is_none());
+
+    run_until_player_dead(&mut app);
+    run_updates(&mut app, 8);
+    assert_eq!(get_player_health(&mut app), 0.0);
+    assert_eq!(get_current_game_state(&mut app), GameState::GameOver);
+}
+
+fn run_until_first_melee_hit(app: &mut App, starting_health: f32) {
+    let melee_hit_updates = 10_000;
+    for _ in 0..melee_hit_updates {
+        app.update();
+        let current_health = get_player_health(app);
+        if current_health < starting_health {
+            return;
+        }
+    }
+    panic!("fighter should damage the player within {melee_hit_updates} updates");
+}
+
+#[test]
 fn killed_fighter_drops_weapon() {
-    killed_enemy_drops_weapon(EnemyKind::Fighter(Fighter::default()));
+    killed_enemy_drops_weapon(EnemyKind::Fighter);
 }
 
 #[test]
 fn killed_gunner_drops_weapon() {
-    killed_enemy_drops_weapon(EnemyKind::Gunner(Gunner::default()));
+    killed_enemy_drops_weapon(EnemyKind::Gunner);
 }
 
 #[test]
 fn killed_fighter_stops_attacking_animation() {
-    killed_enemy_stops_attacking_animation(EnemyKind::Fighter(Fighter::default()));
+    killed_enemy_stops_attacking_animation(EnemyKind::Fighter);
 }
 
 #[test]
 fn killed_gunner_stops_attacking_animation() {
-    killed_enemy_stops_attacking_animation(EnemyKind::Gunner(Gunner::default()));
+    killed_enemy_stops_attacking_animation(EnemyKind::Gunner);
 }
 
 #[test]
@@ -181,19 +269,21 @@ fn fighter_killed_while_running_keeps_its_momentum() {
     let fighter_run_speed = 3.0;
     let minimum_kept_run_speed = fighter_run_speed / 2.0;
     let far_player_position = Vec3::new(12.0, 0.5, 0.0);
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter(Fighter::default()), 16, far_player_position);
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 16, far_player_position);
     let torso = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Torso);
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     let run_direction = (far_player_position - Vec3::new(0.0, 0.5, 0.0)).normalize();
-    let enemy_velocity = app
+    let running_velocity = app
         .world()
         .get::<LinearVelocity>(enemy)
-        .map(|v| v.0)
-        .expect("enemy should carry linear velocity");
+        .expect("running fighter should have linear velocity")
+        .0;
+    let velocity_tolerance = 0.01;
+    let forward_run_speed = running_velocity.dot(run_direction);
     assert!(
-        enemy_velocity.dot(run_direction) >= fighter_run_speed,
-        "fighter should be running at {fighter_run_speed} before the shot, got {enemy_velocity}"
+        forward_run_speed >= fighter_run_speed - velocity_tolerance,
+        "fighter should run at {fighter_run_speed} toward the player right after spawning, got {forward_run_speed}"
     );
     support::shoot_entity(&mut app, hit_body);
     let torso_velocity = wait_for_ragdoll_activation_velocity(&mut app, torso);
@@ -227,13 +317,11 @@ fn find_ragdoll_body(app: &mut App, enemy: Entity, part: RagdollBodyPart) -> Ent
 
 #[test]
 fn head_shot_kills_fighter() {
-    let (mut app, enemy) =
-        simulate_enemy_near_player(EnemyKind::Fighter(Fighter::default()), 512, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 160, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
-    app.update();
-    assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
+    wait_until_dying(&mut app, enemy);
     support::assert_received_kick(&app, hit_body);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
@@ -241,19 +329,11 @@ fn head_shot_kills_fighter() {
 
 #[test]
 fn head_shot_kills_gunner() {
-    let (mut app, enemy) =
-        simulate_enemy_near_player(EnemyKind::Gunner(Gunner::default()), 512, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 160, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
-    app.update();
-    eprintln!(
-        "DEBUG enemy={:?} hit_body={:?} dying={}",
-        enemy,
-        hit_body,
-        app.world().entity(enemy).contains::<cathedral::enemies::Dying>()
-    );
-    assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
+    wait_until_dying(&mut app, enemy);
     support::assert_received_kick(&app, hit_body);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
@@ -261,13 +341,11 @@ fn head_shot_kills_gunner() {
 
 #[test]
 fn hand_shot_kills_fighter() {
-    let (mut app, enemy) =
-        simulate_enemy_near_player(EnemyKind::Fighter(Fighter::default()), 512, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 160, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::RightHand);
 
     support::shoot_entity(&mut app, hit_body);
-    app.update();
-    assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
+    wait_until_dying(&mut app, enemy);
     support::assert_received_kick(&app, hit_body);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
@@ -275,14 +353,139 @@ fn hand_shot_kills_fighter() {
 
 #[test]
 fn hand_shot_kills_gunner() {
-    let (mut app, enemy) =
-        simulate_enemy_near_player(EnemyKind::Gunner(Gunner::default()), 512, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 160, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::RightHand);
 
     support::shoot_entity(&mut app, hit_body);
-    app.update();
-    assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
+    wait_until_dying(&mut app, enemy);
     support::assert_received_kick(&app, hit_body);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
+}
+
+fn find_player_ragdoll_body(app: &mut App, part: RagdollBodyPart) -> Entity {
+    let spawn_wait_updates = 600;
+    for _ in 0..spawn_wait_updates {
+        app.update();
+        let player_entity = app
+            .world_mut()
+            .query_filtered::<Entity, With<Player>>()
+            .single(app.world())
+            .expect("one player should spawn");
+        let player_children = app
+            .world()
+            .get::<Children>(player_entity)
+            .expect("player should have children")
+            .iter()
+            .collect::<Vec<_>>();
+        if let Some(body) = app
+            .world_mut()
+            .query_filtered::<(Entity, &OwnedByCharacter, &RagdollBodyPart), ()>()
+            .iter(app.world())
+            .find(|(_, owner, body_part)| player_children.contains(&owner.0) && **body_part == part)
+            .map(|(entity, _, _)| entity)
+        {
+            return body;
+        }
+    }
+    panic!("player ragdoll body for {part:?} should exist within {spawn_wait_updates} updates");
+}
+
+fn get_player_health(app: &mut App) -> f32 {
+    app.world_mut()
+        .query_filtered::<&Health, With<Player>>()
+        .single(app.world())
+        .expect("player should carry health")
+        .get_current()
+}
+
+fn get_camera_height(app: &mut App) -> f32 {
+    app.world_mut()
+        .query_filtered::<&GlobalTransform, With<PlayerCamera>>()
+        .single(app.world())
+        .expect("player camera should exist")
+        .translation()
+        .y
+}
+
+fn get_head_body_height(app: &mut App, head_body: Entity) -> f32 {
+    app.world().get::<Position>(head_body).expect("head body position").0.y
+}
+
+fn run_until_player_dead(app: &mut App) {
+    let death_updates = 10_000;
+    for _ in 0..death_updates {
+        app.update();
+        if app
+            .world_mut()
+            .query_filtered::<(), With<PlayerDead>>()
+            .single(app.world())
+            .is_ok()
+        {
+            return;
+        }
+    }
+    panic!("player should die within {death_updates} updates");
+}
+
+fn assert_camera_follows_fallen_head(app: &mut App, head_body: Entity) {
+    let settle_updates = 256;
+    for _ in 0..settle_updates {
+        if get_camera_height(app) < 1.8 {
+            break;
+        }
+        app.update();
+    }
+    let standing_eye_height = 1.8;
+    let camera_height = get_camera_height(app);
+    let head_body_height = get_head_body_height(app, head_body);
+    let camera_head_height_difference = (camera_height - head_body_height).abs();
+    assert!(
+        camera_height < standing_eye_height,
+        "camera should fall below the standing eye height {standing_eye_height}, got {camera_height}"
+    );
+    assert!(
+        camera_head_height_difference <= 0.5,
+        "camera should stay near the fallen head body, got camera {camera_height} vs head {head_body_height}"
+    );
+}
+
+#[test]
+fn gunner_shot_kills_player_and_camera_falls_to_head() {
+    let (mut app, _) = simulate_enemy_near_player(EnemyKind::Gunner, 16, Vec3::new(6.0, 0.5, 0.0));
+    let head_body = find_player_ragdoll_body(&mut app, RagdollBodyPart::Head);
+
+    run_until_player_dead(&mut app);
+
+    assert!(
+        get_player_health(&mut app) <= 0.0,
+        "dead player should have no health left"
+    );
+    assert!(
+        !app.world().get::<RigidBodyDisabled>(head_body).is_some(),
+        "player head ragdoll body should activate on death"
+    );
+    assert_camera_follows_fallen_head(&mut app, head_body);
+    assert_eq!(get_current_game_state(&mut app), GameState::GameOver);
+}
+
+#[test]
+fn fighter_melee_kills_player_and_camera_falls_to_head() {
+    let (mut app, _) = simulate_enemy_near_player(EnemyKind::Fighter, 16, Vec3::new(1.0, 0.5, 0.0));
+    let initial_health = get_player_health(&mut app);
+    let head_body = find_player_ragdoll_body(&mut app, RagdollBodyPart::Head);
+
+    run_until_player_dead(&mut app);
+
+    let health_after_death = get_player_health(&mut app);
+    assert!(
+        health_after_death < initial_health,
+        "fighter melee should have damaged the player before death, got {health_after_death} from {initial_health}"
+    );
+    assert!(
+        !app.world().get::<RigidBodyDisabled>(head_body).is_some(),
+        "player head ragdoll body should activate on death"
+    );
+    assert_camera_follows_fallen_head(&mut app, head_body);
+    assert_eq!(get_current_game_state(&mut app), GameState::GameOver);
 }
