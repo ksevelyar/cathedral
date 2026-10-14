@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use super::objects::Object;
 use super::{EnemySpawn, FogVolumeSettings, Map, PlayerPosition};
-use crate::enemies::{EnemyKind, Fighter};
+use crate::enemies::{EnemyKind, Gunner};
 
 pub(super) fn build_map() -> Map {
     let indirect_light_color = Color::srgb(0.45, 0.5, 0.58);
@@ -27,28 +27,28 @@ pub(super) fn build_map() -> Map {
             position: Vec3::new(10.0, 1.9, 7.0),
             look_at: Vec3::new(-6.0, 2.0, -2.0),
         },
-        enemies: build_fighters_in_arc_before_player(),
+        enemies: build_gunners_in_arc_before_player(),
         objects: build_control_room_objects(),
     }
 }
 
-fn build_fighters_in_arc_before_player() -> Vec<EnemySpawn> {
+fn build_gunners_in_arc_before_player() -> Vec<EnemySpawn> {
     let player_position = Vec3::new(10.0, 0.0, 7.0);
     let player_look_at = Vec3::new(-6.0, 0.0, -2.0);
     let forward_direction = (player_look_at - player_position).normalize();
-    let fighter_count = 10;
+    let gunner_count = 4;
     let arc_radius = 7.0;
     let arc_span_radians = std::f32::consts::FRAC_PI_3;
-    let first_fighter_angle = -arc_span_radians * 0.5;
-    let fighter_angle_step = arc_span_radians / (fighter_count - 1) as f32;
+    let first_gunner_angle = -arc_span_radians * 0.5;
+    let gunner_angle_step = arc_span_radians / (gunner_count - 1) as f32;
 
-    (0..fighter_count)
-        .map(move |fighter_index| {
-            let fighter_angle = first_fighter_angle + fighter_angle_step * fighter_index as f32;
-            let fighter_direction = Quat::from_rotation_y(fighter_angle).mul_vec3(forward_direction);
+    (0..gunner_count)
+        .map(move |gunner_index| {
+            let gunner_angle = first_gunner_angle + gunner_angle_step * gunner_index as f32;
+            let gunner_direction = Quat::from_rotation_y(gunner_angle).mul_vec3(forward_direction);
             EnemySpawn {
-                position: player_position + fighter_direction * arc_radius,
-                kind: EnemyKind::Fighter(Fighter::default()),
+                position: player_position + gunner_direction * arc_radius,
+                kind: EnemyKind::Gunner(Gunner::default()),
             }
         })
         .collect()
@@ -58,7 +58,8 @@ fn build_control_room_objects() -> Vec<Object> {
     let floor_surface_height = 0.1;
     let desk_height = 0.788;
     let object_separation = 0.01;
-    let desk_z_position = 2.9;
+    let desk_z_position = -1.0;
+    let stool_z_position = 0.1;
     let laptop_height_above_desk = desk_height + object_separation;
     let half_turn_rotation = Quat::from_rotation_y(std::f32::consts::PI);
     let storage_rack_rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
@@ -122,16 +123,13 @@ fn build_control_room_objects() -> Vec<Object> {
             floor_surface_height + laptop_height_above_desk,
             desk_z_position,
         ))),
-        Object::Laptop(Transform::from_translation(Vec3::new(
-            4.0,
-            floor_surface_height + laptop_height_above_desk,
-            desk_z_position,
-        ))),
         Object::Stool(
-            Transform::from_translation(Vec3::new(-4.0, floor_surface_height, 4.0)).with_rotation(half_turn_rotation),
+            Transform::from_translation(Vec3::new(-4.0, floor_surface_height, stool_z_position))
+                .with_rotation(half_turn_rotation),
         ),
         Object::Stool(
-            Transform::from_translation(Vec3::new(4.0, floor_surface_height, 4.0)).with_rotation(half_turn_rotation),
+            Transform::from_translation(Vec3::new(4.0, floor_surface_height, stool_z_position))
+                .with_rotation(half_turn_rotation),
         ),
         Object::StorageRack(
             Transform::from_translation(Vec3::new(-12.1, floor_surface_height, 6.5))

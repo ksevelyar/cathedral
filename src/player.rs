@@ -77,8 +77,12 @@ pub fn setup_player(
     let (yaw, pitch) = compute_look_angles(player_position.position, player_position.look_at);
     let player_entity = commands
         .spawn((
-            Transform::from_translation(player_position.position)
-                .with_rotation(Quat::from_euler(EulerRot::YXZ, yaw, 0.0, 0.0)),
+            Transform::from_translation(player_position.position).with_rotation(Quat::from_euler(
+                EulerRot::YXZ,
+                yaw,
+                0.0,
+                0.0,
+            )),
             CameraState { yaw, pitch },
             LinearVelocity::default(),
             Player,

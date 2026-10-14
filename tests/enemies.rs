@@ -1,4 +1,5 @@
 use avian3d::prelude::*;
+use bevy::ecs::world::CommandQueue;
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
 use cathedral::enemies::{Dying, Enemy, EnemyKind, Fighter, Gunner, spawn_enemy};
@@ -8,19 +9,6 @@ use cathedral::shooting::Weapon;
 use std::time::Duration;
 
 pub mod support;
-
-#[derive(Resource, Clone)]
-struct TestEnemyKind(EnemyKind);
-
-fn spawn_test_enemy(mut commands: Commands, asset_server: Res<AssetServer>, kind: Res<TestEnemyKind>) {
-    spawn_enemy(
-        &mut commands,
-        &asset_server,
-        kind.0.clone(),
-        Transform::from_xyz(0.0, 0.5, 0.0),
-        true,
-    );
-}
 
 fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
     let minimum_ragdoll_bodies = 14;
@@ -45,33 +33,23 @@ fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
     panic!("alive enemy ragdoll colliders did not spawn");
 }
 
-fn spawn_walking_enemy_with_player(kind: EnemyKind) -> (App, Entity) {
+fn simulate_enemy_near_player(kind: EnemyKind, walking_updates: usize, player_position: Vec3) -> (App, Entity) {
     let fixed_timestep = Duration::from_secs_f64(support::FIXED_TIMESTEP_SECONDS);
-    let player_position = PlayerPosition::new(Vec3::new(5.0, 0.5, 0.0));
-    let mut app = build_test_app(CurrentMap::FlatFloor, Some(player_position));
-    app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep))
-        .insert_resource(TestEnemyKind(kind))
-        .add_systems(Startup, spawn_test_enemy);
-    let spawn_wait_updates = 10_000;
-    let mut enemy = None;
-    for _ in 0..spawn_wait_updates {
-        app.update();
-        let spawned_enemies: Vec<_> = app
-            .world_mut()
-            .query_filtered::<Entity, With<Enemy>>()
-            .iter(app.world())
-            .collect();
-        if spawned_enemies.len() == 1 {
-            enemy = Some(spawned_enemies[0]);
-            break;
-        }
-    }
-    let enemy = enemy.expect("one enemy should spawn");
+    let mut app = build_test_app(CurrentMap::FlatFloor, Some(PlayerPosition::new(player_position)));
+    app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
+    let mut command_queue = CommandQueue::default();
+    let asset_server = app.world().resource::<AssetServer>().clone();
+    let enemy = spawn_enemy(
+        &mut Commands::new(&mut command_queue, app.world_mut()),
+        &asset_server,
+        kind,
+        0,
+        Transform::from_xyz(0.0, 0.5, 0.0),
+        true,
+    );
+    command_queue.apply(app.world_mut());
     wait_for_inert_ragdoll(&mut app, enemy);
-    let walking_updates = 512;
-    for _ in 0..walking_updates {
-        app.update();
-    }
+    run_updates(&mut app, walking_updates);
     (app, enemy)
 }
 
@@ -141,19 +119,27 @@ fn assert_animator_stays_stopped(app: &mut App, animator: Entity) {
 
 fn assert_death(app: &mut App, enemy: Entity) {
     run_updates(app, 32);
-    assert!(app.world().entity(enemy).contains::<Dying>(), "killed enemy should carry the dying marker");
+    assert!(
+        app.world().entity(enemy).contains::<Dying>(),
+        "killed enemy should carry the dying marker"
+    );
     let animator = find_enemy_animator(app, enemy);
     assert_animator_stays_stopped(app, animator);
     let weapon = find_dropped_weapon(app, enemy);
     assert!(
-        app.world().get::<RigidBody>(weapon).is_some_and(|body| *body == RigidBody::Dynamic),
+        app.world()
+            .get::<RigidBody>(weapon)
+            .is_some_and(|body| *body == RigidBody::Dynamic),
         "dropped weapon should become a dynamic rigid body"
     );
-    assert!(!app.world().get::<ChildOf>(weapon).is_some(), "dropped weapon should be detached from the hand");
+    assert!(
+        !app.world().get::<ChildOf>(weapon).is_some(),
+        "dropped weapon should be detached from the hand"
+    );
 }
 
 fn killed_enemy_drops_weapon(kind: EnemyKind) {
-    let (mut app, enemy) = spawn_walking_enemy_with_player(kind);
+    let (mut app, enemy) = simulate_enemy_near_player(kind, 512, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
@@ -161,7 +147,7 @@ fn killed_enemy_drops_weapon(kind: EnemyKind) {
 }
 
 fn killed_enemy_stops_attacking_animation(kind: EnemyKind) {
-    let (mut app, enemy) = spawn_walking_enemy_with_player(kind);
+    let (mut app, enemy) = simulate_enemy_near_player(kind, 512, Vec3::new(5.0, 0.5, 0.0));
     let animator = find_enemy_animator(&mut app, enemy);
     update_until_animator_plays(&mut app, animator, "alive");
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
@@ -190,6 +176,46 @@ fn killed_gunner_stops_attacking_animation() {
     killed_enemy_stops_attacking_animation(EnemyKind::Gunner(Gunner::default()));
 }
 
+#[test]
+fn fighter_killed_while_running_keeps_its_momentum() {
+    let fighter_run_speed = 3.0;
+    let minimum_kept_run_speed = fighter_run_speed / 2.0;
+    let far_player_position = Vec3::new(12.0, 0.5, 0.0);
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter(Fighter::default()), 16, far_player_position);
+    let torso = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Torso);
+    let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
+
+    let run_direction = (far_player_position - Vec3::new(0.0, 0.5, 0.0)).normalize();
+    let enemy_velocity = app
+        .world()
+        .get::<LinearVelocity>(enemy)
+        .map(|v| v.0)
+        .expect("enemy should carry linear velocity");
+    assert!(
+        enemy_velocity.dot(run_direction) >= fighter_run_speed,
+        "fighter should be running at {fighter_run_speed} before the shot, got {enemy_velocity}"
+    );
+    support::shoot_entity(&mut app, hit_body);
+    let torso_velocity = wait_for_ragdoll_activation_velocity(&mut app, torso);
+    let forward_run_momentum = torso_velocity.dot(run_direction);
+    assert!(
+        forward_run_momentum >= minimum_kept_run_speed,
+        "running fighter ragdoll torso should keep at least {minimum_kept_run_speed} of the run momentum of {fighter_run_speed}, got forward component {forward_run_momentum:.3} from velocity {torso_velocity}"
+    );
+}
+
+fn wait_for_ragdoll_activation_velocity(app: &mut App, body: Entity) -> Vec3 {
+    let settle_updates = 64;
+    for _ in 0..settle_updates {
+        app.update();
+        let is_active = app.world().get::<RigidBodyDisabled>(body).is_none();
+        if is_active && let Some(velocity) = app.world().get::<LinearVelocity>(body) {
+            return velocity.0;
+        }
+    }
+    panic!("ragdoll body {body:?} should activate with a velocity");
+}
+
 fn find_ragdoll_body(app: &mut App, enemy: Entity, part: RagdollBodyPart) -> Entity {
     app.world_mut()
         .query_filtered::<(Entity, &OwnedByCharacter, &RagdollBodyPart), ()>()
@@ -201,7 +227,8 @@ fn find_ragdoll_body(app: &mut App, enemy: Entity, part: RagdollBodyPart) -> Ent
 
 #[test]
 fn head_shot_kills_fighter() {
-    let (mut app, enemy) = spawn_walking_enemy_with_player(EnemyKind::Fighter(Fighter::default()));
+    let (mut app, enemy) =
+        simulate_enemy_near_player(EnemyKind::Fighter(Fighter::default()), 512, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
@@ -214,12 +241,18 @@ fn head_shot_kills_fighter() {
 
 #[test]
 fn head_shot_kills_gunner() {
-    let (mut app, enemy) = spawn_walking_enemy_with_player(EnemyKind::Gunner(Gunner::default()));
+    let (mut app, enemy) =
+        simulate_enemy_near_player(EnemyKind::Gunner(Gunner::default()), 512, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
     app.update();
-    eprintln!("DEBUG enemy={:?} hit_body={:?} dying={}", enemy, hit_body, app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
+    eprintln!(
+        "DEBUG enemy={:?} hit_body={:?} dying={}",
+        enemy,
+        hit_body,
+        app.world().entity(enemy).contains::<cathedral::enemies::Dying>()
+    );
     assert!(app.world().entity(enemy).contains::<cathedral::enemies::Dying>());
     support::assert_received_kick(&app, hit_body);
     let settling_duration = 10.0;
@@ -228,7 +261,8 @@ fn head_shot_kills_gunner() {
 
 #[test]
 fn hand_shot_kills_fighter() {
-    let (mut app, enemy) = spawn_walking_enemy_with_player(EnemyKind::Fighter(Fighter::default()));
+    let (mut app, enemy) =
+        simulate_enemy_near_player(EnemyKind::Fighter(Fighter::default()), 512, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::RightHand);
 
     support::shoot_entity(&mut app, hit_body);
@@ -241,7 +275,8 @@ fn hand_shot_kills_fighter() {
 
 #[test]
 fn hand_shot_kills_gunner() {
-    let (mut app, enemy) = spawn_walking_enemy_with_player(EnemyKind::Gunner(Gunner::default()));
+    let (mut app, enemy) =
+        simulate_enemy_near_player(EnemyKind::Gunner(Gunner::default()), 512, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::RightHand);
 
     support::shoot_entity(&mut app, hit_body);

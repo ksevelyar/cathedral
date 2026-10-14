@@ -1025,9 +1025,14 @@ fn synchronize_ragdoll_bodies(
 
 fn activate_ragdoll_on_death(
     mut commands: Commands,
-    pending: Query<(Entity, &PendingRagdollImpactRequest, &RagdollData)>,
+    pending: Query<(
+        Entity,
+        &PendingRagdollImpactRequest,
+        &RagdollData,
+        Option<&LinearVelocity>,
+    )>,
 ) {
-    for (root, impact, ragdoll) in &pending {
+    for (root, impact, ragdoll, character_velocity) in &pending {
         if ragdoll.limbs.len() != LIMBS.len() {
             continue;
         }
@@ -1037,7 +1042,9 @@ fn activate_ragdoll_on_death(
             .iter()
             .map(|part| (part.body_part, part.entity))
             .collect::<HashMap<_, _>>();
+        let run_velocity = character_velocity.copied().unwrap_or_default();
         for part in &ragdoll.parts {
+            commands.entity(part.entity).insert(run_velocity);
             commands.entity(part.entity).remove::<RigidBodyDisabled>();
         }
         spawn_limb_joints(&mut commands, root, &part_entities, &ragdoll.limbs);

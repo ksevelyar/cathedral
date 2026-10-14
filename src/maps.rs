@@ -137,11 +137,12 @@ fn spawn_map(
 }
 
 fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &[EnemySpawn]) {
-    for enemy_spawn in enemies {
+    for (enemy_index, enemy_spawn) in enemies.iter().enumerate() {
         spawn_enemy(
             commands,
             asset_server,
             enemy_spawn.kind.clone(),
+            enemy_index,
             Transform::from_translation(enemy_spawn.position),
             true,
         );

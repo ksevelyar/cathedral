@@ -1,9 +1,7 @@
-use avian3d::prelude::{
-    Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation,
-};
+use avian3d::prelude::{Collider, Gravity, LinearVelocity, MoveAndSlide, Position, RigidBody, Rotation};
 use bevy::animation::{AnimatedBy, AnimationTargetId};
-use bevy::prelude::*;
 use bevy::ecs::system::SystemParam;
+use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 use rand::Rng;
 
@@ -50,6 +48,13 @@ pub enum EnemyKind {
 }
 
 impl EnemyKind {
+    pub fn get_display_name(&self) -> String {
+        match self {
+            Self::Fighter(_) => "Fighter".to_string(),
+            Self::Gunner(_) => "Gunner".to_string(),
+        }
+    }
+
     fn get_rig(&self) -> &EnemyRig {
         match self {
             Self::Fighter(fighter) => &fighter.rig,
@@ -153,12 +158,14 @@ pub fn spawn_enemy(
     commands: &mut Commands,
     asset_server: &AssetServer,
     kind: EnemyKind,
+    sequence_number: usize,
     transform: Transform,
     alive: bool,
 ) -> Entity {
     let rig = kind.get_rig().clone();
     let mut enemy = commands.spawn((
         Enemy,
+        Name::new(format!("{} {}", kind.get_display_name(), sequence_number + 1)),
         WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(rig.scene))),
         kind,
         transform,
@@ -476,6 +483,22 @@ fn move_enemy(
     let desired_translation = enemy_transform.translation - previous_translation;
     enemy_transform.translation = previous_translation + physics_world.slide(previous_translation, desired_translation);
     physics_world.integrate_fall(velocity, &mut enemy_transform.translation);
+    let horizontal_travel = Vec3::new(
+        enemy_transform.translation.x - previous_translation.x,
+        0.0,
+        enemy_transform.translation.z - previous_translation.z,
+    );
+    let delta_secs = physics_world.get_delta_secs();
+    let horizontal_run_velocity = if delta_secs > 0.0 {
+        horizontal_travel / delta_secs
+    } else {
+        Vec3::ZERO
+    };
+    *velocity = LinearVelocity(Vec3::new(
+        horizontal_run_velocity.x,
+        velocity.y,
+        horizontal_run_velocity.z,
+    ));
     gunner_fired
 }
 
@@ -490,4 +513,3 @@ fn calculate_gunner_target(player_position: Vec3) -> Vec3 {
     );
     player_position + Vec3::new(horizontal_shift.x, horizontal_shift.y, 0.0)
 }
-

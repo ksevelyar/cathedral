@@ -2,6 +2,7 @@ use std::time::Duration;
 
 use avian3d::prelude::*;
 use bevy::audio::AudioPlugin;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
 mod muzzle_flash;
@@ -14,8 +15,8 @@ pub use muzzle_flash::{
 pub(crate) use muzzle_flash::observe_muzzle_flash;
 
 use crate::enemies::EnemyHit;
-use crate::ragdoll::{OBJECTS_GROUP, OwnedByCharacter, RAGDOLL_GROUP};
 use crate::player::PlayerCamera;
+use crate::ragdoll::{OBJECTS_GROUP, OwnedByCharacter, RAGDOLL_GROUP, RagdollBodyPart};
 use crate::state::GameState;
 
 pub struct ShootingPlugin;
@@ -411,10 +412,17 @@ fn compute_bullet_momentum(weapon: Weapon) -> Option<f32> {
     Some(ranged_weapon.get_bullet_mass() * ranged_weapon.get_bullet_speed())
 }
 
-pub fn shoot(
+#[derive(SystemParam)]
+pub(crate) struct HitContext<'w, 's> {
+    owners: Query<'w, 's, (Entity, &'static OwnedByCharacter)>,
+    ragdoll_bodies: Query<'w, 's, (&'static OwnedByCharacter, &'static RagdollBodyPart)>,
+    names: Query<'w, 's, &'static Name>,
+}
+
+pub(crate) fn shoot(
     mut weapon_fired: MessageReader<WeaponFired>,
     spatial_query: SpatialQuery,
-    owners: Query<(Entity, &OwnedByCharacter)>,
+    hit_context: HitContext,
     character_children: Query<&Children>,
     collider_parents: Query<&ChildOf>,
     mut prop_bodies: Query<Forces>,
@@ -426,12 +434,25 @@ pub fn shoot(
         };
         let origin = weapon_fired_message.origin;
         let direction = weapon_fired_message.direction;
-        let ray_filter =
-            exclude_shooter_bodies(weapon_fired_message.shooter_entity, &owners, &character_children);
+        let ray_filter = exclude_shooter_bodies(
+            weapon_fired_message.shooter_entity,
+            &hit_context.owners,
+            &character_children,
+        );
         let Some(hit) = spatial_query.cast_ray(origin, direction, SHOT_DISTANCE, true, &ray_filter) else {
             continue;
         };
-        if let Ok((_, owner)) = owners.get(hit.entity)
+        if let Ok((hit_owner, body_part)) = hit_context.ragdoll_bodies.get(hit.entity)
+            && Some(hit_owner.0) != weapon_fired_message.shooter_entity
+        {
+            let shooter_name = weapon_fired_message
+                .shooter_entity
+                .and_then(|shooter_entity| hit_context.names.get(shooter_entity).ok())
+                .map(|name| name.to_string())
+                .unwrap_or_else(|| "unknown shooter".to_string());
+            info!("player {body_part:?} damaged by {shooter_name}");
+        }
+        if let Ok((_, owner)) = hit_context.owners.get(hit.entity)
             && Some(owner.0) != weapon_fired_message.shooter_entity
         {
             commands.entity(owner.0).trigger(|entity| EnemyHit {
