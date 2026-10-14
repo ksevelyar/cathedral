@@ -37,6 +37,7 @@ fn spawn_fighter(mut commands: Commands, asset_server: Res<AssetServer>) -> Enti
         &mut commands,
         &asset_server,
         EnemyKind::Fighter(Fighter::default()),
+        0,
         Transform::from_translation(FIGHTER_START_POSITION),
         true,
     )
@@ -47,6 +48,7 @@ fn spawn_fighter_on_staircase(mut commands: Commands, asset_server: Res<AssetSer
         &mut commands,
         &asset_server,
         EnemyKind::Fighter(Fighter::default()),
+        0,
         Transform::from_translation(STAIR_FIGHTER_START_POSITION),
         true,
     )

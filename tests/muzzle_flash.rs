@@ -106,6 +106,7 @@ fn spawn_enemies(mut commands: Commands, asset_server: Res<AssetServer>) {
         &mut commands,
         &asset_server,
         EnemyKind::Gunner(Gunner::default()),
+        0,
         Transform::from_xyz(-2.0, 0.5, 0.0),
         true,
     );
@@ -113,6 +114,7 @@ fn spawn_enemies(mut commands: Commands, asset_server: Res<AssetServer>) {
         &mut commands,
         &asset_server,
         EnemyKind::Fighter(Fighter::default()),
+        0,
         Transform::from_xyz(2.0, 0.5, 0.0),
         true,
     );
