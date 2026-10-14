@@ -7,7 +7,7 @@ use crate::health::{CharacterDamaged, CharacterDied, Health};
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
 use crate::ragdoll::{BoneMap, OwnedByCharacter, RagdollBodyPart, RagdollData, setup_ragdoll};
-use crate::shooting::{Weapon, observe_muzzle_flash};
+use crate::shooting::{Magazine, Weapon, observe_muzzle_flash};
 use crate::state::GameState;
 
 mod fighter;
@@ -58,6 +58,7 @@ pub(super) struct EnemyRig {
     idle_animation: usize,
     moving_animation: usize,
     attack_animation: usize,
+    reload_animation: Option<usize>,
     dance_animation: usize,
     idle_animation_seconds: f32,
     moving_animation_seconds: f32,
@@ -109,6 +110,7 @@ pub enum AnimationState {
     Idle,
     Moving,
     Attacking,
+    Reloading,
     Dancing,
 }
 
@@ -130,6 +132,7 @@ struct EnemyAnimations {
     idle: Handle<AnimationClip>,
     moving: Handle<AnimationClip>,
     attack: Handle<AnimationClip>,
+    reload: Option<Handle<AnimationClip>>,
     dance: Handle<AnimationClip>,
     weapon: Handle<WorldAsset>,
 }
@@ -139,6 +142,7 @@ struct ArmatureAnimation {
     idle: AnimationNodeIndex,
     moving: AnimationNodeIndex,
     attacking: AnimationNodeIndex,
+    reloading: Option<AnimationNodeIndex>,
     dancing: AnimationNodeIndex,
     idle_phase_seconds: f32,
     moving_phase_seconds: f32,
@@ -200,6 +204,9 @@ pub(super) fn spawn_enemy_base(
                     .load(GltfAssetLabel::Animation(rig.moving_animation).from_asset(rig.animation_source)),
                 attack: asset_server
                     .load(GltfAssetLabel::Animation(rig.attack_animation).from_asset(rig.animation_source)),
+                reload: rig.reload_animation.map(|animation_index| {
+                    asset_server.load(GltfAssetLabel::Animation(animation_index).from_asset(rig.animation_source))
+                }),
                 dance: asset_server
                     .load(GltfAssetLabel::Animation(rig.dance_animation).from_asset(rig.animation_source)),
                 weapon: asset_server
@@ -329,6 +336,10 @@ fn setup_external_animation(
         let (mut graph, idle) = AnimationGraph::from_clip(animations.idle.clone());
         let moving = graph.add_clip(animations.moving.clone(), 1.0, graph.root);
         let attacking = graph.add_clip(animations.attack.clone(), 1.0, graph.root);
+        let reloading = animations
+            .reload
+            .as_ref()
+            .map(|reload_animation| graph.add_clip(reload_animation.clone(), 1.0, graph.root));
         let dancing = graph.add_clip(animations.dance.clone(), 1.0, graph.root);
         let graph_handle = graphs.add(graph);
         let idle_phase_seconds = animation_seed.calculate_unit_value(1) * rig.idle_animation_seconds;
@@ -348,6 +359,7 @@ fn setup_external_animation(
                 idle,
                 moving,
                 attacking,
+                reloading,
                 dancing,
                 idle_phase_seconds,
                 moving_phase_seconds,
@@ -377,14 +389,16 @@ fn attach_weapon(
         return;
     };
 
-    let weapon_entity = commands
-        .spawn((
-            Name::new("Weapon"),
-            WorldAssetRoot(animations.weapon.clone()),
-            weapon.weapon,
-            weapon.transform,
-        ))
-        .id();
+    let mut weapon_entity = commands.spawn((
+        Name::new("Weapon"),
+        WorldAssetRoot(animations.weapon.clone()),
+        weapon.weapon,
+        weapon.transform,
+    ));
+    if weapon.weapon.get_magazine_capacity().is_some() {
+        weapon_entity.insert(Magazine::create_full(weapon.weapon));
+    }
+    let weapon_entity = weapon_entity.id();
 
     observe_muzzle_flash(commands, weapon_entity);
     commands.entity(right_hand).add_children(&[weapon_entity]);
@@ -443,6 +457,7 @@ fn update_enemy_animations(
             AnimationState::Idle => armature_animation.idle,
             AnimationState::Moving => armature_animation.moving,
             AnimationState::Attacking => armature_animation.attacking,
+            AnimationState::Reloading => armature_animation.reloading.unwrap_or(armature_animation.idle),
             AnimationState::Dancing => armature_animation.dancing,
         };
         let (phase_seconds, playback_speed, repeats) = match activity.state {
@@ -456,7 +471,7 @@ fn update_enemy_animations(
                 armature_animation.moving_playback_speed,
                 true,
             ),
-            AnimationState::Attacking => (0.0, 1.0, false),
+            AnimationState::Attacking | AnimationState::Reloading => (0.0, 1.0, false),
             AnimationState::Dancing => (armature_animation.dance_phase_seconds, 1.0, true),
         };
 

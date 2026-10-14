@@ -22,22 +22,39 @@ use crate::state::GameState;
 
 pub struct ShootingPlugin;
 
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct WeaponFiringSystems;
+
 impl Plugin for ShootingPlugin {
     fn build(&self, app: &mut App) {
         muzzle_flash::configure(app);
-        app.init_resource::<WeaponFireCooldown>()
+        app.configure_sets(Update, WeaponFiringSystems)
+            .init_resource::<WeaponFireCooldown>()
             .add_message::<WeaponFired>()
+            .add_message::<WeaponReloadStarted>()
+            .add_message::<WeaponDryFired>()
             .add_systems(Startup, (setup_gun, setup_crosshair).after(crate::player::setup_player))
             .add_systems(
                 Update,
-                (switch_weapon, fire_weapon, shoot)
+                (
+                    switch_weapon,
+                    start_player_reload,
+                    update_weapon_reloads,
+                    fire_weapon.in_set(WeaponFiringSystems),
+                    shoot,
+                )
                     .chain()
                     .run_if(in_state(GameState::Playing))
                     .after(crate::player::apply_mouse_look)
                     .after(crate::player::move_player),
             );
         if app.is_plugin_added::<AudioPlugin>() {
-            app.add_systems(Update, play_gunshot.run_if(in_state(GameState::Playing)).after(shoot));
+            app.add_systems(
+                Update,
+                (play_gunshot, play_reload_sound, play_dry_fire_sound)
+                    .run_if(in_state(GameState::Playing))
+                    .after(shoot),
+            );
         }
     }
 }
@@ -55,119 +72,225 @@ pub enum Weapon {
 }
 
 impl Weapon {
-    pub fn get_model_asset_path(self) -> &'static str {
+    pub(crate) fn get_model_asset_path(self) -> &'static str {
         match self {
             Self::Ranged(ranged_weapon) => ranged_weapon.get_model_asset_path(),
             Self::Melee(melee_weapon) => melee_weapon.get_model_asset_path(),
         }
     }
 
-    pub fn get_collider_half_extents(self) -> Vec3 {
+    pub(crate) fn get_collider_half_extents(self) -> Vec3 {
         match self {
             Self::Ranged(ranged_weapon) => ranged_weapon.get_collider_half_extents(),
             Self::Melee(melee_weapon) => melee_weapon.get_collider_half_extents(),
         }
     }
 
-    pub fn get_damage(self) -> f32 {
+    pub(crate) fn get_damage(self) -> f32 {
         match self {
             Self::Ranged(ranged_weapon) => ranged_weapon.get_damage(),
             Self::Melee(melee_weapon) => melee_weapon.get_damage(),
         }
     }
 
-    pub fn get_range(self) -> f32 {
+    pub(crate) fn get_range(self) -> f32 {
         match self {
             Self::Ranged(ranged_weapon) => ranged_weapon.get_range(),
             Self::Melee(melee_weapon) => melee_weapon.get_range(),
         }
     }
+
+    pub(crate) fn get_magazine_capacity(self) -> Option<u8> {
+        match self {
+            Self::Ranged(ranged_weapon) => Some(ranged_weapon.get_magazine_capacity()),
+            Self::Melee(_) => None,
+        }
+    }
+
+    pub(crate) fn get_reload_duration(self) -> Option<Duration> {
+        match self {
+            Self::Ranged(ranged_weapon) => Some(ranged_weapon.get_reload_duration()),
+            Self::Melee(_) => None,
+        }
+    }
+
+    fn get_reload_sound_path(self) -> Option<&'static str> {
+        match self {
+            Self::Ranged(ranged_weapon) => Some(ranged_weapon.get_reload_sound_path()),
+            Self::Melee(_) => None,
+        }
+    }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum RangedWeapon {
-    Revolver2,
-    ShotgunShortStock,
-    ShotgunSawedOff,
-    SubmachineGun3,
-    Pistol,
+#[derive(Clone, Copy)]
+pub struct RangedWeapon {
+    definition: &'static RangedWeaponDefinition,
 }
+
+impl PartialEq for RangedWeapon {
+    fn eq(&self, other: &Self) -> bool {
+        std::ptr::eq(self.definition, other.definition)
+    }
+}
+
+impl Eq for RangedWeapon {}
+
+struct RangedWeaponDefinition {
+    model_asset_path: &'static str,
+    collider_half_extents: Vec3,
+    bullet_mass: f32,
+    bullet_speed: f32,
+    damage: f32,
+    range: f32,
+    attack_sound_path: &'static str,
+    attack_sound_start_position: Duration,
+    fire_mode: FireMode,
+    magazine_capacity: u8,
+    reload_duration: Duration,
+    reload_sound_path: &'static str,
+}
+
+const RELOAD_DURATION: Duration = Duration::from_secs(2);
+const WEAPON_COLLIDER_HALF_EXTENTS: Vec3 = Vec3::new(0.88, 0.15, 0.1);
+
+const REVOLVER_2_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
+    model_asset_path: "weapons/revolver-2-muzzle.glb",
+    collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
+    bullet_mass: 0.1165,
+    bullet_speed: 670.0,
+    damage: 40.0,
+    range: 100.0,
+    attack_sound_path: "weapons/revolver.mp3",
+    attack_sound_start_position: Duration::from_millis(400),
+    fire_mode: FireMode::SingleShot,
+    magazine_capacity: 8,
+    reload_duration: RELOAD_DURATION,
+    reload_sound_path: "weapons/revolver-reload.mp3",
+};
+
+const SHOTGUN_SHORT_STOCK_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
+    model_asset_path: "weapons/shotgun-short-stock-muzzle.glb",
+    collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
+    bullet_mass: 0.233,
+    bullet_speed: 1340.0,
+    damage: 30.0,
+    range: 100.0,
+    attack_sound_path: "weapons/shotgun.mp3",
+    attack_sound_start_position: Duration::from_millis(328),
+    fire_mode: FireMode::SingleShot,
+    magazine_capacity: 6,
+    reload_duration: RELOAD_DURATION,
+    reload_sound_path: "weapons/pump-shotgun-reload.mp3",
+};
+
+const SHOTGUN_SAWED_OFF_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
+    model_asset_path: "weapons/shotgun-sawed-off-muzzle.glb",
+    collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
+    bullet_mass: 0.233,
+    bullet_speed: 1340.0,
+    damage: 30.0,
+    range: 100.0,
+    attack_sound_path: "weapons/shotgun.mp3",
+    attack_sound_start_position: Duration::from_millis(328),
+    fire_mode: FireMode::SingleShot,
+    magazine_capacity: 2,
+    reload_duration: RELOAD_DURATION,
+    reload_sound_path: "weapons/rifle-reload.mp3",
+};
+
+const SUBMACHINE_GUN_3_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
+    model_asset_path: "weapons/submachine-gun-3-muzzle.glb",
+    collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
+    bullet_mass: 0.05825,
+    bullet_speed: 335.0,
+    damage: 12.0,
+    range: 100.0,
+    attack_sound_path: "weapons/submachine-gun.mp3",
+    attack_sound_start_position: Duration::ZERO,
+    fire_mode: FireMode::Automatic,
+    magazine_capacity: 24,
+    reload_duration: RELOAD_DURATION,
+    reload_sound_path: "weapons/rifle-reload.mp3",
+};
+
+const PISTOL_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
+    model_asset_path: "weapons/pistol-muzzle.glb",
+    collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
+    bullet_mass: 0.1165,
+    bullet_speed: 670.0,
+    damage: 25.0,
+    range: 100.0,
+    attack_sound_path: "weapons/pistol.mp3",
+    attack_sound_start_position: Duration::from_millis(400),
+    fire_mode: FireMode::SingleShot,
+    magazine_capacity: 1,
+    reload_duration: RELOAD_DURATION,
+    reload_sound_path: "weapons/pistol-reload.mp3",
+};
 
 impl RangedWeapon {
+    pub const REVOLVER_2: Self = Self {
+        definition: &REVOLVER_2_DEFINITION,
+    };
+    pub const SHOTGUN_SHORT_STOCK: Self = Self {
+        definition: &SHOTGUN_SHORT_STOCK_DEFINITION,
+    };
+    pub const SHOTGUN_SAWED_OFF: Self = Self {
+        definition: &SHOTGUN_SAWED_OFF_DEFINITION,
+    };
+    pub const SUBMACHINE_GUN_3: Self = Self {
+        definition: &SUBMACHINE_GUN_3_DEFINITION,
+    };
+    pub const PISTOL: Self = Self {
+        definition: &PISTOL_DEFINITION,
+    };
+
     fn get_model_asset_path(self) -> &'static str {
-        match self {
-            Self::Revolver2 => "weapons/revolver-2-muzzle.glb",
-            Self::ShotgunShortStock => "weapons/shotgun-short-stock-muzzle.glb",
-            Self::ShotgunSawedOff => "weapons/shotgun-sawed-off-muzzle.glb",
-            Self::SubmachineGun3 => "weapons/submachine-gun-3-muzzle.glb",
-            Self::Pistol => "weapons/pistol-muzzle.glb",
-        }
+        self.definition.model_asset_path
     }
 
     fn get_collider_half_extents(self) -> Vec3 {
-        match self {
-            Self::Pistol => Vec3::new(0.88, 0.15, 0.1),
-            Self::Revolver2 | Self::ShotgunShortStock | Self::ShotgunSawedOff | Self::SubmachineGun3 => {
-                Vec3::new(0.88, 0.15, 0.1)
-            }
-        }
+        self.definition.collider_half_extents
     }
 
     fn get_bullet_mass(self) -> f32 {
-        match self {
-            Self::Revolver2 | Self::Pistol => 0.1165,
-            Self::ShotgunShortStock | Self::ShotgunSawedOff => 0.233,
-            Self::SubmachineGun3 => 0.05825,
-        }
+        self.definition.bullet_mass
     }
 
     fn get_bullet_speed(self) -> f32 {
-        match self {
-            Self::Revolver2 | Self::Pistol => 670.0,
-            Self::ShotgunShortStock | Self::ShotgunSawedOff => 1340.0,
-            Self::SubmachineGun3 => 335.0,
-        }
+        self.definition.bullet_speed
     }
 
     fn get_damage(self) -> f32 {
-        match self {
-            Self::Revolver2 => 40.0,
-            Self::Pistol => 25.0,
-            Self::ShotgunShortStock | Self::ShotgunSawedOff => 30.0,
-            Self::SubmachineGun3 => 12.0,
-        }
+        self.definition.damage
     }
 
     fn get_range(self) -> f32 {
-        match self {
-            Self::Revolver2 | Self::ShotgunShortStock | Self::ShotgunSawedOff | Self::SubmachineGun3 | Self::Pistol => {
-                100.0
-            }
-        }
+        self.definition.range
     }
 
     fn get_attack_sound_path(self) -> &'static str {
-        match self {
-            Self::Revolver2 => "weapons/revolver.mp3",
-            Self::Pistol => "weapons/pistol.mp3",
-            Self::ShotgunShortStock | Self::ShotgunSawedOff => "weapons/shotgun.mp3",
-            Self::SubmachineGun3 => "weapons/submachine-gun.mp3",
-        }
+        self.definition.attack_sound_path
     }
 
     fn get_attack_sound_start_position(self) -> Duration {
-        match self {
-            Self::Revolver2 | Self::Pistol => Duration::from_millis(400),
-            Self::ShotgunShortStock | Self::ShotgunSawedOff => Duration::from_millis(328),
-            Self::SubmachineGun3 => Duration::ZERO,
-        }
+        self.definition.attack_sound_start_position
     }
 
     fn get_fire_mode(self) -> FireMode {
-        match self {
-            Self::Revolver2 | Self::ShotgunShortStock | Self::ShotgunSawedOff | Self::Pistol => FireMode::SingleShot,
-            Self::SubmachineGun3 => FireMode::Automatic,
-        }
+        self.definition.fire_mode
+    }
+
+    fn get_magazine_capacity(self) -> u8 {
+        self.definition.magazine_capacity
+    }
+
+    fn get_reload_duration(self) -> Duration {
+        self.definition.reload_duration
+    }
+
+    fn get_reload_sound_path(self) -> &'static str {
+        self.definition.reload_sound_path
     }
 }
 
@@ -202,17 +325,11 @@ impl MeleeWeapon {
     }
 }
 
-fn create_view_model_transform(model_translation: Vec3, model_scale: f32) -> Transform {
-    let model_rotation = Quat::from_xyzw(
-        0.0,
-        std::f32::consts::FRAC_1_SQRT_2,
-        0.0,
-        std::f32::consts::FRAC_1_SQRT_2,
-    );
+fn create_hand_weapon_transform() -> Transform {
     Transform {
-        translation: model_translation,
-        rotation: model_rotation,
-        scale: Vec3::splat(model_scale),
+        translation: Vec3::new(-0.05, 0.0, 0.0),
+        rotation: Quat::from_euler(EulerRot::YXZ, 1.5240, 0.0217, 1.3841),
+        scale: Vec3::splat(0.15),
     }
 }
 
@@ -223,7 +340,7 @@ enum FireMode {
 }
 
 #[derive(Message, Clone, Copy)]
-pub struct WeaponFired {
+pub(crate) struct WeaponFired {
     pub(crate) shooter_entity: Option<Entity>,
     pub(crate) weapon_entity: Entity,
     pub(crate) weapon: Weapon,
@@ -231,6 +348,48 @@ pub struct WeaponFired {
     pub(crate) origin: Vec3,
     pub(crate) direction: Dir3,
 }
+
+#[derive(Message, Clone, Copy)]
+pub(crate) struct WeaponReloadStarted(pub(crate) Weapon);
+
+#[derive(Message, Clone, Copy)]
+pub(crate) struct WeaponDryFired;
+
+#[derive(Component)]
+pub(crate) struct Magazine {
+    current_ammunition: u8,
+}
+
+impl Magazine {
+    pub(crate) fn create_full(weapon: Weapon) -> Self {
+        Self {
+            current_ammunition: weapon.get_magazine_capacity().unwrap_or_default(),
+        }
+    }
+
+    pub(crate) fn get_current_ammunition(&self) -> u8 {
+        self.current_ammunition
+    }
+
+    pub(crate) fn consume_round(&mut self) -> bool {
+        if self.current_ammunition == 0 {
+            return false;
+        }
+        self.current_ammunition -= 1;
+        true
+    }
+
+    pub(crate) fn refill(&mut self, weapon: Weapon) {
+        self.current_ammunition = weapon.get_magazine_capacity().unwrap_or_default();
+    }
+
+    fn is_full(&self, weapon: Weapon) -> bool {
+        self.current_ammunition == weapon.get_magazine_capacity().unwrap_or_default()
+    }
+}
+
+#[derive(Component)]
+pub(crate) struct Reloading(Timer);
 
 #[derive(Resource)]
 struct WeaponFireCooldown(Timer);
@@ -291,60 +450,52 @@ fn setup_crosshair(mut commands: Commands) {
 }
 
 #[derive(Resource, Deref)]
-pub struct SelectedWeapon(pub Weapon);
+pub(crate) struct SelectedWeapon(pub Weapon);
 
 #[derive(Component)]
-pub struct WeaponSlot(pub Weapon);
+pub(crate) struct WeaponSlot(pub Weapon);
 
-fn setup_gun(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    player_camera: Query<Entity, (With<PlayerCamera>, With<Camera3d>)>,
-) {
-    let Ok(player_camera) = player_camera.single() else {
+#[derive(Component)]
+pub(crate) struct PlayerGun;
+
+fn setup_gun(mut commands: Commands, asset_server: Res<AssetServer>, players: Query<Entity, With<Player>>) {
+    let Ok(player_entity) = players.single() else {
         return;
     };
-    spawn_player_guns(&mut commands, &asset_server, player_camera);
+    spawn_player_guns(&mut commands, &asset_server, player_entity);
 }
 
-pub fn spawn_player_guns(commands: &mut Commands, asset_server: &AssetServer, player_camera: Entity) {
+pub(crate) fn spawn_player_guns(commands: &mut Commands, asset_server: &AssetServer, player_entity: Entity) {
     let selectable_weapons = [
-        (
-            Weapon::Ranged(RangedWeapon::Revolver2),
-            create_view_model_transform(Vec3::new(0.2, -0.2, -0.4), 0.15),
-        ),
-        (
-            Weapon::Ranged(RangedWeapon::ShotgunShortStock),
-            create_view_model_transform(Vec3::new(0.2, -0.22, -0.45), 0.15),
-        ),
-        (
-            Weapon::Ranged(RangedWeapon::ShotgunSawedOff),
-            create_view_model_transform(Vec3::new(0.2, -0.24, -0.38), 0.15),
-        ),
-        (
-            Weapon::Ranged(RangedWeapon::SubmachineGun3),
-            create_view_model_transform(Vec3::new(0.2, -0.2, -0.45), 0.15),
-        ),
+        Weapon::Ranged(RangedWeapon::REVOLVER_2),
+        Weapon::Ranged(RangedWeapon::SHOTGUN_SHORT_STOCK),
+        Weapon::Ranged(RangedWeapon::SHOTGUN_SAWED_OFF),
+        Weapon::Ranged(RangedWeapon::SUBMACHINE_GUN_3),
     ];
+    let hand_weapon_transform = create_hand_weapon_transform();
     let mut weapon_entities = Vec::with_capacity(selectable_weapons.len());
-    for (weapon, weapon_transform) in selectable_weapons {
+    for weapon in selectable_weapons {
         let mut weapon_entity = commands.spawn((
             Gun,
+            PlayerGun,
             weapon,
             WeaponSlot(weapon),
             Visibility::Hidden,
             WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(weapon.get_model_asset_path()))),
-            weapon_transform,
+            hand_weapon_transform,
         ));
+        if weapon.get_magazine_capacity().is_some() {
+            weapon_entity.insert(Magazine::create_full(weapon));
+        }
         let weapon_entity_id = weapon_entity.id();
-        if weapon == Weapon::Ranged(RangedWeapon::Revolver2) {
+        if weapon == Weapon::Ranged(RangedWeapon::REVOLVER_2) {
             weapon_entity.insert(Visibility::Inherited);
         }
         observe_muzzle_flash(commands, weapon_entity_id);
         weapon_entities.push(weapon_entity_id);
     }
-    commands.insert_resource(SelectedWeapon(Weapon::Ranged(RangedWeapon::Revolver2)));
-    commands.entity(player_camera).add_children(&weapon_entities);
+    commands.insert_resource(SelectedWeapon(Weapon::Ranged(RangedWeapon::REVOLVER_2)));
+    commands.entity(player_entity).add_children(&weapon_entities);
 }
 
 fn switch_weapon(
@@ -355,10 +506,10 @@ fn switch_weapon(
 ) {
     let mut requested_weapon = None;
     for (key, weapon) in [
-        (KeyCode::Digit1, Weapon::Ranged(RangedWeapon::Revolver2)),
-        (KeyCode::Digit2, Weapon::Ranged(RangedWeapon::ShotgunShortStock)),
-        (KeyCode::Digit3, Weapon::Ranged(RangedWeapon::ShotgunSawedOff)),
-        (KeyCode::Digit4, Weapon::Ranged(RangedWeapon::SubmachineGun3)),
+        (KeyCode::Digit1, Weapon::Ranged(RangedWeapon::REVOLVER_2)),
+        (KeyCode::Digit2, Weapon::Ranged(RangedWeapon::SHOTGUN_SHORT_STOCK)),
+        (KeyCode::Digit3, Weapon::Ranged(RangedWeapon::SHOTGUN_SAWED_OFF)),
+        (KeyCode::Digit4, Weapon::Ranged(RangedWeapon::SUBMACHINE_GUN_3)),
     ] {
         if keyboard_input.just_pressed(key) {
             requested_weapon = Some(weapon);
@@ -381,6 +532,48 @@ fn switch_weapon(
     }
 }
 
+fn start_player_reload(
+    keyboard_input: Res<ButtonInput<KeyCode>>,
+    selected_weapon: Res<SelectedWeapon>,
+    weapon_slots: Query<(Entity, &WeaponSlot, &Magazine, Option<&Reloading>), With<Gun>>,
+    mut commands: Commands,
+    mut weapon_reload_started: MessageWriter<WeaponReloadStarted>,
+) {
+    if !keyboard_input.just_pressed(KeyCode::KeyR) {
+        return;
+    }
+    let Some((weapon_entity, weapon_slot, magazine, reloading)) = weapon_slots
+        .iter()
+        .find(|(_, weapon_slot, _, _)| weapon_slot.0 == **selected_weapon)
+    else {
+        return;
+    };
+    if reloading.is_some() || magazine.is_full(weapon_slot.0) {
+        return;
+    }
+    let Some(reload_duration) = weapon_slot.0.get_reload_duration() else {
+        return;
+    };
+    commands
+        .entity(weapon_entity)
+        .insert(Reloading(Timer::new(reload_duration, TimerMode::Once)));
+    weapon_reload_started.write(WeaponReloadStarted(weapon_slot.0));
+}
+
+fn update_weapon_reloads(
+    time: Res<Time>,
+    mut reloading_weapons: Query<(Entity, &Weapon, &mut Magazine, &mut Reloading)>,
+    mut commands: Commands,
+) {
+    for (weapon_entity, weapon, mut magazine, mut reloading) in &mut reloading_weapons {
+        reloading.0.tick(time.delta());
+        if reloading.0.is_finished() {
+            magazine.refill(*weapon);
+            commands.entity(weapon_entity).remove::<Reloading>();
+        }
+    }
+}
+
 type PlayerAimQuery<'w, 's> = Query<'w, 's, (Entity, &'static Transform), With<Player>>;
 type PlayerCameraAimQuery<'w, 's> = Query<'w, 's, &'static Transform, (With<PlayerCamera>, Without<Player>)>;
 
@@ -390,18 +583,24 @@ struct WeaponAimContext<'w, 's> {
     player_camera: PlayerCameraAimQuery<'w, 's>,
 }
 
+#[derive(SystemParam)]
+struct PlayerWeaponMessageContext<'w> {
+    weapon_fired: MessageWriter<'w, WeaponFired>,
+    weapon_dry_fired: MessageWriter<'w, WeaponDryFired>,
+}
+
 fn fire_weapon(
     mouse_button: Res<ButtonInput<MouseButton>>,
     selected_weapon: Res<SelectedWeapon>,
-    weapon_slots: Query<(Entity, &WeaponSlot), With<Gun>>,
+    mut weapon_slots: Query<(Entity, &WeaponSlot, &mut Magazine, Option<&Reloading>), With<Gun>>,
     aim_context: WeaponAimContext,
     time: Res<Time>,
     mut weapon_fire_cooldown: ResMut<WeaponFireCooldown>,
-    mut weapon_fired: MessageWriter<WeaponFired>,
+    mut weapon_messages: PlayerWeaponMessageContext,
 ) {
-    let Some((weapon_entity, weapon_slot)) = weapon_slots
-        .iter()
-        .find(|(_, weapon_slot)| weapon_slot.0 == **selected_weapon)
+    let Some((weapon_entity, weapon_slot, mut magazine, reloading)) = weapon_slots
+        .iter_mut()
+        .find(|(_, weapon_slot, _, _)| weapon_slot.0 == **selected_weapon)
     else {
         return;
     };
@@ -415,25 +614,34 @@ fn fire_weapon(
         return;
     };
     let camera_rotation = player_transform.rotation * camera_local_transform.rotation;
-    let camera_translation =
-        player_transform.translation + player_transform.rotation * camera_local_transform.translation;
     let weapon_fired_message = WeaponFired {
         shooter_entity: Some(shooter_entity),
         weapon_entity,
         weapon: weapon_slot.0,
         damage_coefficient: 1.0,
-        origin: camera_translation,
+        origin: player_transform.translation,
         direction: Dir3::new(camera_rotation * Vec3::NEG_Z).unwrap(),
     };
+    if reloading.is_some() {
+        return;
+    }
     match ranged_weapon.get_fire_mode() {
         FireMode::SingleShot => {
             if mouse_button.just_pressed(MouseButton::Left) {
-                weapon_fired.write(weapon_fired_message);
+                if magazine.consume_round() {
+                    weapon_messages.weapon_fired.write(weapon_fired_message);
+                } else {
+                    weapon_messages.weapon_dry_fired.write(WeaponDryFired);
+                }
             }
         }
         FireMode::Automatic => {
             if mouse_button.just_pressed(MouseButton::Left) {
-                weapon_fired.write(weapon_fired_message);
+                if magazine.consume_round() {
+                    weapon_messages.weapon_fired.write(weapon_fired_message);
+                } else {
+                    weapon_messages.weapon_dry_fired.write(WeaponDryFired);
+                }
                 weapon_fire_cooldown.0.reset();
                 return;
             }
@@ -443,7 +651,10 @@ fn fire_weapon(
             }
             weapon_fire_cooldown.0.tick(time.delta());
             for _ in 0..weapon_fire_cooldown.0.times_finished_this_tick() {
-                weapon_fired.write(weapon_fired_message);
+                if !magazine.consume_round() {
+                    break;
+                }
+                weapon_messages.weapon_fired.write(weapon_fired_message);
             }
         }
     }
@@ -596,6 +807,35 @@ fn play_gunshot(mut weapon_fired: MessageReader<WeaponFired>, asset_server: Res<
                 .with_start_position(get_attack_sound_start_position(weapon_fired_message.weapon))
                 .with_spatial(true),
             Transform::from_translation(weapon_fired_message.origin),
+        ));
+    }
+}
+
+fn play_reload_sound(
+    mut weapon_reload_started: MessageReader<WeaponReloadStarted>,
+    asset_server: Res<AssetServer>,
+    mut commands: Commands,
+) {
+    for WeaponReloadStarted(weapon) in weapon_reload_started.read() {
+        let Some(reload_sound_path) = weapon.get_reload_sound_path() else {
+            continue;
+        };
+        commands.spawn((
+            AudioPlayer::new(asset_server.load(reload_sound_path)),
+            PlaybackSettings::DESPAWN,
+        ));
+    }
+}
+
+fn play_dry_fire_sound(
+    mut weapon_dry_fired: MessageReader<WeaponDryFired>,
+    asset_server: Res<AssetServer>,
+    mut commands: Commands,
+) {
+    for WeaponDryFired in weapon_dry_fired.read() {
+        commands.spawn((
+            AudioPlayer::new(asset_server.load("weapons/dry-fire.mp3")),
+            PlaybackSettings::DESPAWN,
         ));
     }
 }
