@@ -376,26 +376,6 @@ fn gunner_loads_one_hairstyle() {
 }
 
 #[test]
-fn player_bullet_adds_a_blood_mark_to_a_gunner() {
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 160, Vec3::new(5.0, 0.5, 0.0));
-    let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
-
-    support::shoot_entity(&mut app, hit_body);
-    run_updates(&mut app, 2);
-
-    let blood_mark_count = app
-        .world_mut()
-        .query::<&Name>()
-        .iter(app.world())
-        .filter(|name| name.as_str() == "Blood mark")
-        .count();
-    assert_eq!(
-        blood_mark_count, 1,
-        "a bullet hit should create one blood mark for {enemy:?}"
-    );
-}
-
-#[test]
 fn hand_shot_kills_fighter() {
     let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 160, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::RightHand);

@@ -56,7 +56,7 @@ fn apply_damage_to_health(
         let attacker_name = damage
             .attacker
             .and_then(|attacker| names.get(attacker).ok())
-            .map_or_else(|| "?".to_string(), |name| name.to_string());
+            .map_or_else(|| "?".to_string(), ToString::to_string);
         let victim_name = victim_name.map_or_else(|| format!("{}", damage.character), ToString::to_string);
         info!(
             "{} {:?} damaged by {:?}, {} health left",

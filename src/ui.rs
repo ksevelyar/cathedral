@@ -83,7 +83,7 @@ fn update_health_display(
     };
     let health_text = format!("HP {:.0}", player_health.get_current());
     for mut health_display in &mut health_displays {
-        health_display.0 = health_text.clone();
+        health_display.0.clone_from(&health_text);
     }
 }
 

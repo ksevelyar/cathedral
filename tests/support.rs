@@ -13,8 +13,10 @@ pub fn find_named_body(app: &mut App, body_name: &str) -> Entity {
         .query_filtered::<(Entity, &Name), With<RigidBody>>()
         .iter(app.world())
         .find(|(_, name)| name.as_str() == body_name)
-        .map(|(entity, _)| entity)
-        .unwrap_or_else(|| panic!("body {body_name} should exist after the game enters the playing state"))
+        .map_or_else(
+            || panic!("body {body_name} should exist after the game enters the playing state"),
+            |(entity, _)| entity,
+        )
 }
 
 pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {

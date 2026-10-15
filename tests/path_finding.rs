@@ -207,8 +207,7 @@ fn fighter_walks_over_the_staircase_to_player() {
     );
     assert!(
         distance_to_player <= FIGHTER_REACH + REACH_MARGIN,
-        "fighter stopped {} away from the player at {translation:?}",
-        distance_to_player
+        "fighter stopped {distance_to_player} away from the player at {translation:?}"
     );
     assert!(attacking_observed, "fighter never started attacking the player");
 }
@@ -245,8 +244,7 @@ fn fighter_walks_around_pillar_to_reach_player() {
     let distance_to_player = (translation - read_player_translation(&mut app)).xz().length();
     assert!(
         distance_to_player <= FIGHTER_REACH + REACH_MARGIN,
-        "fighter stopped {} away from the player at {translation:?}",
-        distance_to_player
+        "fighter stopped {distance_to_player} away from the player at {translation:?}"
     );
     assert!(attacking_observed, "fighter never started attacking the player");
 }

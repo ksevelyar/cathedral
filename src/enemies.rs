@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 use rand::Rng;
 
-use crate::blood::BloodMarkCount;
+use crate::bloodmarks::BloodMarks;
 use crate::health::{CharacterDamaged, CharacterDied, Health};
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
@@ -41,10 +41,14 @@ pub struct Dying;
 
 #[derive(EntityEvent)]
 pub(crate) struct EnemyHit {
-    pub(crate) entity: Entity,
-    pub(crate) body: Entity,
+    #[event_target]
+    pub(crate) target: Entity,
+    pub(crate) collider: Entity,
+    pub(crate) shot_origin: Vec3,
+    pub(crate) shot_direction: Dir3,
+    pub(crate) impact_distance: f32,
     pub(crate) impulse: Vec3,
-    pub(crate) point: Vec3,
+    pub(crate) weapon_caliber: f32,
 }
 
 #[derive(Clone, Copy)]
@@ -202,7 +206,7 @@ pub(super) fn spawn_enemy_base(
         definition.rig,
         transform,
         Health::new(definition.starting_health),
-        BloodMarkCount::default(),
+        BloodMarks::default(),
     ));
     if alive {
         enemy.insert((

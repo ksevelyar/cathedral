@@ -194,9 +194,9 @@ type GunnerWeaponContext<'world, 'state> = (
 );
 #[derive(Component, Default)]
 struct GunnerAttack {
-    remaining_cooldown_seconds: Option<f32>,
-    firing_elapsed_seconds: Option<f32>,
-    reload_elapsed_seconds: Option<f32>,
+    cooldown_remaining: Option<f32>,
+    firing_elapsed: Option<f32>,
+    reload_elapsed: Option<f32>,
 }
 
 #[derive(Component)]
@@ -322,7 +322,7 @@ fn update_gunner_reload(
     activity: &mut EnemyActivity,
     delta_secs: f32,
 ) -> bool {
-    let Some(reload_elapsed_seconds) = attack.reload_elapsed_seconds.as_mut() else {
+    let Some(reload_elapsed_seconds) = attack.reload_elapsed.as_mut() else {
         return false;
     };
     *reload_elapsed_seconds += delta_secs;
@@ -332,7 +332,7 @@ fn update_gunner_reload(
     };
     if *reload_elapsed_seconds >= reload_duration.as_secs_f32() {
         magazine.refill(weapon);
-        attack.reload_elapsed_seconds = None;
+        attack.reload_elapsed = None;
     }
     true
 }
@@ -343,9 +343,9 @@ fn begin_gunner_reload(
     activity: &mut EnemyActivity,
     weapon_reload_started: &mut MessageWriter<WeaponReloadStarted>,
 ) {
-    attack.remaining_cooldown_seconds = None;
-    attack.firing_elapsed_seconds = None;
-    attack.reload_elapsed_seconds = Some(0.0);
+    attack.cooldown_remaining = None;
+    attack.firing_elapsed = None;
+    attack.reload_elapsed = Some(0.0);
     activity.state = AnimationState::Reloading;
     weapon_reload_started.write(WeaponReloadStarted(weapon));
 }
@@ -361,25 +361,25 @@ fn advance_gunner_attack(
     let cooldown_multiplier = 1.0 + (attack_jitter.0 * 2.0 - 1.0) * cooldown_jitter_range;
     let cooldown_seconds = gunner.attack_cooldown * cooldown_multiplier;
 
-    if let Some(firing_elapsed_seconds) = attack.firing_elapsed_seconds.as_mut() {
+    if let Some(firing_elapsed_seconds) = attack.firing_elapsed.as_mut() {
         *firing_elapsed_seconds += delta_secs;
         activity.state = AnimationState::Attacking;
         if *firing_elapsed_seconds >= gunner.attack_animation_seconds {
-            attack.firing_elapsed_seconds = None;
-            attack.remaining_cooldown_seconds = Some(cooldown_seconds);
+            attack.firing_elapsed = None;
+            attack.cooldown_remaining = Some(cooldown_seconds);
         }
         return false;
     }
 
-    let remaining_cooldown_seconds = attack.remaining_cooldown_seconds.get_or_insert(cooldown_seconds);
+    let remaining_cooldown_seconds = attack.cooldown_remaining.get_or_insert(cooldown_seconds);
     *remaining_cooldown_seconds -= delta_secs;
     if *remaining_cooldown_seconds > 0.0 {
         activity.state = AnimationState::Idle;
         return false;
     }
 
-    attack.remaining_cooldown_seconds = None;
-    attack.firing_elapsed_seconds = Some(0.0);
+    attack.cooldown_remaining = None;
+    attack.firing_elapsed = Some(0.0);
     activity.state = AnimationState::Attacking;
     true
 }

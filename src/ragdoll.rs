@@ -166,13 +166,14 @@ fn wake_ragdoll_bodies_on_hit(
     mut commands: Commands,
     ragdoll_bodies: Query<(&OwnedByCharacter, &RagdollBodyPart)>,
 ) {
-    let Some(body_part) = ragdoll_bodies.get(hit.body).ok().map(|(_, part)| *part) else {
+    let Some(body_part) = ragdoll_bodies.get(hit.collider).ok().map(|(_, part)| *part) else {
         return;
     };
-    commands.entity(hit.entity).insert(PendingRagdollImpactRequest {
+    let impact_point = hit.shot_origin + hit.shot_direction.as_vec3() * hit.impact_distance;
+    commands.entity(hit.target).insert(PendingRagdollImpactRequest {
         body_part,
         impulse: hit.impulse,
-        point: hit.point,
+        point: impact_point,
     });
 }
 
@@ -272,7 +273,7 @@ impl LimbSpec {
         match self.end {
             BonePoint::Raised { bone, .. } => names.push(bone),
             BonePoint::Extended { toward, .. } => names.push(toward),
-            _ => {}
+            BonePoint::Joint(_) => {}
         }
         names
     }
@@ -478,7 +479,7 @@ const LIMBS: &[LimbSpec] = &[
 
 fn get_bone_position(name: &str, bones: &BoneMap, transforms: &Query<&GlobalTransform>) -> Option<Vec3> {
     let entity = bones.get(name)?;
-    transforms.get(entity).ok().map(|transform| transform.translation())
+    transforms.get(entity).ok().map(GlobalTransform::translation)
 }
 
 fn measure_point(
@@ -652,11 +653,14 @@ fn fallback_limb_collider(spec: &LimbSpec, segment: Segment) -> Collider {
     let fallback_radius = match spec.part {
         RagdollBodyPart::Torso => 0.24,
         RagdollBodyPart::Head => 0.16,
-        RagdollBodyPart::LeftUpperArm | RagdollBodyPart::RightUpperArm => 0.06,
+        RagdollBodyPart::LeftUpperArm
+        | RagdollBodyPart::RightUpperArm
+        | RagdollBodyPart::LeftHand
+        | RagdollBodyPart::RightHand
+        | RagdollBodyPart::LeftCalf
+        | RagdollBodyPart::RightCalf => 0.06,
         RagdollBodyPart::LeftForearm | RagdollBodyPart::RightForearm => 0.05,
-        RagdollBodyPart::LeftHand | RagdollBodyPart::RightHand => 0.06,
         RagdollBodyPart::LeftThigh | RagdollBodyPart::RightThigh => 0.08,
-        RagdollBodyPart::LeftCalf | RagdollBodyPart::RightCalf => 0.06,
         RagdollBodyPart::LeftFoot | RagdollBodyPart::RightFoot => 0.035,
     };
     match spec.shape {
@@ -737,11 +741,15 @@ fn make_revolute_joint(
     angle_limits: (f32, f32),
 ) -> RevoluteJoint {
     let parent_axis = parent_segment.rotation * Vec3::Y;
-    let joint_x_axis = (parent_axis - compute_hinge_axis * parent_axis.dot(compute_hinge_axis))
+    let hinge_perpendicular_axis = (parent_axis - compute_hinge_axis * parent_axis.dot(compute_hinge_axis))
         .try_normalize()
         .unwrap_or(Vec3::X);
-    let joint_y_axis = compute_hinge_axis.cross(joint_x_axis);
-    let world_joint_basis = Quat::from_mat3(&Mat3::from_cols(joint_x_axis, joint_y_axis, compute_hinge_axis));
+    let hinge_tangent_axis = compute_hinge_axis.cross(hinge_perpendicular_axis);
+    let world_joint_basis = Quat::from_mat3(&Mat3::from_cols(
+        hinge_perpendicular_axis,
+        hinge_tangent_axis,
+        compute_hinge_axis,
+    ));
     let anchor = child_segment.start;
 
     RevoluteJoint::new(parent, child)
@@ -878,7 +886,7 @@ fn spawn_ragdoll_bodies(mut commands: Commands, pending: PendingRagdollQuery<'_,
         let torso_entity = part_entities[&RagdollBodyPart::Torso];
         let mut bones_by_part = assign_drivers(bones, part_entities, &scene.parents, &scene.transforms, torso_entity);
 
-        for part in parts.iter_mut() {
+        for part in &mut parts {
             part.bones = bones_by_part.remove(&part.entity).unwrap_or_default();
         }
 

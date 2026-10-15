@@ -146,9 +146,8 @@ pub fn setup_player(
     asset_server: Res<AssetServer>,
     start_position: Option<Res<PlayerPosition>>,
 ) {
-    let player_position = start_position
-        .map(|start_position| *start_position)
-        .unwrap_or_else(|| PlayerPosition::new(Vec3::ZERO));
+    let player_position =
+        start_position.map_or_else(|| PlayerPosition::new(Vec3::ZERO), |start_position| *start_position);
     spawn_player(&mut commands, &asset_server, player_position);
 }
 
@@ -443,7 +442,7 @@ fn kill_player_on_death(
 
 fn is_descendant_of_entity(candidate: Entity, ancestor: Entity, child_ofs: &Query<&ChildOf>) -> bool {
     let mut current = candidate;
-    while let Ok(parent) = child_ofs.get(current).map(|child_of| child_of.parent()) {
+    while let Ok(parent) = child_ofs.get(current).map(ChildOf::parent) {
         if parent == ancestor {
             return true;
         }

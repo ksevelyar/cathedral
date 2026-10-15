@@ -377,7 +377,7 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
         Visibility::default(),
     ));
 
-    let commands = &mut context.commands;
+    let commands = &mut *context.commands;
     let meshes = &mut *context.meshes;
     let lamp_cone_intensity = 65_000.0;
     let lamp_cone_range = 7.0;
