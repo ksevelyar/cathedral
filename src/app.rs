@@ -355,7 +355,7 @@ fn attach_screenshot_camera(
 }
 
 pub fn run_until_screenshot_captured(app: &mut App) -> &CapturedScreenshots {
-    let screenshot_timeout = Duration::from_secs(1);
+    let screenshot_timeout = Duration::from_secs(10);
     let screenshot_deadline = Instant::now() + screenshot_timeout;
     loop {
         app.update();

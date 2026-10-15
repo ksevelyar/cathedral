@@ -2,6 +2,7 @@ use avian3d::prelude::{Collider, LinearVelocity, Position, RigidBody, Rotation};
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
+use rand::Rng;
 
 use crate::blood::BloodMarkCount;
 use crate::health::{CharacterDamaged, CharacterDied, Health};
@@ -170,9 +171,10 @@ pub fn spawn_enemy(
     transform: Transform,
     alive: bool,
 ) -> Entity {
+    let seed = Seed(rand::rng().random());
     match kind {
-        EnemyKind::Fighter => fighter::spawn(commands, asset_server, sequence_number, transform, alive),
-        EnemyKind::Gunner => gunner::spawn(commands, asset_server, sequence_number, transform, alive),
+        EnemyKind::Fighter => fighter::spawn(commands, asset_server, seed, sequence_number, transform, alive),
+        EnemyKind::Gunner => gunner::spawn(commands, asset_server, seed, sequence_number, transform, alive),
     }
 }
 
@@ -186,6 +188,7 @@ pub(super) fn spawn_enemy_base(
     commands: &mut Commands,
     asset_server: &AssetServer,
     definition: EnemyDefinition,
+    seed: Seed,
     sequence_number: usize,
     transform: Transform,
     alive: bool,
@@ -193,7 +196,7 @@ pub(super) fn spawn_enemy_base(
     let rig = definition.rig.clone();
     let mut enemy = commands.spawn((
         Enemy,
-        Seed(sequence_number as u64),
+        seed,
         Name::new(format!("{} {}", definition.display_name, sequence_number + 1)),
         WorldAssetRoot(asset_server.load(GltfAssetLabel::Scene(0).from_asset(definition.rig.scene))),
         definition.rig,
