@@ -1,5 +1,4 @@
 use avian3d::prelude::*;
-use bevy::ecs::world::CommandQueue;
 use bevy::prelude::*;
 
 pub mod support;
@@ -9,7 +8,7 @@ fn get_current_game_state(app: &mut App) -> GameState {
 }
 use bevy::world_serialization::WorldAssetRoot;
 use cathedral::app::build_test_app;
-use cathedral::enemies::{Dying, EnemyKind, spawn_enemy};
+use cathedral::enemies::{Dying, Enemy, EnemyKind};
 use cathedral::health::Health;
 use cathedral::maps::{Map, MapBuilder};
 use cathedral::player::Player;
@@ -42,32 +41,37 @@ fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
     panic!("alive enemy ragdoll colliders did not spawn");
 }
 
-fn build_map(player_position: Vec3) -> Map {
+fn build_map(player_position: Vec3, kind: EnemyKind) -> Map {
     let floor_size = Vec3::new(60.0, 0.1, 60.0);
     MapBuilder::new("enemies")
         .with_player_position(player_position, player_position + Vec3::NEG_Z)
         .with_floor(floor_size)
+        .with_enemy(Vec3::new(0.0, 0.5, 0.0), kind)
         .build()
+}
+
+fn find_enemy_by_name(app: &mut App, kind: EnemyKind) -> Entity {
+    let enemy_name = match kind {
+        EnemyKind::Fighter => "Fighter 1",
+        EnemyKind::Gunner => "Gunner 1",
+    };
+    app.world_mut()
+        .query_filtered::<(Entity, &Name), With<Enemy>>()
+        .iter(app.world())
+        .find(|(_, name)| name.as_str() == enemy_name)
+        .map(|(entity, _)| entity)
+        .unwrap_or_else(|| panic!("enemy {enemy_name} should spawn with the map"))
 }
 
 fn simulate_enemy_near_player(kind: EnemyKind, walking_updates: usize, player_position: Vec3) -> (App, Entity) {
     let fixed_timestep = Duration::from_secs_f64(support::FIXED_TIMESTEP_SECONDS);
-    let mut app = build_test_app(build_map(player_position));
+    let mut app = build_test_app(build_map(player_position, kind));
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
     app.world_mut()
         .resource_mut::<NextState<GameState>>()
         .set(GameState::Paused);
-    let mut command_queue = CommandQueue::default();
-    let asset_server = app.world().resource::<AssetServer>().clone();
-    let enemy = spawn_enemy(
-        &mut Commands::new(&mut command_queue, app.world_mut()),
-        &asset_server,
-        kind,
-        0,
-        Transform::from_xyz(0.0, 0.5, 0.0),
-        true,
-    );
-    command_queue.apply(app.world_mut());
+    app.update();
+    let enemy = find_enemy_by_name(&mut app, kind);
     wait_for_inert_ragdoll(&mut app, enemy);
     app.world_mut()
         .resource_mut::<NextState<GameState>>()

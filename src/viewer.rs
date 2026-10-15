@@ -170,8 +170,9 @@ fn switch_animation(
         return;
     };
     for mut animation in &mut animations {
-        animation.current =
-            (animation.current as isize + direction).rem_euclid(animation.nodes.len() as isize) as usize;
+        let node_count = animation.nodes.len();
+        let next_index = (animation.current.cast_signed() + direction).rem_euclid(node_count.cast_signed());
+        animation.current = usize::try_from(next_index).expect("animation index should stay within node count");
         let Ok(mut player) = players.get_mut(animation.armature) else {
             continue;
         };

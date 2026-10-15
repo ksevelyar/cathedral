@@ -1,7 +1,9 @@
 use bevy::prelude::*;
 
-use super::objects::Object;
-use super::{EnemySpawn, FogVolumeSettings, Map, PlayerPosition};
+use super::gltf::{CardboardBox, Desk, Jerrycan, Laptop, PlasticBottleGallon, PowerBox, Stool, StorageRack};
+use super::hanging_lamp::HangingLamp;
+use super::structure::{Ceiling, Floor, Wall};
+use super::{EnemySpawn, FogVolumeSettings, Map, ObjectSpawn, PlayerPosition};
 use crate::enemies::EnemyKind;
 
 pub(super) fn build_map() -> Map {
@@ -48,15 +50,88 @@ fn build_gunners_in_arc_before_player() -> Vec<EnemySpawn> {
         .map(move |gunner_index| {
             let gunner_angle = first_gunner_angle + gunner_angle_step * gunner_index as f32;
             let gunner_direction = Quat::from_rotation_y(gunner_angle).mul_vec3(forward_direction);
-            EnemySpawn {
-                position: player_position + gunner_direction * arc_radius,
-                kind: EnemyKind::Gunner,
-            }
+            EnemySpawn::new(player_position + gunner_direction * arc_radius, EnemyKind::Gunner)
         })
         .collect()
 }
 
-fn build_control_room_objects() -> Vec<Object> {
+fn build_control_room_objects() -> Vec<ObjectSpawn> {
+    build_room_structure()
+        .into_iter()
+        .chain(build_hanging_lamps())
+        .chain(build_room_furniture())
+        .collect()
+}
+
+fn build_room_structure() -> Vec<ObjectSpawn> {
+    [
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(0.0, 0.05, 0.0)),
+            Floor {
+                size: Vec3::new(25.8, 0.1, 19.8),
+            },
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(0.0, 5.95, 0.0)),
+            Ceiling {
+                size: Vec3::new(25.8, 0.1, 19.8),
+            },
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(0.0, 3.0, 9.6)),
+            Wall {
+                size: Vec3::new(25.4, 6.0, 0.2),
+            },
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(12.6, 3.0, 0.0)),
+            Wall {
+                size: Vec3::new(0.2, 6.0, 19.4),
+            },
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(-12.6, 3.0, 0.0)),
+            Wall {
+                size: Vec3::new(0.2, 6.0, 19.4),
+            },
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(-6.75, 3.0, -9.6)),
+            Wall {
+                size: Vec3::new(11.9, 6.0, 0.2),
+            },
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(6.75, 3.0, -9.6)),
+            Wall {
+                size: Vec3::new(11.9, 6.0, 0.2),
+            },
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(0.0, 4.1, -9.6)),
+            Wall {
+                size: Vec3::new(1.6, 3.8, 0.2),
+            },
+        ),
+    ]
+    .into_iter()
+    .collect()
+}
+
+fn build_hanging_lamps() -> [ObjectSpawn; 4] {
+    let lamp_pivot_height = 5.85;
+    let lamp_wire_length = 2.2;
+    [(-6.0, -4.5), (6.0, -4.5), (-6.0, 4.5), (6.0, 4.5)].map(|(x_position, z_position)| {
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(x_position, lamp_pivot_height, z_position)),
+            HangingLamp {
+                wire_length: lamp_wire_length,
+            },
+        )
+    })
+}
+
+fn build_room_furniture() -> [ObjectSpawn; 11] {
     let floor_surface_height = 0.1;
     let desk_height = 0.788;
     let object_separation = 0.01;
@@ -65,92 +140,51 @@ fn build_control_room_objects() -> Vec<Object> {
     let laptop_height_above_desk = desk_height + object_separation;
     let half_turn_rotation = Quat::from_rotation_y(std::f32::consts::PI);
     let storage_rack_rotation = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2);
-
-    let structure = [
-        Object::Floor {
-            transform: Transform::from_translation(Vec3::new(0.0, 0.05, 0.0)),
-            size: Vec3::new(25.8, 0.1, 19.8),
-        },
-        Object::Ceiling {
-            transform: Transform::from_translation(Vec3::new(0.0, 5.95, 0.0)),
-            size: Vec3::new(25.8, 0.1, 19.8),
-        },
-        Object::Wall {
-            transform: Transform::from_translation(Vec3::new(0.0, 3.0, 9.6)),
-            size: Vec3::new(25.4, 6.0, 0.2),
-        },
-        Object::Wall {
-            transform: Transform::from_translation(Vec3::new(12.6, 3.0, 0.0)),
-            size: Vec3::new(0.2, 6.0, 19.4),
-        },
-        Object::Wall {
-            transform: Transform::from_translation(Vec3::new(-12.6, 3.0, 0.0)),
-            size: Vec3::new(0.2, 6.0, 19.4),
-        },
-        Object::Wall {
-            transform: Transform::from_translation(Vec3::new(-6.75, 3.0, -9.6)),
-            size: Vec3::new(11.9, 6.0, 0.2),
-        },
-        Object::Wall {
-            transform: Transform::from_translation(Vec3::new(6.75, 3.0, -9.6)),
-            size: Vec3::new(11.9, 6.0, 0.2),
-        },
-        Object::Wall {
-            transform: Transform::from_translation(Vec3::new(0.0, 4.1, -9.6)),
-            size: Vec3::new(1.6, 3.8, 0.2),
-        },
-    ];
-
-    let lamp_pivot_height = 5.85;
-    let lamp_wire_length = 2.2;
-    let lamps =
-        [(-6.0, -4.5), (6.0, -4.5), (-6.0, 4.5), (6.0, 4.5)].map(|(x_position, z_position)| Object::HangingLamp {
-            transform: Transform::from_translation(Vec3::new(x_position, lamp_pivot_height, z_position)),
-            wire_length: lamp_wire_length,
-        });
-
-    let furniture = [
-        Object::Desk(Transform::from_translation(Vec3::new(
-            -4.0,
-            floor_surface_height,
-            desk_z_position,
-        ))),
-        Object::Desk(Transform::from_translation(Vec3::new(
-            4.0,
-            floor_surface_height,
-            desk_z_position,
-        ))),
-        Object::Laptop(Transform::from_translation(Vec3::new(
-            -4.0,
-            floor_surface_height + laptop_height_above_desk,
-            desk_z_position,
-        ))),
-        Object::Stool(
+    [
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(-4.0, floor_surface_height, desk_z_position)),
+            Desk,
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(4.0, floor_surface_height, desk_z_position)),
+            Desk,
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(
+                -4.0,
+                floor_surface_height + laptop_height_above_desk,
+                desk_z_position,
+            )),
+            Laptop,
+        ),
+        ObjectSpawn::new(
             Transform::from_translation(Vec3::new(-4.0, floor_surface_height, stool_z_position))
                 .with_rotation(half_turn_rotation),
+            Stool,
         ),
-        Object::Stool(
+        ObjectSpawn::new(
             Transform::from_translation(Vec3::new(4.0, floor_surface_height, stool_z_position))
                 .with_rotation(half_turn_rotation),
+            Stool,
         ),
-        Object::StorageRack(
+        ObjectSpawn::new(
             Transform::from_translation(Vec3::new(-12.1, floor_surface_height, 6.5))
                 .with_rotation(storage_rack_rotation),
+            StorageRack,
         ),
-        Object::CardboardBox(Transform::from_translation(Vec3::new(-10.8, floor_surface_height, 7.8))),
-        Object::Jerrycan(Transform::from_translation(Vec3::new(
-            -10.35,
-            floor_surface_height,
-            7.85,
-        ))),
-        Object::PlasticBottleGallon(Transform::from_translation(Vec3::new(
-            -11.15,
-            floor_surface_height,
-            7.85,
-        ))),
-        Object::PowerBox(Transform::from_translation(Vec3::new(-10.0, 2.0, 9.43))),
-        Object::PowerBox(Transform::from_translation(Vec3::new(10.0, 2.0, 9.43))),
-    ];
-
-    structure.into_iter().chain(lamps).chain(furniture).collect()
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(-10.8, floor_surface_height, 7.8)),
+            CardboardBox,
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(-10.35, floor_surface_height, 7.85)),
+            Jerrycan,
+        ),
+        ObjectSpawn::new(
+            Transform::from_translation(Vec3::new(-11.15, floor_surface_height, 7.85)),
+            PlasticBottleGallon,
+        ),
+        ObjectSpawn::new(Transform::from_translation(Vec3::new(-10.0, 2.0, 9.43)), PowerBox),
+        ObjectSpawn::new(Transform::from_translation(Vec3::new(10.0, 2.0, 9.43)), PowerBox),
+    ]
 }

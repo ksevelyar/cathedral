@@ -1,6 +1,8 @@
+mod gltf;
+mod hanging_lamp;
 mod map01;
 mod meshes;
-mod objects;
+mod structure;
 
 use bevy::light::FogVolume;
 use bevy::prelude::*;
@@ -8,7 +10,10 @@ use bevy::transform::TransformSystems;
 
 use crate::enemies::{EnemyKind, spawn_enemy};
 use crate::player;
-use objects::{Object, ObjectSpawnContext};
+
+pub use gltf::{CardboardBox, Desk, Jerrycan, Laptop, PlasticBottleGallon, PowerBox, Stool, StorageRack};
+pub use hanging_lamp::HangingLamp;
+pub use structure::{Ceiling, Floor, Wall};
 
 pub struct MapsPlugin;
 
@@ -17,7 +22,7 @@ impl Plugin for MapsPlugin {
         app.add_systems(Startup, spawn_map.before(player::setup_player))
             .add_systems(
                 FixedPostUpdate,
-                objects::update_lamp_wires.after(TransformSystems::Propagate),
+                hanging_lamp::update_lamp_wires.after(TransformSystems::Propagate),
             );
     }
 }
@@ -26,7 +31,47 @@ pub fn build_map01() -> Map {
     map01::build_map()
 }
 
-#[derive(Clone)]
+pub trait MapObject: Send + Sync {
+    fn spawn(&self, context: &mut SpawnContext, transform: Transform);
+}
+
+pub struct SpawnContext<'commands, 'world, 'state> {
+    pub(crate) commands: &'commands mut Commands<'world, 'state>,
+    pub(crate) asset_server: &'commands AssetServer,
+    pub(crate) meshes: &'commands mut Assets<Mesh>,
+    pub(crate) materials: &'commands mut Assets<StandardMaterial>,
+}
+
+impl<'commands, 'world, 'state> SpawnContext<'commands, 'world, 'state> {
+    pub fn new(
+        commands: &'commands mut Commands<'world, 'state>,
+        asset_server: &'commands AssetServer,
+        meshes: &'commands mut Assets<Mesh>,
+        materials: &'commands mut Assets<StandardMaterial>,
+    ) -> Self {
+        Self {
+            commands,
+            asset_server,
+            meshes,
+            materials,
+        }
+    }
+}
+
+pub struct ObjectSpawn {
+    pub transform: Transform,
+    pub object: Box<dyn MapObject>,
+}
+
+impl ObjectSpawn {
+    pub fn new(transform: Transform, object: impl MapObject + 'static) -> Self {
+        Self {
+            transform,
+            object: Box::new(object),
+        }
+    }
+}
+
 pub struct MapBuilder {
     name: &'static str,
     ambient: GlobalAmbientLight,
@@ -34,7 +79,7 @@ pub struct MapBuilder {
     fog_volume: Option<FogVolumeSettings>,
     player_position: PlayerPosition,
     enemies: Vec<EnemySpawn>,
-    objects: Vec<Object>,
+    objects: Vec<ObjectSpawn>,
 }
 
 impl MapBuilder {
@@ -58,17 +103,11 @@ impl MapBuilder {
     }
 
     pub fn with_floor(self, size: Vec3) -> Self {
-        self.with_object(Object::Floor {
-            transform: Transform::IDENTITY,
-            size,
-        })
+        self.with_object(ObjectSpawn::new(Transform::IDENTITY, Floor { size }))
     }
 
     pub fn with_wall(self, position: Vec3, size: Vec3) -> Self {
-        self.with_object(Object::Wall {
-            transform: Transform::from_translation(position),
-            size,
-        })
+        self.with_object(ObjectSpawn::new(Transform::from_translation(position), Wall { size }))
     }
 
     pub fn with_enemy(mut self, position: Vec3, kind: EnemyKind) -> Self {
@@ -76,7 +115,7 @@ impl MapBuilder {
         self
     }
 
-    fn with_object(mut self, object: Object) -> Self {
+    fn with_object(mut self, object: ObjectSpawn) -> Self {
         self.objects.push(object);
         self
     }
@@ -109,7 +148,7 @@ impl PlayerPosition {
     }
 }
 
-#[derive(Resource, Clone)]
+#[derive(Resource)]
 pub struct Map {
     pub(crate) name: &'static str,
     pub(crate) ambient: GlobalAmbientLight,
@@ -117,7 +156,7 @@ pub struct Map {
     pub(crate) fog_volume: Option<FogVolumeSettings>,
     pub(crate) player_position: PlayerPosition,
     pub(crate) enemies: Vec<EnemySpawn>,
-    pub(crate) objects: Vec<Object>,
+    pub(crate) objects: Vec<ObjectSpawn>,
 }
 
 #[derive(Clone, Copy)]
@@ -134,12 +173,17 @@ pub(crate) struct FogVolumeSettings {
 #[derive(Clone, Copy)]
 pub(crate) struct EnemySpawn {
     pub position: Vec3,
+    pub rotation: Quat,
     pub kind: EnemyKind,
 }
 
 impl EnemySpawn {
     pub fn new(position: Vec3, kind: EnemyKind) -> Self {
-        Self { position, kind }
+        Self {
+            position,
+            rotation: Quat::IDENTITY,
+            kind,
+        }
     }
 }
 
@@ -167,14 +211,11 @@ fn spawn_map(
             Transform::from_translation(fog_volume.center).with_scale(fog_volume.size),
         ));
     }
-    {
-        let mut object_spawn_context =
-            ObjectSpawnContext::new(&mut commands, &asset_server, &mut meshes, &mut materials);
-        for object in map.objects.clone() {
-            object.spawn(&mut object_spawn_context);
-        }
+    let mut spawn_context = SpawnContext::new(&mut commands, &asset_server, &mut meshes, &mut materials);
+    for object_spawn in &map.objects {
+        object_spawn.object.spawn(&mut spawn_context, object_spawn.transform);
     }
-    spawn_enemies(&mut commands, &asset_server, &map.enemies);
+    spawn_enemies(&mut *spawn_context.commands, spawn_context.asset_server, &map.enemies);
 }
 
 fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &[EnemySpawn]) {
@@ -184,7 +225,7 @@ fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &
             asset_server,
             enemy_spawn.kind,
             enemy_index,
-            Transform::from_translation(enemy_spawn.position),
+            Transform::from_translation(enemy_spawn.position).with_rotation(enemy_spawn.rotation),
             true,
         );
     }

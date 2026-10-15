@@ -535,7 +535,8 @@ fn build_blood_mark_mesh(
                     projected_coordinate.x * rotation_sine + projected_coordinate.y * rotation_cosine,
                 );
                 let ultraviolet_coordinate = rotated_coordinate / (outer_spray_radius * 2.0) + Vec2::splat(0.5);
-                let copied_vertex_index = positions.len() as u32;
+                let copied_vertex_index =
+                    u32::try_from(positions.len()).expect("blood mark mesh vertex count exceeds u32 index capacity");
                 copied_vertices.insert(source_vertex_index, copied_vertex_index);
                 positions.push((source_vertex.position + source_vertex.normal * BLOOD_MARK_SURFACE_OFFSET).to_array());
                 normals.push(source_vertex.normal.to_array());
