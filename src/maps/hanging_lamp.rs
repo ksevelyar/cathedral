@@ -1,266 +1,69 @@
 use avian3d::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::visibility::RenderLayers;
-use bevy::gltf::GltfAssetLabel;
 use bevy::light::VolumetricLight;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
-use super::meshes::{CYLINDER_RADIAL_SEGMENTS, build_cuboid_mesh, make_cylinder_mesh};
+use super::meshes::{CYLINDER_RADIAL_SEGMENTS, build_cylinder_mesh};
+use super::{MapObject, SpawnContext};
 use crate::ragdoll::{OBJECTS_GROUP, WORLD_GROUP};
 
-#[derive(Clone)]
-pub enum Object {
-    Desk(Transform),
-    Laptop(Transform),
-    Stool(Transform),
-    StorageRack(Transform),
-    CardboardBox(Transform),
-    Jerrycan(Transform),
-    PlasticBottleGallon(Transform),
-    PowerBox(Transform),
-    Floor { transform: Transform, size: Vec3 },
-    Ceiling { transform: Transform, size: Vec3 },
-    Wall { transform: Transform, size: Vec3 },
-    HangingLamp { transform: Transform, wire_length: f32 },
+const LAMP_SHADE_HEIGHT: f32 = 0.1;
+
+pub struct HangingLamp {
+    pub wire_length: f32,
 }
 
-pub(super) struct ObjectSpawnContext<'commands, 'world, 'state> {
-    commands: &'commands mut Commands<'world, 'state>,
-    asset_server: &'commands AssetServer,
-    meshes: &'commands mut Assets<Mesh>,
-    materials: &'commands mut Assets<StandardMaterial>,
-}
-
-impl<'commands, 'world, 'state> ObjectSpawnContext<'commands, 'world, 'state> {
-    pub(super) fn new(
-        commands: &'commands mut Commands<'world, 'state>,
-        asset_server: &'commands AssetServer,
-        meshes: &'commands mut Assets<Mesh>,
-        materials: &'commands mut Assets<StandardMaterial>,
-    ) -> Self {
-        Self {
-            commands,
-            asset_server,
-            meshes,
-            materials,
-        }
+impl MapObject for HangingLamp {
+    fn spawn(&self, context: &mut SpawnContext, pivot_transform: Transform) {
+        let pivot_position = pivot_transform.translation;
+        let lamp_materials = build_lamp_materials(context);
+        let pivot_anchor = context
+            .commands
+            .spawn((RigidBody::Static, Transform::from_translation(pivot_position)))
+            .id();
+        let cable = build_cable(context, pivot_position, self.wire_length);
+        let lamp_body = spawn_lamp_shade(
+            context,
+            pivot_position,
+            self.wire_length,
+            cable.last_link,
+            cable.link_length,
+            lamp_materials.shade.clone(),
+        );
+        spawn_lamp_wire(
+            context,
+            pivot_position,
+            self.wire_length,
+            pivot_anchor,
+            &cable,
+            lamp_body,
+            lamp_materials.shade,
+        );
+        spawn_lamp_light(context, lamp_body, lamp_materials.reflector, lamp_materials.diffuser);
     }
 }
 
-impl Object {
-    pub(super) fn spawn(self, context: &mut ObjectSpawnContext) {
-        match self {
-            Self::Desk(transform) => spawn_desk(context, transform),
-            Self::Laptop(transform) => spawn_laptop(context, transform),
-            Self::Stool(transform) => spawn_stool(context, transform),
-            Self::StorageRack(transform) => spawn_storage_rack(context, transform),
-            Self::CardboardBox(transform) => spawn_cardboard_box(context, transform),
-            Self::Jerrycan(transform) => spawn_jerrycan(context, transform),
-            Self::PlasticBottleGallon(transform) => spawn_plastic_bottle_gallon(context, transform),
-            Self::PowerBox(transform) => spawn_power_box(context, transform),
-            Self::Floor { transform, size } => spawn_floor(context, transform, size),
-            Self::Ceiling { transform, size } => spawn_ceiling(context, transform, size),
-            Self::Wall { transform, size } => spawn_wall(context, transform, size),
-            Self::HangingLamp { transform, wire_length } => spawn_hanging_lamp(context, transform, wire_length),
-        }
-    }
+struct LampMaterials {
+    shade: Handle<StandardMaterial>,
+    reflector: Handle<StandardMaterial>,
+    diffuser: Handle<StandardMaterial>,
 }
 
-fn spawn_desk(context: &mut ObjectSpawnContext, transform: Transform) {
-    spawn_dynamic_gltf_object(
-        context,
-        transform,
-        "desk",
-        "objects/table/metal_office_desk_2k.gltf",
-        Collider::cuboid(2.0, 0.788, 0.947),
-        Transform::from_translation(Vec3::new(0.0, 0.394, 0.0)),
-        ColliderDensity(300.0),
-    );
+struct LampCable {
+    link_bodies: Vec<Entity>,
+    link_positions: Vec<Vec3>,
+    link_length: f32,
+    last_link: Entity,
 }
 
-fn spawn_laptop(context: &mut ObjectSpawnContext, transform: Transform) {
-    spawn_dynamic_gltf_object(
-        context,
-        transform,
-        "laptop",
-        "objects/classic-laptop/classic_laptop_2k.gltf",
-        Collider::cuboid(0.66, 0.46, 0.49),
-        Transform::from_translation(Vec3::new(0.0, 0.23, 0.0)),
-        ColliderDensity(1000.0),
-    );
-}
-
-fn spawn_stool(context: &mut ObjectSpawnContext, transform: Transform) {
-    spawn_dynamic_gltf_object(
-        context,
-        transform,
-        "stool",
-        "objects/metal-stool/metal_stool_03_2k.gltf",
-        Collider::cuboid(0.46, 1.024, 0.47),
-        Transform::from_translation(Vec3::new(0.0, 0.512, 0.0)),
-        ColliderDensity(500.0),
-    );
-}
-
-fn spawn_storage_rack(context: &mut ObjectSpawnContext, transform: Transform) {
-    spawn_dynamic_gltf_object(
-        context,
-        transform,
-        "storage rack",
-        "objects/worn-metal-rack/worn_metal_rack_2k.gltf",
-        Collider::cuboid(0.92, 1.9, 0.6),
-        Transform::from_translation(Vec3::new(0.0, 0.95, 0.0)),
-        ColliderDensity(300.0),
-    );
-}
-
-fn spawn_cardboard_box(context: &mut ObjectSpawnContext, transform: Transform) {
-    spawn_dynamic_gltf_object(
-        context,
-        transform,
-        "cardboard box",
-        "objects/cardboard-box/cardboard_box_01_2k.gltf",
-        Collider::cuboid(0.39, 0.34, 0.52),
-        Transform::from_translation(Vec3::new(0.0, 0.17, 0.03)),
-        ColliderDensity(100.0),
-    );
-}
-
-fn spawn_jerrycan(context: &mut ObjectSpawnContext, transform: Transform) {
-    spawn_dynamic_gltf_object(
-        context,
-        transform,
-        "jerrycan",
-        "objects/metal-jerrycan/metal_jerrycan_2k.gltf",
-        Collider::cuboid(0.35, 0.455, 0.172),
-        Transform::from_translation(Vec3::new(0.005, 0.228, -0.003)),
-        ColliderDensity(500.0),
-    );
-}
-
-fn spawn_plastic_bottle_gallon(context: &mut ObjectSpawnContext, transform: Transform) {
-    spawn_dynamic_gltf_object(
-        context,
-        transform,
-        "plastic bottle gallon",
-        "objects/plastic-bottle-gallon/plastic_bottle_gallon_2k.gltf",
-        Collider::cuboid(0.166, 0.275, 0.126),
-        Transform::from_translation(Vec3::new(-0.005, 0.137, -0.002)),
-        ColliderDensity(100.0),
-    );
-}
-
-fn spawn_power_box(context: &mut ObjectSpawnContext, transform: Transform) {
-    let asset_path = "objects/power-box/power_box_01_2k.gltf";
-    let scene = context
-        .asset_server
-        .load(GltfAssetLabel::Scene(0).from_asset(asset_path));
-    let collider = Collider::cuboid(0.35, 0.51, 0.12);
-    let density = ColliderDensity(500.0);
-    context
-        .commands
-        .spawn((
-            Name::new("power box"),
-            transform,
-            WorldAssetRoot(scene),
-            RigidBody::Static,
-        ))
-        .with_children(|object_parent| {
-            object_parent.spawn((collider, density, CollisionLayers::new(WORLD_GROUP, OBJECTS_GROUP)));
-        });
-}
-
-fn spawn_dynamic_gltf_object(
-    context: &mut ObjectSpawnContext,
-    transform: Transform,
-    name: &'static str,
-    asset_path: &'static str,
-    collider: Collider,
-    collider_transform: Transform,
-    density: ColliderDensity,
-) {
-    let scene = context
-        .asset_server
-        .load(GltfAssetLabel::Scene(0).from_asset(asset_path));
-    let object_linear_damping = 0.5;
-    let object_angular_damping = 8.0;
-    context
-        .commands
-        .spawn((
-            Name::new(name),
-            transform,
-            WorldAssetRoot(scene),
-            RigidBody::Dynamic,
-            LinearDamping(object_linear_damping),
-            AngularDamping(object_angular_damping),
-        ))
-        .with_children(|object_parent| {
-            object_parent.spawn((
-                collider,
-                collider_transform,
-                density,
-                CollisionLayers::new(OBJECTS_GROUP, WORLD_GROUP | OBJECTS_GROUP),
-            ));
-        });
-}
-
-fn spawn_floor(context: &mut ObjectSpawnContext, transform: Transform, size: Vec3) {
-    let concrete_tile_size = 2.0;
-    spawn_concrete_cuboid(context, transform, size, concrete_tile_size);
-}
-
-fn spawn_ceiling(context: &mut ObjectSpawnContext, transform: Transform, size: Vec3) {
-    let concrete_tile_size = 3.0;
-    spawn_concrete_cuboid(context, transform, size, concrete_tile_size);
-}
-
-fn spawn_wall(context: &mut ObjectSpawnContext, transform: Transform, size: Vec3) {
-    let concrete_tile_size = 3.0;
-    spawn_concrete_cuboid(context, transform, size, concrete_tile_size);
-}
-
-fn spawn_concrete_cuboid(context: &mut ObjectSpawnContext, transform: Transform, size: Vec3, tile_size: f32) {
-    let texture_directory = "textures/concrete-floor";
-    let material = context.materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(context.asset_server.load(format!("{texture_directory}/base-color.jpg"))),
-        normal_map_texture: Some(context.asset_server.load(format!("{texture_directory}/normal.png"))),
-        perceptual_roughness: 0.85,
-        ..default()
-    });
-    context.commands.spawn((
-        Mesh3d(context.meshes.add(build_cuboid_mesh(size, tile_size))),
-        MeshMaterial3d(material),
-        RigidBody::Static,
-        Collider::cuboid(size.x, size.y, size.z),
-        transform,
-    ));
-}
-
-fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transform, wire_length: f32) {
-    let pivot_position = pivot_transform.translation;
+fn build_lamp_materials(context: &mut SpawnContext) -> LampMaterials {
     let lamp_shade_color = Color::srgb(0.02, 0.02, 0.02);
     let lamp_light_color = Color::srgb(1.0, 0.95, 0.88);
     let lamp_reflector_color = Color::srgb(0.08, 0.08, 0.07);
     let lamp_diffuser_color = lamp_light_color;
     let lamp_diffuser_luminance = 2_000.0;
-    let lamp_shade_radius = 0.3;
-    let lamp_shade_height = 0.1;
-    let lamp_reflector_radius = 0.26;
-    let lamp_reflector_height = 0.02;
-    let lamp_diffuser_radius = 0.22;
-    let lamp_diffuser_height = 0.01;
-    let lamp_wire_radius = 0.02;
-    let lamp_shade_mass = 16.0;
-    let links_per_meter = 10.0;
-    let cable_particle_radius = 0.04;
-    let link_mass_per_meter = 2.5;
-    let lamp_linear_damping = 0.09;
-    let lamp_angular_damping = 1.0;
-    let link_linear_damping = 0.3;
-    let link_angular_damping = 32.0;
-
     let shade_material = context.materials.add(StandardMaterial {
         base_color: lamp_shade_color,
         perceptual_roughness: 0.9,
@@ -278,16 +81,24 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
         perceptual_roughness: 0.9,
         ..default()
     });
-    let wire_material = shade_material.clone();
+    LampMaterials {
+        shade: shade_material,
+        reflector: reflector_material,
+        diffuser: diffuser_material,
+    }
+}
 
-    let pivot_anchor = context
-        .commands
-        .spawn((RigidBody::Static, Transform::from_translation(pivot_position)))
-        .id();
-    let link_count = (wire_length * links_per_meter).round() as usize;
+fn build_cable(context: &mut SpawnContext, pivot_position: Vec3, wire_length: f32) -> LampCable {
+    let links_per_meter = 10.0;
+    let cable_particle_radius = 0.04;
+    let link_mass_per_meter = 2.5;
+    let link_linear_damping = 0.3;
+    let link_angular_damping = 32.0;
+    let rounded_link_count = (wire_length * links_per_meter).round();
+    let link_count = usize::try_from(rounded_link_count as i64).expect("lamp cable link count should fit into usize");
     let link_length = wire_length / link_count as f32;
 
-    let mut previous_body = pivot_anchor;
+    let mut previous_body_result = spawn_lamp_pivot_anchor(context, pivot_position);
     let mut link_bodies = Vec::with_capacity(link_count);
     let mut link_positions = Vec::with_capacity(link_count);
     for link_index in 0..link_count {
@@ -311,30 +122,55 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
             link_length
         };
         context.commands.spawn((
-            DistanceJoint::new(previous_body, link_body)
+            DistanceJoint::new(previous_body_result, link_body)
                 .with_limits(distance_to_previous_body, distance_to_previous_body),
             JointCollisionDisabled,
         ));
         link_bodies.push(link_body);
         link_positions.push(link_position);
-        previous_body = link_body;
+        previous_body_result = link_body;
     }
+    LampCable {
+        link_bodies,
+        link_positions,
+        link_length,
+        last_link: previous_body_result,
+    }
+}
 
-    let shade_distance_below_pivot = wire_length + lamp_shade_height * 0.5;
+fn spawn_lamp_pivot_anchor(context: &mut SpawnContext, pivot_position: Vec3) -> Entity {
+    context
+        .commands
+        .spawn((RigidBody::Static, Transform::from_translation(pivot_position)))
+        .id()
+}
+
+fn spawn_lamp_shade(
+    context: &mut SpawnContext,
+    pivot_position: Vec3,
+    wire_length: f32,
+    previous_body: Entity,
+    link_length: f32,
+    shade_material: Handle<StandardMaterial>,
+) -> Entity {
+    let lamp_shade_radius = 0.3;
+    let lamp_shade_mass = 16.0;
+    let lamp_linear_damping = 0.09;
+    let lamp_angular_damping = 1.0;
+    let shade_distance_below_pivot = wire_length + LAMP_SHADE_HEIGHT * 0.5;
     let shade_position = pivot_position + Vec3::Y * -shade_distance_below_pivot;
-    let shade_collider = Collider::cylinder(lamp_shade_radius, lamp_shade_height);
+    let shade_collider = Collider::cylinder(lamp_shade_radius, LAMP_SHADE_HEIGHT);
     let lamp_body = context
         .commands
         .spawn((
             Name::new("Lamp shade"),
             RigidBody::Dynamic,
-            HangingLamp,
             LampShade,
             Visibility::default(),
             Transform::from_translation(shade_position),
-            Mesh3d(context.meshes.add(make_cylinder_mesh(
+            Mesh3d(context.meshes.add(build_cylinder_mesh(
                 lamp_shade_radius,
-                lamp_shade_height,
+                LAMP_SHADE_HEIGHT,
                 CYLINDER_RADIAL_SEGMENTS,
                 1.0,
             ))),
@@ -349,15 +185,30 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
     let shade_attachment_distance = link_length * 0.5;
     context.commands.spawn((
         DistanceJoint::new(previous_body, lamp_body)
-            .with_local_anchor2(Vec3::Y * lamp_shade_height * 0.5)
+            .with_local_anchor2(Vec3::Y * LAMP_SHADE_HEIGHT * 0.5)
             .with_limits(shade_attachment_distance, shade_attachment_distance),
         JointCollisionDisabled,
     ));
+    lamp_body
+}
 
+fn spawn_lamp_wire(
+    context: &mut SpawnContext,
+    pivot_position: Vec3,
+    wire_length: f32,
+    pivot_anchor: Entity,
+    cable: &LampCable,
+    lamp_body: Entity,
+    wire_material: Handle<StandardMaterial>,
+) {
+    let lamp_wire_radius = 0.02;
+    let shade_distance_below_pivot = wire_length + LAMP_SHADE_HEIGHT * 0.5;
+    let shade_position = pivot_position + Vec3::Y * -shade_distance_below_pivot;
+    let shade_attachment_offset = Vec3::Y * LAMP_SHADE_HEIGHT * 0.5;
     let initial_wire_points = collect_lamp_wire_points(
         pivot_position,
-        &link_positions,
-        shade_position + Vec3::Y * lamp_shade_height * 0.5,
+        &cable.link_positions,
+        shade_position + shade_attachment_offset,
     );
     let wire_mesh = context
         .meshes
@@ -365,10 +216,10 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
     context.commands.spawn((
         LampWire {
             mesh: wire_mesh.clone(),
-            links: link_bodies,
+            links: cable.link_bodies.clone(),
             ceiling_anchor: pivot_anchor,
             shade: lamp_body,
-            shade_attachment: Vec3::Y * lamp_shade_height * 0.5,
+            shade_attachment: shade_attachment_offset,
             radius: lamp_wire_radius,
         },
         Mesh3d(wire_mesh),
@@ -376,18 +227,29 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
         Transform::default(),
         Visibility::default(),
     ));
+}
 
-    let commands = &mut *context.commands;
-    let meshes = &mut *context.meshes;
+fn spawn_lamp_light(
+    context: &mut SpawnContext,
+    lamp_body: Entity,
+    reflector_material: Handle<StandardMaterial>,
+    diffuser_material: Handle<StandardMaterial>,
+) {
+    let lamp_reflector_radius = 0.26;
+    let lamp_reflector_height = 0.02;
+    let lamp_diffuser_radius = 0.22;
+    let lamp_diffuser_height = 0.01;
     let lamp_cone_intensity = 65_000.0;
     let lamp_cone_range = 7.0;
     let lamp_cone_inner_angle = 25.0_f32.to_radians();
     let lamp_cone_outer_angle = 55.0_f32.to_radians();
-    let reflector_center = Vec3::Y * -(lamp_shade_height * 0.5 + lamp_reflector_height * 0.5);
-    let diffuser_center = Vec3::Y * -(lamp_shade_height * 0.5 + lamp_reflector_height + lamp_diffuser_height * 0.5);
+    let reflector_center = Vec3::Y * -(LAMP_SHADE_HEIGHT * 0.5 + lamp_reflector_height * 0.5);
+    let diffuser_center = Vec3::Y * -(LAMP_SHADE_HEIGHT * 0.5 + lamp_reflector_height + lamp_diffuser_height * 0.5);
+    let meshes = &mut *context.meshes;
+    let commands = &mut *context.commands;
     commands.entity(lamp_body).with_children(|lamp_parts| {
         lamp_parts.spawn((
-            Mesh3d(meshes.add(make_cylinder_mesh(
+            Mesh3d(meshes.add(build_cylinder_mesh(
                 lamp_reflector_radius,
                 lamp_reflector_height,
                 CYLINDER_RADIAL_SEGMENTS,
@@ -397,7 +259,7 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
             Transform::from_translation(reflector_center),
         ));
         lamp_parts.spawn((
-            Mesh3d(meshes.add(make_cylinder_mesh(
+            Mesh3d(meshes.add(build_cylinder_mesh(
                 lamp_diffuser_radius,
                 lamp_diffuser_height,
                 CYLINDER_RADIAL_SEGMENTS,
@@ -408,7 +270,7 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
         ));
         lamp_parts.spawn((
             SpotLight {
-                color: lamp_light_color,
+                color: Color::srgb(1.0, 0.95, 0.88),
                 intensity: lamp_cone_intensity,
                 range: lamp_cone_range,
                 inner_angle: lamp_cone_inner_angle,
@@ -425,9 +287,6 @@ fn spawn_hanging_lamp(context: &mut ObjectSpawnContext, pivot_transform: Transfo
 }
 
 #[derive(Component)]
-pub struct HangingLamp;
-
-#[derive(Component)]
 pub struct LampShade;
 
 #[derive(Component)]
@@ -440,7 +299,7 @@ pub(crate) struct LampWire {
     radius: f32,
 }
 
-pub(crate) fn update_lamp_wires(
+pub(super) fn update_lamp_wires(
     lamp_wires: Query<&LampWire>,
     global_transforms: Query<&GlobalTransform>,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -573,7 +432,8 @@ fn build_lamp_wire_indices(point_count: usize) -> Vec<u32> {
     let face_count = (point_count - 1) * radial_segments as usize;
     let mut indices = Vec::with_capacity(face_count * 6);
     for point_index in 0..point_count - 1 {
-        let current_ring_start = point_index as u32 * vertices_per_ring;
+        let current_ring_start =
+            u32::try_from(point_index).expect("lamp wire point count exceeds u32 index capacity") * vertices_per_ring;
         let next_ring_start = current_ring_start + vertices_per_ring;
         for segment_index in 0..radial_segments {
             indices.extend([

@@ -167,7 +167,7 @@ pub(crate) struct ManualAnimationControl;
 #[derive(Component)]
 struct EnemyWeapon(Entity);
 
-pub fn spawn_enemy(
+pub(crate) fn spawn_enemy(
     commands: &mut Commands,
     asset_server: &AssetServer,
     kind: EnemyKind,

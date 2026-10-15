@@ -3,7 +3,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
-use rand::Rng;
+use rand::{Rng, SeedableRng, rngs::StdRng};
 
 use super::{
     AliveEnemy, AnimationState, BoneMap, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity,
@@ -104,7 +104,8 @@ fn spawn_gunner_hair(
     let Ok(seed) = seeds.get(scene_ready.entity) else {
         return;
     };
-    let hair_index = (seed.calculate_unit_value(7) * GUNNER_HAIR_ASSETS.len() as f32) as usize;
+    let mut random_number_generator = StdRng::seed_from_u64(seed.0);
+    let hair_index = random_number_generator.random_range(0..GUNNER_HAIR_ASSETS.len());
     let hair_asset_path = GUNNER_HAIR_ASSETS[hair_index];
     commands.entity(scene_ready.entity).with_child((
         GunnerHair {

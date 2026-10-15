@@ -16,7 +16,7 @@ pub(super) fn build_cuboid_mesh(size: Vec3, tile_size: f32) -> Mesh {
         let half_extent_along_bitangent = size.dot(bitangent.abs()) * 0.5;
         let extent_along_tangent = half_extent_along_tangent * 2.0 / tile_size;
         let extent_along_bitangent = half_extent_along_bitangent * 2.0 / tile_size;
-        let first_vertex = positions.len() as u32;
+        let first_vertex = u32::try_from(positions.len()).expect("cuboid mesh vertex count exceeds u32 index capacity");
         for (tangent_sign, bitangent_sign) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
             positions.push(
                 (face_center
@@ -39,7 +39,7 @@ pub(super) fn build_cuboid_mesh(size: Vec3, tile_size: f32) -> Mesh {
             first_vertex + 3,
         ]);
     }
-    make_triangle_list_mesh(positions, normals, uvs, indices)
+    build_triangle_list_mesh(positions, normals, uvs, indices)
 }
 
 fn build_cuboid_faces() -> [(Vec3, Vec3, Vec3); 6] {
@@ -53,7 +53,7 @@ fn build_cuboid_faces() -> [(Vec3, Vec3, Vec3); 6] {
     ]
 }
 
-pub(super) fn make_cylinder_mesh(radius: f32, height: f32, radial_segments: u32, tile_size: f32) -> Mesh {
+pub(super) fn build_cylinder_mesh(radius: f32, height: f32, radial_segments: u32, tile_size: f32) -> Mesh {
     let half_height = height * 0.5;
     let side_extent = 2.0 * std::f32::consts::PI * radius / tile_size;
     let cap_uv_radius = radius / tile_size;
@@ -87,11 +87,12 @@ pub(super) fn make_cylinder_mesh(radius: f32, height: f32, radial_segments: u32,
     }
 
     for (normal, center_y) in [(Vec3::Y, half_height), (-Vec3::Y, -half_height)] {
-        let cap_center_vertex = positions.len() as u32;
+        let cap_center_vertex =
+            u32::try_from(positions.len()).expect("cylinder mesh vertex count exceeds u32 index capacity");
         positions.push([0.0, center_y, 0.0]);
         normals.push(normal.into());
         uvs.push([0.5, 0.5]);
-        let ring_base = positions.len() as u32;
+        let ring_base = u32::try_from(positions.len()).expect("cylinder mesh vertex count exceeds u32 index capacity");
         for segment in 0..=radial_segments {
             let angle = 2.0 * std::f32::consts::PI * segment as f32 / radial_segments as f32;
             let (sine, cosine) = angle.sin_cos();
@@ -108,10 +109,10 @@ pub(super) fn make_cylinder_mesh(radius: f32, height: f32, radial_segments: u32,
         }
     }
 
-    make_triangle_list_mesh(positions, normals, uvs, indices)
+    build_triangle_list_mesh(positions, normals, uvs, indices)
 }
 
-fn make_triangle_list_mesh(
+fn build_triangle_list_mesh(
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     uvs: Vec<[f32; 2]>,

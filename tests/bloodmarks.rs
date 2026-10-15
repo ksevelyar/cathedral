@@ -1,9 +1,8 @@
 use avian3d::prelude::*;
-use bevy::ecs::world::CommandQueue;
 use bevy::mesh::{Mesh, Mesh3d, VertexAttributeValues};
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::enemies::{EnemyKind, spawn_enemy};
+use cathedral::enemies::{Enemy, EnemyKind};
 use cathedral::maps::{Map, MapBuilder};
 use cathedral::player::{Player, PlayerCamera};
 use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
@@ -18,6 +17,7 @@ fn build_map(player_position: Vec3) -> Map {
     MapBuilder::new("bloodmarks")
         .with_player_position(player_position, player_position + Vec3::NEG_Z)
         .with_floor(floor_size)
+        .with_enemy(Vec3::new(0.0, 0.5, 0.0), EnemyKind::Gunner)
         .build()
 }
 
@@ -58,23 +58,23 @@ fn simulate_gunner() -> (App, Entity) {
     app.world_mut()
         .resource_mut::<NextState<GameState>>()
         .set(GameState::Paused);
-    let mut command_queue = CommandQueue::default();
-    let asset_server = app.world().resource::<AssetServer>().clone();
-    let enemy = spawn_enemy(
-        &mut Commands::new(&mut command_queue, app.world_mut()),
-        &asset_server,
-        EnemyKind::Gunner,
-        0,
-        Transform::from_xyz(0.0, 0.5, 0.0),
-        true,
-    );
-    command_queue.apply(app.world_mut());
+    app.update();
+    let enemy = find_gunner_by_name(&mut app);
     wait_for_inert_ragdoll(&mut app, enemy);
     app.world_mut()
         .resource_mut::<NextState<GameState>>()
         .set(GameState::Playing);
     run_updates(&mut app, 160);
     (app, enemy)
+}
+
+fn find_gunner_by_name(app: &mut App) -> Entity {
+    app.world_mut()
+        .query_filtered::<(Entity, &Name), With<Enemy>>()
+        .iter(app.world())
+        .find(|(_, name)| name.as_str() == "Gunner 1")
+        .map(|(entity, _)| entity)
+        .unwrap_or_else(|| panic!("gunner should spawn with the map"))
 }
 
 fn find_ragdoll_body(app: &mut App, enemy: Entity, part: RagdollBodyPart) -> Entity {
