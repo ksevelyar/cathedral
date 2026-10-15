@@ -66,6 +66,7 @@ impl Default for Fighter {
 pub(super) fn spawn(
     commands: &mut Commands,
     asset_server: &AssetServer,
+    seed: Seed,
     sequence_number: usize,
     transform: Transform,
     alive: bool,
@@ -76,8 +77,15 @@ pub(super) fn spawn(
         rig: fighter.rig.clone(),
         starting_health: fighter.starting_health,
     };
-    let fighter_entity = spawn_enemy_base(commands, asset_server, definition, sequence_number, transform, alive);
-    let seed = Seed(sequence_number as u64);
+    let fighter_entity = spawn_enemy_base(
+        commands,
+        asset_server,
+        definition,
+        seed,
+        sequence_number,
+        transform,
+        alive,
+    );
     let cooldown_jitter_range = 0.15;
     let cooldown_multiplier = 1.0 + (seed.calculate_unit_value(6) * 2.0 - 1.0) * cooldown_jitter_range;
     commands

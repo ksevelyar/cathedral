@@ -7,6 +7,7 @@ pub mod support;
 fn get_current_game_state(app: &mut App) -> GameState {
     app.world().resource::<State<GameState>>().get().clone()
 }
+use bevy::world_serialization::WorldAssetRoot;
 use cathedral::app::build_test_app;
 use cathedral::enemies::{Dying, EnemyKind, spawn_enemy};
 use cathedral::health::Health;
@@ -16,7 +17,6 @@ use cathedral::player::{PlayerCamera, PlayerDead};
 use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
 use cathedral::shooting::Weapon;
 use cathedral::state::GameState;
-use bevy::world_serialization::WorldAssetRoot;
 use std::time::Duration;
 
 fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
@@ -366,11 +366,7 @@ fn gunner_loads_one_hairstyle() {
                     .count()
             })
             .unwrap_or_default();
-        stable_updates = if hair_root_count == 1 {
-            stable_updates + 1
-        } else {
-            0
-        };
+        stable_updates = if hair_root_count == 1 { stable_updates + 1 } else { 0 };
         if stable_updates == required_stable_updates {
             return;
         }

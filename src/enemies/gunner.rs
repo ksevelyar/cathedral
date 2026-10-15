@@ -155,6 +155,7 @@ fn get_weapon_mount_transform() -> Transform {
 pub(super) fn spawn(
     commands: &mut Commands,
     asset_server: &AssetServer,
+    seed: Seed,
     sequence_number: usize,
     transform: Transform,
     alive: bool,
@@ -165,8 +166,15 @@ pub(super) fn spawn(
         rig: gunner.rig.clone(),
         starting_health: gunner.starting_health,
     };
-    let gunner_entity = spawn_enemy_base(commands, asset_server, definition, sequence_number, transform, alive);
-    let seed = Seed(sequence_number as u64);
+    let gunner_entity = spawn_enemy_base(
+        commands,
+        asset_server,
+        definition,
+        seed,
+        sequence_number,
+        transform,
+        alive,
+    );
     commands.entity(gunner_entity).insert((
         gunner,
         GunnerAttack::default(),
