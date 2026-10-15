@@ -206,7 +206,7 @@ fn toggle_animation_pause(
 
 fn toggle_colliders(keyboard: Res<ButtonInput<KeyCode>>, mut gizmo_configs: ResMut<GizmoConfigStore>) {
     if keyboard.just_pressed(KeyCode::KeyC) {
-        let collider_gizmos = &mut gizmo_configs.config_mut::<PhysicsGizmos>().0;
+        let collider_gizmos = &mut *gizmo_configs.config_mut::<PhysicsGizmos>().0;
         collider_gizmos.enabled = !collider_gizmos.enabled;
     }
 }
@@ -304,7 +304,7 @@ fn update_mount_display(
         return;
     };
     let (yaw, pitch, roll) = weapon.rotation.to_euler(EulerRot::YXZ);
-    let animation_index = animations.single().map(|animation| animation.current).unwrap_or(0);
+    let animation_index = animations.single().map_or(0, |animation| animation.current);
     let animation_name = get_animation_name(animation_index);
     let display = format!(
         "Weapon mount\ntranslation: {:.4}, {:.4}, {:.4}\nrotation YXZ: {:.4}, {:.4}, {:.4}\nscale: {:.4}, {:.4}, {:.4}\n\nAnimation: {animation_index}/42 {animation_name}\nArrow keys: previous and next animation\nP: pause animation\nC: toggle colliders",

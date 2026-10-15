@@ -130,7 +130,7 @@ fn restart_game(
         restart_context.commands.entity(entity).despawn();
     }
     for body_entities in restart_context.player_bodies.iter() {
-        for body_entity in body_entities.list_bodies().iter() {
+        for body_entity in body_entities.list_bodies() {
             restart_context.commands.entity(*body_entity).despawn();
         }
     }

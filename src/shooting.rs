@@ -15,7 +15,6 @@ pub use muzzle_flash::{
 
 pub(crate) use muzzle_flash::observe_muzzle_flash;
 
-use crate::blood::BulletHitCharacter;
 use crate::enemies::EnemyHit;
 use crate::health::{CharacterDamaged, Health};
 use crate::player::{Player, PlayerCamera};
@@ -142,6 +141,7 @@ struct RangedWeaponDefinition {
     collider_half_extents: Vec3,
     bullet_mass: f32,
     bullet_speed: f32,
+    caliber: f32,
     damage: f32,
     range: f32,
     attack_sound_path: &'static str,
@@ -160,6 +160,7 @@ const REVOLVER_2_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
     collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
     bullet_mass: 0.1165,
     bullet_speed: 670.0,
+    caliber: 0.0091,
     damage: 40.0,
     range: 100.0,
     attack_sound_path: "weapons/revolver.mp3",
@@ -175,6 +176,7 @@ const SHOTGUN_SHORT_STOCK_DEFINITION: RangedWeaponDefinition = RangedWeaponDefin
     collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
     bullet_mass: 0.233,
     bullet_speed: 1340.0,
+    caliber: 0.0185,
     damage: 30.0,
     range: 100.0,
     attack_sound_path: "weapons/shotgun.mp3",
@@ -190,6 +192,7 @@ const SHOTGUN_SAWED_OFF_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinit
     collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
     bullet_mass: 0.233,
     bullet_speed: 1340.0,
+    caliber: 0.0185,
     damage: 30.0,
     range: 100.0,
     attack_sound_path: "weapons/shotgun.mp3",
@@ -205,6 +208,7 @@ const SUBMACHINE_GUN_3_DEFINITION: RangedWeaponDefinition = RangedWeaponDefiniti
     collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
     bullet_mass: 0.05825,
     bullet_speed: 335.0,
+    caliber: 0.009,
     damage: 12.0,
     range: 100.0,
     attack_sound_path: "weapons/submachine-gun.mp3",
@@ -220,6 +224,7 @@ const PISTOL_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
     collider_half_extents: WEAPON_COLLIDER_HALF_EXTENTS,
     bullet_mass: 0.1165,
     bullet_speed: 670.0,
+    caliber: 0.009,
     damage: 25.0,
     range: 100.0,
     attack_sound_path: "weapons/pistol.mp3",
@@ -261,6 +266,10 @@ impl RangedWeapon {
 
     fn get_bullet_speed(self) -> f32 {
         self.definition.bullet_speed
+    }
+
+    pub fn get_caliber(self) -> f32 {
+        self.definition.caliber
     }
 
     fn get_damage(self) -> f32 {
@@ -752,7 +761,6 @@ pub(crate) struct HitContext<'w, 's> {
 pub(crate) fn shoot(
     mut weapon_fired: MessageReader<WeaponFired>,
     mut character_damaged: MessageWriter<CharacterDamaged>,
-    mut bullet_hit_characters: MessageWriter<BulletHitCharacter>,
     spatial_query: SpatialQuery,
     hit_context: HitContext,
     mut prop_bodies: Query<Forces>,
@@ -760,6 +768,9 @@ pub(crate) fn shoot(
 ) {
     for weapon_fired_message in weapon_fired.read() {
         let Some(bullet_momentum) = compute_bullet_momentum(weapon_fired_message.weapon) else {
+            continue;
+        };
+        let Weapon::Ranged(ranged_weapon) = weapon_fired_message.weapon else {
             continue;
         };
         let origin = weapon_fired_message.origin;
@@ -784,24 +795,18 @@ pub(crate) fn shoot(
                 attacker: weapon_fired_message.shooter_entity,
                 body_part: Some(*body_part),
             });
-            if weapon_fired_message.shooter_entity.is_some() {
-                bullet_hit_characters.write(BulletHitCharacter {
-                    character: victim,
-                    origin,
-                    direction,
-                    maximum_distance: hit.distance + 1.0,
-                    collider_point: origin + direction.as_vec3() * hit.distance,
-                });
-            }
         }
         if let Ok((_, owner)) = hit_context.owners.get(hit.entity)
             && Some(owner.0) != weapon_fired_message.shooter_entity
         {
-            commands.entity(owner.0).trigger(|entity| EnemyHit {
-                entity,
-                body: hit.entity,
+            commands.entity(owner.0).trigger(|target| EnemyHit {
+                target,
+                collider: hit.entity,
+                shot_origin: origin,
+                shot_direction: direction,
+                impact_distance: hit.distance,
                 impulse: direction.as_vec3() * bullet_momentum,
-                point: origin + direction.as_vec3() * hit.distance,
+                weapon_caliber: ranged_weapon.get_caliber(),
             });
             continue;
         }

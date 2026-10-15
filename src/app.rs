@@ -42,7 +42,7 @@ impl<'a> MakeWriter<'a> for LogFile {
     type Writer = LogFileLine<'a>;
 
     fn make_writer(&'a self) -> Self::Writer {
-        let file_guard = self.0.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        let file_guard = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         LogFileLine(file_guard)
     }
 }
@@ -106,7 +106,7 @@ use bevy::winit::WinitPlugin;
 use bevy::world_serialization::WorldSerializationPlugin;
 
 use crate::{
-    blood::BloodPlugin,
+    bloodmarks::BloodmarksPlugin,
     enemies::EnemiesPlugin,
     health::HealthPlugin,
     maps::{Map, MapsPlugin, build_map01},
@@ -134,11 +134,8 @@ pub fn fetch_configuration() -> Configuration {
         .collect::<HashMap<_, _>>();
 
     Configuration {
-        show_fps: values.get("fps").map(|value| value.parse().unwrap()).unwrap_or(false),
-        show_colliders: values
-            .get("colliders")
-            .map(|value| value.parse().unwrap())
-            .unwrap_or(false),
+        show_fps: values.get("fps").is_some_and(|value| value.parse().unwrap()),
+        show_colliders: values.get("colliders").is_some_and(|value| value.parse().unwrap()),
         viewpoint: values.get("viewpoint").map(|value| parse_viewpoint(value)),
     }
 }
@@ -177,7 +174,7 @@ pub fn build_gui_app(configuration: Configuration) -> App {
         GameStatePlugin,
         MapsPlugin,
         HealthPlugin,
-        BloodPlugin,
+        BloodmarksPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
@@ -212,7 +209,7 @@ pub fn build_test_app(map: Map) -> App {
         GameStatePlugin,
         MapsPlugin,
         HealthPlugin,
-        BloodPlugin,
+        BloodmarksPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
@@ -287,7 +284,7 @@ pub fn build_screenshot_app(
         GameStatePlugin,
         MapsPlugin,
         HealthPlugin,
-        BloodPlugin,
+        BloodmarksPlugin,
         PlayerPlugin,
         EnemiesPlugin,
         RagdollPlugin,
@@ -309,6 +306,7 @@ pub fn build_screenshot_app(
 
     app.finish();
     app.cleanup();
+    wait_initialization(&mut app);
 
     app
 }

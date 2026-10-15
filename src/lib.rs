@@ -1,7 +1,7 @@
 #![recursion_limit = "512"]
 
 pub mod app;
-pub mod blood;
+pub mod bloodmarks;
 pub mod enemies;
 pub mod health;
 pub mod maps;
