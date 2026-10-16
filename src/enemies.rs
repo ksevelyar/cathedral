@@ -1,4 +1,4 @@
-use avian3d::prelude::{Collider, LinearVelocity, Position, RigidBody, Rotation};
+use avian3d::prelude::{Collider, LinearVelocity, Physics, PhysicsTime, Position, RigidBody, Rotation};
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
@@ -8,9 +8,13 @@ use crate::bloodmarks::BloodMarks;
 use crate::health::{CharacterDamaged, CharacterDied, Health};
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
-use crate::ragdoll::{BoneMap, OwnedByCharacter, RagdollBodyPart, RagdollData, setup_ragdoll};
+use crate::ragdoll::{BoneMap, OwnedByCharacter, RagdollBodyPart, RagdollData, find_head_position, setup_ragdoll};
 use crate::shooting::{Magazine, Weapon, observe_muzzle_flash};
 use crate::state::GameState;
+
+pub(crate) fn is_time_running(time: Res<Time<Physics>>) -> bool {
+    !time.is_paused()
+}
 
 mod fighter;
 mod gunner;
@@ -26,7 +30,7 @@ impl Plugin for EnemiesPlugin {
                 (
                     setup_external_animation,
                     dance_when_player_is_dead,
-                    update_enemy_animations,
+                    update_enemy_animations.run_if(is_time_running),
                 )
                     .chain(),
             );
@@ -505,6 +509,7 @@ fn update_enemy_animations(
     }
 }
 
+
 pub(crate) type AliveEnemy = (With<Enemy>, Without<Dying>);
 pub(super) const ENEMY_COLLISION_RADIUS: f32 = 0.35;
 pub(super) const ENEMY_COLLISION_CENTER_HEIGHT: f32 = 1.0;
@@ -577,6 +582,5 @@ pub(super) fn find_player_head_position(
 ) -> Option<Vec3> {
     let player_children = player_children.get(player_entity).ok()?;
     let ragdoll_root = player_children.iter().find(|child| ragdoll_roots.contains(*child))?;
-    let head_body = ragdoll_roots.get(ragdoll_root).ok()?.find_part(RagdollBodyPart::Head)?;
-    Some(ragdoll_body_positions.get(head_body).ok()?.0)
+    find_head_position(ragdoll_roots.get(ragdoll_root).ok()?, ragdoll_body_positions)
 }

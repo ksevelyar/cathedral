@@ -6,37 +6,24 @@ use bevy::window::{CursorGrabMode, CursorOptions};
 use crate::app::Configuration;
 use crate::health::Health;
 use crate::player::Player;
+use crate::ragdoll::RagdollBoneGizmos;
 use crate::shooting::{Crosshair, Gun, Magazine, SelectedWeapon, WeaponSlot};
-use crate::state::{ColliderInspection, GameState};
+use crate::state::GameState;
 
-pub struct UiPlugin;
+pub struct PlayerHudPlugin;
 
-impl Plugin for UiPlugin {
+impl Plugin for PlayerHudPlugin {
     fn build(&self, app: &mut App) {
         let configuration = app.world().resource::<Configuration>();
         let show_fps = configuration.show_fps;
         let show_colliders = configuration.show_colliders;
-        let physics_gizmos = if show_colliders {
-            PhysicsGizmos::colliders(Color::srgb(1.0, 0.2, 0.2))
-        } else {
-            PhysicsGizmos::default()
-        };
-
-        app.add_plugins(PhysicsDebugPlugin)
-            .insert_gizmo_config(
-                physics_gizmos,
-                GizmoConfig {
-                    enabled: show_colliders,
-                    ..default()
-                },
-            )
-            .add_systems(OnEnter(GameState::Playing), lock_cursor)
+        app.add_systems(OnEnter(GameState::Playing), lock_cursor)
             .add_systems(Startup, (setup_health_display, setup_ammunition_display))
             .add_systems(Update, (update_health_display, update_ammunition_display))
             .add_systems(OnEnter(GameState::Paused), show_cursor)
             .add_systems(OnEnter(GameState::Paused), setup_pause_menu)
             .add_systems(OnEnter(GameState::GameOver), setup_game_over_menu)
-            .add_systems(Update, (toggle_physics_pause, update_crosshair_and_gun_visibility));
+            .add_systems(Update, (toggle_physics_pause, toggle_collider_gizmos, update_crosshair_and_gun_visibility));
         if show_colliders {
             app.add_systems(
                 Update,
@@ -48,6 +35,39 @@ impl Plugin for UiPlugin {
                 .add_systems(Startup, setup_fps_display)
                 .add_systems(Update, update_fps_display);
         }
+    }
+}
+
+pub struct ColliderInspectionPlugin;
+
+impl Plugin for ColliderInspectionPlugin {
+    fn build(&self, app: &mut App) {
+        let show_colliders = app
+            .world()
+            .get_resource::<Configuration>()
+            .is_some_and(|configuration| configuration.show_colliders);
+        app.add_plugins(PhysicsDebugPlugin)
+            .insert_gizmo_config(
+                PhysicsGizmos {
+                    collider_color: Some(COLLIDER_INSPECTION_FALLBACK_COLOR),
+                    joint_anchor_color: Some(COLLIDER_INSPECTION_JOINT_COLOR),
+                    joint_separation_color: Some(COLLIDER_INSPECTION_JOINT_COLOR),
+                    ..PhysicsGizmos::none()
+                },
+                GizmoConfig {
+                    enabled: show_colliders,
+                    depth_bias: INSPECTION_GIZMO_DEPTH_BIAS,
+                    ..default()
+                },
+            )
+            .insert_gizmo_config(
+                RagdollBoneGizmos,
+                GizmoConfig {
+                    enabled: show_colliders,
+                    depth_bias: INSPECTION_GIZMO_DEPTH_BIAS,
+                    ..default()
+                },
+            );
     }
 }
 
@@ -233,20 +253,32 @@ fn setup_game_over_menu(mut commands: Commands) {
     ));
 }
 
-fn toggle_physics_pause(
+const INSPECTION_GIZMO_DEPTH_BIAS: f32 = -1.0;
+const COLLIDER_INSPECTION_FALLBACK_COLOR: Color = Color::srgb(1.0, 0.2, 0.2);
+const COLLIDER_INSPECTION_JOINT_COLOR: Color = Color::srgb(0.2, 0.2, 1.0);
+
+pub(crate) fn toggle_collider_gizmos(
     keyboard: Res<ButtonInput<KeyCode>>,
-    mut physics_time: ResMut<Time<Physics>>,
     mut gizmo_configs: ResMut<GizmoConfigStore>,
-    mut collider_inspection: ResMut<ColliderInspection>,
 ) {
+    if !keyboard.just_pressed(KeyCode::KeyC) {
+        return;
+    }
+    let are_colliders_enabled = {
+        let collider_gizmos = &mut *gizmo_configs.config_mut::<PhysicsGizmos>().0;
+        collider_gizmos.enabled = !collider_gizmos.enabled;
+        collider_gizmos.enabled
+    };
+    gizmo_configs.config_mut::<RagdollBoneGizmos>().0.enabled = are_colliders_enabled;
+}
+
+fn toggle_physics_pause(keyboard: Res<ButtonInput<KeyCode>>, mut physics_time: ResMut<Time<Physics>>) {
     if keyboard.just_pressed(KeyCode::KeyP) {
-        collider_inspection.0 = !collider_inspection.0;
-        if collider_inspection.0 {
-            physics_time.pause();
-        } else {
+        if physics_time.is_paused() {
             physics_time.unpause();
+        } else {
+            physics_time.pause();
         }
-        gizmo_configs.config_mut::<PhysicsGizmos>().0.enabled = collider_inspection.0;
     }
 }
 

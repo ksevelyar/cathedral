@@ -5,7 +5,9 @@ use std::process;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use cathedral::app::{Configuration, build_screenshot_app, run_until_screenshot_captured};
+use cathedral::app::{
+    Configuration, build_screenshot_app, request_screenshot, wait_screenshot_capture,
+};
 use cathedral::enemies::EnemyKind;
 use cathedral::maps::{Map, MapBuilder, build_map01};
 use cathedral::shooting::Gun;
@@ -16,13 +18,13 @@ const COLLIDER_RENDER_WIDTH: u32 = 1440;
 const COLLIDER_RENDER_HEIGHT: u32 = 1440;
 const BLACK_CHANNEL_THRESHOLD: u8 = 32;
 
-fn build_collider_inspection_map() -> Map {
-    let name = "collider-inspection";
+fn build_gunner_colliders_map() -> Map {
+    let name = "gunner-colliders";
     let floor_size = Vec3::new(60.0, 0.1, 60.0);
     MapBuilder::new(name)
         .with_player_position(Vec3::new(0.0, 1.8, 3.0), Vec3::new(0.0, 1.0, 0.0))
         .with_floor(floor_size)
-        .with_enemy(Vec3::ZERO, EnemyKind::Fighter)
+        .with_enemy(Vec3::ZERO, EnemyKind::Gunner)
         .build()
 }
 
@@ -41,8 +43,9 @@ fn screenshot_app_captures_map01_frame() {
         screenshot_dir.to_string_lossy().into_owned(),
         "map01",
     );
+    request_screenshot(app.world_mut());
 
-    let captured_screenshots = run_until_screenshot_captured(&mut app);
+    let captured_screenshots = wait_screenshot_capture(&mut app);
     assert_eq!(
         captured_screenshots.0.len(),
         1,
@@ -91,9 +94,9 @@ fn screenshot_app_captures_map01_frame() {
 
 #[test]
 fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
-    let screenshot_dir = create_temp_screenshot_dir("collider-inspection");
+    let screenshot_dir = create_temp_screenshot_dir("gunner-colliders");
     let mut app = build_screenshot_app(
-        build_collider_inspection_map(),
+        build_gunner_colliders_map(),
         Configuration {
             show_colliders: true,
             ..default()
@@ -101,10 +104,11 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
         COLLIDER_RENDER_WIDTH,
         COLLIDER_RENDER_HEIGHT,
         screenshot_dir.to_string_lossy().into_owned(),
-        "collider-inspection",
+        "gunner-colliders",
     );
+    request_screenshot(app.world_mut());
 
-    let captured_screenshots = run_until_screenshot_captured(&mut app);
+    let captured_screenshots = wait_screenshot_capture(&mut app);
     assert_eq!(
         captured_screenshots.0.len(),
         1,
@@ -113,6 +117,16 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
     let image = &captured_screenshots.0[0];
     assert_eq!(image.width(), COLLIDER_RENDER_WIDTH, "unexpected captured width");
     assert_eq!(image.height(), COLLIDER_RENDER_HEIGHT, "unexpected captured height");
+    let screenshot_entries: Vec<PathBuf> = fs::read_dir(&screenshot_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    let expected_screenshot_name = format!("{}-gunner-colliders.png", env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        screenshot_entries[0].file_name().unwrap().to_string_lossy(),
+        expected_screenshot_name,
+        "unexpected screenshot file name"
+    );
 
     let world = app.world_mut();
     let mut gun_visibility_query = world.query_filtered::<&Visibility, With<Gun>>();
@@ -126,10 +140,27 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
     );
 
     let gizmo_configs = world.resource::<GizmoConfigStore>();
-    let (physics_gizmos_config, _) = gizmo_configs.config::<PhysicsGizmos>();
+    let (physics_gizmos_config, physics_gizmos) = gizmo_configs.config::<PhysicsGizmos>();
     assert!(
         physics_gizmos_config.enabled,
         "screenshot app with colliders must enable collider gizmos"
+    );
+    let expected_collider_color = Color::srgb(1.0, 0.2, 0.2);
+    assert_eq!(
+        physics_gizmos.collider_color,
+        Some(expected_collider_color),
+        "collider gizmos must be red"
+    );
+    let expected_joint_color = Color::srgb(0.2, 0.2, 1.0);
+    assert_eq!(
+        physics_gizmos.joint_anchor_color,
+        Some(expected_joint_color),
+        "joint anchor gizmos must be blue"
+    );
+    assert_eq!(
+        physics_gizmos.joint_separation_color,
+        Some(expected_joint_color),
+        "joint separation gizmos must be blue"
     );
 
     fs::remove_dir_all(&screenshot_dir).unwrap();

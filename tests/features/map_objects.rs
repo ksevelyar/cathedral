@@ -18,7 +18,7 @@ fn shooting_laptop_applies_momentum_and_laptop_settles() {
     let laptop = find_named_body(&mut app, "laptop");
 
     shoot_entity(&mut app, laptop);
-    assert_received_kick(&app, laptop);
+    assert_received_kick(&mut app, laptop);
 
     let settling_deadline = 5.0;
     assert_settles(&mut app, laptop, settling_deadline);

@@ -17,7 +17,7 @@ use crate::maps::PlayerPosition;
 use crate::movement::PhysicsWorld;
 use crate::ragdoll::{
     BoneMap, OwnedByCharacter, PendingRagdollImpactRequest, RagdollBodyPart, RagdollData, exclude_character_bodies,
-    setup_ragdoll,
+    find_head_position, setup_ragdoll,
 };
 use crate::shooting::{Gun, Reloading, ShadowGun, WeaponSlot};
 
@@ -45,7 +45,7 @@ impl Plugin for PlayerPlugin {
                 apply_mouse_look.run_if(not(in_state(GameState::Paused))),
                 settle_player_on_startup,
                 move_player,
-                kill_player_on_death,
+                handle_player_death,
             )
                 .run_if(in_state(GameState::Playing)),
         );
@@ -409,7 +409,7 @@ type AlivePlayerQuery<'w, 's> =
 type DeadPlayerQuery<'w, 's> =
     Query<'w, 's, (&'static Transform, &'static Children), (With<Player>, With<PlayerDead>, Without<PlayerCamera>)>;
 
-fn kill_player_on_death(
+fn handle_player_death(
     mut deaths: MessageReader<CharacterDied>,
     players: AlivePlayerQuery,
     ragdoll_roots: Query<(), With<RagdollData>>,
@@ -495,13 +495,10 @@ fn fall_camera_to_head_on_death(
             let Ok(ragdoll) = ragdoll_roots.get(child) else {
                 continue;
             };
-            let Some(head_body) = ragdoll.find_part(RagdollBodyPart::Head) else {
+            let Some(head_position) = find_head_position(ragdoll, &body_positions) else {
                 continue;
             };
-            let Ok(head_position) = body_positions.get(head_body) else {
-                continue;
-            };
-            let head_offset = head_position.0 + Vec3::Y * camera_height_above_head - player_transform.translation;
+            let head_offset = head_position + Vec3::Y * camera_height_above_head - player_transform.translation;
             if let Ok(mut camera_transform) = cameras.single_mut() {
                 camera_transform.translation = player_transform.rotation.inverse() * head_offset;
             }
