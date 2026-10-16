@@ -93,6 +93,7 @@ fn initialize_logging() {
 }
 use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
+use bevy::ecs::system::RunSystemOnce;
 use bevy::render::{
     RenderPlugin,
     render_resource::{Extent3d, PollType, TextureDimension, TextureFormat, TextureUsages},
@@ -114,7 +115,7 @@ use crate::{
     ragdoll::RagdollPlugin,
     shooting::ShootingPlugin,
     state::{ColliderInspection, GameState, GameStatePlugin},
-    ui::UiPlugin,
+    ui::{ColliderInspectionPlugin, PlayerHudPlugin},
 };
 
 #[derive(Resource, Default)]
@@ -127,9 +128,11 @@ pub struct Configuration {
 pub fn fetch_configuration() -> Configuration {
     let values = env::args()
         .skip(1)
-        .map(|argument| {
-            let (name, value) = argument.strip_prefix("--").unwrap().split_once('=').unwrap();
-            (name.to_owned(), value.to_owned())
+        .filter_map(|argument| {
+            argument
+                .strip_prefix("--")
+                .and_then(|named_argument| named_argument.split_once('='))
+                .map(|(name, value)| (name.to_owned(), value.to_owned()))
         })
         .collect::<HashMap<_, _>>();
 
@@ -179,7 +182,8 @@ pub fn build_gui_app(configuration: Configuration) -> App {
         EnemiesPlugin,
         RagdollPlugin,
         ShootingPlugin,
-        UiPlugin,
+        PlayerHudPlugin,
+        ColliderInspectionPlugin,
     ))
     .insert_resource(SubstepCount(30))
     .insert_resource(DefaultSpatialScale(spatial_scale))
@@ -289,7 +293,8 @@ pub fn build_screenshot_app(
         EnemiesPlugin,
         RagdollPlugin,
         ShootingPlugin,
-        UiPlugin,
+        PlayerHudPlugin,
+        ColliderInspectionPlugin,
     ))
     .insert_resource(SubstepCount(30))
     .add_systems(Startup, crate::player::setup_player)
@@ -299,8 +304,7 @@ pub fn build_screenshot_app(
     .insert_resource(ScreenshotName(screenshot_name))
     .insert_resource(CapturedScreenshots::default())
     .insert_resource(Viewpoint(viewpoint))
-    .add_systems(Update, attach_screenshot_camera)
-    .add_systems(OnEnter(GameState::Playing), capture_screenshots);
+    .add_systems(Update, attach_screenshot_camera);
     let render_target = create_render_target(&mut app, render_width, render_height);
     app.insert_resource(ScreenshotRenderTarget(render_target));
 
@@ -352,7 +356,7 @@ fn attach_screenshot_camera(
     }
 }
 
-pub fn run_until_screenshot_captured(app: &mut App) -> &CapturedScreenshots {
+pub fn wait_screenshot_capture(app: &mut App) -> &CapturedScreenshots {
     let screenshot_timeout = Duration::from_secs(10);
     let screenshot_deadline = Instant::now() + screenshot_timeout;
     loop {
@@ -382,7 +386,13 @@ struct Viewpoint(Option<(Vec3, Vec3)>);
 #[derive(Component)]
 struct ScreenshotCamera;
 
-fn capture_screenshots(
+pub fn request_screenshot(world: &mut World) {
+    world
+        .run_system_once(spawn_screenshot_capture)
+        .expect("screenshot capture system should run");
+}
+
+fn spawn_screenshot_capture(
     screenshot_dir: Res<ScreenshotDir>,
     screenshot_name: Res<ScreenshotName>,
     screenshot_target: Res<ScreenshotRenderTarget>,

@@ -12,9 +12,13 @@ use super::{
 };
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
-use crate::ragdoll::{OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies};
+use crate::ragdoll::{
+    OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies,
+};
 use crate::shooting::{Magazine, RangedWeapon, Weapon, WeaponFired, WeaponFiringSystems, WeaponReloadStarted};
-use crate::state::ColliderInspection;
+
+use super::is_time_running;
+
 
 const GUNNER_ACCURACY: f64 = 0.65;
 const GUNNER_MISS_DISTANCE: f32 = 0.75;
@@ -39,7 +43,7 @@ impl Plugin for GunnerPlugin {
                 update_gunners
                     .in_set(WeaponFiringSystems)
                     .run_if(in_state(crate::state::GameState::Playing))
-                    .run_if(collider_inspection_is_disabled),
+                    .run_if(is_time_running),
             );
     }
 }
@@ -223,10 +227,6 @@ type GunnerQuery<'world, 'state> = Query<
     ),
     (AliveEnemy, With<Gunner>),
 >;
-
-fn collider_inspection_is_disabled(collider_inspection: Res<ColliderInspection>) -> bool {
-    !collider_inspection.0
-}
 
 fn update_gunners(
     (time, move_and_slide, gravity): GunnerMovementContext,

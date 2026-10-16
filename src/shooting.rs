@@ -24,7 +24,7 @@ use crate::state::GameState;
 pub struct ShootingPlugin;
 
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub(crate) struct WeaponFiringSystems;
+pub struct WeaponFiringSystems;
 
 impl Plugin for ShootingPlugin {
     fn build(&self, app: &mut App) {

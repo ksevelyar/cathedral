@@ -19,7 +19,7 @@ use cathedral::state::GameState;
 use std::time::Duration;
 
 fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
-    let minimum_ragdoll_bodies = 14;
+    let minimum_ragdoll_bodies = 19;
     let asset_load_attempts = 10_000;
     for _ in 0..asset_load_attempts {
         app.update();
@@ -34,6 +34,21 @@ fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
         if body_count >= minimum_ragdoll_bodies {
             let inert_body_count = enemy_ragdoll_bodies.iter().filter(|disabled| **disabled).count();
             assert_eq!(inert_body_count, body_count);
+            let mut spherical_joints = app
+                .world_mut()
+                .query_filtered::<&OwnedByCharacter, With<SphericalJoint>>();
+            let mut revolute_joints = app
+                .world_mut()
+                .query_filtered::<&OwnedByCharacter, With<RevoluteJoint>>();
+            let active_joint_count = spherical_joints
+                .iter(app.world())
+                .filter(|owner| owner.0 == enemy)
+                .count()
+                + revolute_joints
+                    .iter(app.world())
+                    .filter(|owner| owner.0 == enemy)
+                    .count();
+            assert_eq!(active_joint_count, 0, "alive enemy should not have active joints");
             return;
         }
         std::thread::yield_now();
@@ -237,19 +252,18 @@ fn fighter_damages_player_on_first_hit_and_kills_on_second() {
         .entity_mut(player_entity)
         .insert(Health::new(survivable_health));
 
-    run_until_first_melee_hit(&mut app, survivable_health);
+    wait_first_melee_hit(&mut app, survivable_health);
     let health_after_first_hit = get_player_health(&mut app);
     assert!(health_after_first_hit > 0.0);
     assert_eq!(health_after_first_hit, survivable_health - katana_damage);
     assert!(app.world().get::<PlayerDead>(player_entity).is_none());
 
-    run_until_player_dead(&mut app);
-    run_updates(&mut app, 8);
+    wait_player_death(&mut app);
     assert_eq!(get_player_health(&mut app), 0.0);
     assert_eq!(get_current_game_state(&mut app), GameState::GameOver);
 }
 
-fn run_until_first_melee_hit(app: &mut App, starting_health: f32) {
+fn wait_first_melee_hit(app: &mut App, starting_health: f32) {
     let melee_hit_updates = 10_000;
     for _ in 0..melee_hit_updates {
         app.update();
@@ -287,7 +301,7 @@ fn fighter_killed_while_running_keeps_its_momentum() {
     let minimum_kept_run_speed = fighter_run_speed / 2.0;
     let far_player_position = Vec3::new(12.0, 0.5, 0.0);
     let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 16, far_player_position);
-    let torso = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Torso);
+    let pelvis = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Pelvis);
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     let run_direction = (far_player_position - Vec3::new(0.0, 0.5, 0.0)).normalize();
@@ -303,11 +317,11 @@ fn fighter_killed_while_running_keeps_its_momentum() {
         "fighter should run at {fighter_run_speed} toward the player right after spawning, got {forward_run_speed}"
     );
     support::shoot_entity(&mut app, hit_body);
-    let torso_velocity = wait_for_ragdoll_activation_velocity(&mut app, torso);
-    let forward_run_momentum = torso_velocity.dot(run_direction);
+    let pelvis_velocity = wait_for_ragdoll_activation_velocity(&mut app, pelvis);
+    let forward_run_momentum = pelvis_velocity.dot(run_direction);
     assert!(
         forward_run_momentum >= minimum_kept_run_speed,
-        "running fighter ragdoll torso should keep at least {minimum_kept_run_speed} of the run momentum of {fighter_run_speed}, got forward component {forward_run_momentum:.3} from velocity {torso_velocity}"
+        "running fighter ragdoll pelvis should keep at least {minimum_kept_run_speed} of the run momentum of {fighter_run_speed}, got forward component {forward_run_momentum:.3} from velocity {pelvis_velocity}"
     );
 }
 
@@ -338,19 +352,19 @@ fn head_shot_kills_fighter() {
 
     support::shoot_entity(&mut app, hit_body);
     wait_until_dying(&mut app, enemy);
-    support::assert_received_kick(&app, hit_body);
+    support::assert_received_kick(&mut app, hit_body);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
 }
 
 #[test]
 fn head_shot_kills_gunner() {
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 160, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 0, Vec3::new(5.0, 0.5, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
     wait_until_dying(&mut app, enemy);
-    support::assert_received_kick(&app, hit_body);
+    support::assert_received_kick(&mut app, hit_body);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
 }
@@ -381,23 +395,23 @@ fn gunner_loads_one_hairstyle() {
 #[test]
 fn hand_shot_kills_fighter() {
     let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 160, Vec3::new(5.0, 0.5, 0.0));
-    let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::RightHand);
+    let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::HandRight);
 
     support::shoot_entity(&mut app, hit_body);
     wait_until_dying(&mut app, enemy);
-    support::assert_received_kick(&app, hit_body);
+    support::assert_received_kick(&mut app, hit_body);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
 }
 
 #[test]
 fn hand_shot_kills_gunner() {
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 160, Vec3::new(5.0, 0.5, 0.0));
-    let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::RightHand);
+    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 0, Vec3::new(5.0, 0.5, 0.0));
+    let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::HandRight);
 
     support::shoot_entity(&mut app, hit_body);
     wait_until_dying(&mut app, enemy);
-    support::assert_received_kick(&app, hit_body);
+    support::assert_received_kick(&mut app, hit_body);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
 }
@@ -451,16 +465,11 @@ fn get_head_body_height(app: &mut App, head_body: Entity) -> f32 {
     app.world().get::<Position>(head_body).expect("head body position").0.y
 }
 
-fn run_until_player_dead(app: &mut App) {
+fn wait_player_death(app: &mut App) {
     let death_updates = 10_000;
     for _ in 0..death_updates {
         app.update();
-        if app
-            .world_mut()
-            .query_filtered::<(), With<PlayerDead>>()
-            .single(app.world())
-            .is_ok()
-        {
+        if get_current_game_state(app) == GameState::GameOver {
             return;
         }
     }
@@ -494,7 +503,7 @@ fn gunner_shot_kills_player_and_camera_falls_to_head() {
     let (mut app, _) = simulate_enemy_near_player(EnemyKind::Gunner, 16, Vec3::new(6.0, 0.5, 0.0));
     let head_body = find_player_ragdoll_body(&mut app, RagdollBodyPart::Head);
 
-    run_until_player_dead(&mut app);
+    wait_player_death(&mut app);
 
     assert!(
         get_player_health(&mut app) <= 0.0,
@@ -514,7 +523,7 @@ fn fighter_melee_kills_player_and_camera_falls_to_head() {
     let initial_health = get_player_health(&mut app);
     let head_body = find_player_ragdoll_body(&mut app, RagdollBodyPart::Head);
 
-    run_until_player_dead(&mut app);
+    wait_player_death(&mut app);
 
     let health_after_death = get_player_health(&mut app);
     assert!(

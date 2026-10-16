@@ -1,4 +1,4 @@
-use avian3d::prelude::{PhysicsDebugPlugin, PhysicsGizmos, PhysicsPlugins, SubstepCount};
+use avian3d::prelude::{PhysicsPlugins, SubstepCount};
 use bevy::input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::WindowPlugin;
@@ -9,6 +9,15 @@ use crate::maps::{MapBuilder, MapsPlugin};
 use crate::ragdoll::{BoneMap, RagdollPlugin};
 use crate::shooting::Weapon;
 use crate::state::GameStatePlugin;
+use crate::ui::{ColliderInspectionPlugin, toggle_collider_gizmos};
+
+pub struct ViewerHudPlugin;
+
+impl Plugin for ViewerHudPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(Update, (update_orbit, switch_animation, toggle_animation_pause, toggle_collider_gizmos, update_mount_display));
+    }
+}
 
 #[derive(Resource)]
 struct OrbitCamera {
@@ -57,33 +66,17 @@ pub fn run() {
         }))
         .add_plugins((
             PhysicsPlugins::default(),
-            PhysicsDebugPlugin,
             GameStatePlugin,
             MapsPlugin,
             HealthPlugin,
             EnemiesPlugin,
             RagdollPlugin,
+            ColliderInspectionPlugin,
+            ViewerHudPlugin,
         ))
-        .insert_gizmo_config(
-            PhysicsGizmos::colliders(Color::srgb(1.0, 0.2, 0.2)),
-            GizmoConfig {
-                enabled: false,
-                ..default()
-            },
-        )
         .insert_resource(SubstepCount(30))
         .add_systems(Startup, setup_viewer)
-        .add_systems(
-            Update,
-            (
-                setup_animations,
-                update_orbit,
-                switch_animation,
-                toggle_animation_pause,
-                toggle_colliders,
-                update_mount_display,
-            ),
-        )
+        .add_systems(Update, (setup_animations,))
         .run();
 }
 
@@ -205,13 +198,6 @@ fn toggle_animation_pause(
     }
 }
 
-fn toggle_colliders(keyboard: Res<ButtonInput<KeyCode>>, mut gizmo_configs: ResMut<GizmoConfigStore>) {
-    if keyboard.just_pressed(KeyCode::KeyC) {
-        let collider_gizmos = &mut *gizmo_configs.config_mut::<PhysicsGizmos>().0;
-        collider_gizmos.enabled = !collider_gizmos.enabled;
-    }
-}
-
 fn update_orbit(
     mouse_buttons: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
@@ -244,6 +230,34 @@ fn update_orbit(
     );
     for mut camera in &mut cameras {
         *camera = Transform::from_translation(orbit_camera.target + offset).looking_at(orbit_camera.target, Vec3::Y);
+    }
+}
+
+fn update_mount_display(
+    weapons: Query<&Transform, With<Weapon>>,
+    animations: Query<&ViewerAnimations>,
+    mut displays: Query<&mut Text, With<MountDisplay>>,
+) {
+    let Ok(weapon) = weapons.single() else {
+        return;
+    };
+    let (yaw, pitch, roll) = weapon.rotation.to_euler(EulerRot::YXZ);
+    let animation_index = animations.single().map_or(0, |animation| animation.current);
+    let animation_name = get_animation_name(animation_index);
+    let display = format!(
+        "Weapon mount\ntranslation: {:.4}, {:.4}, {:.4}\nrotation YXZ: {:.4}, {:.4}, {:.4}\nscale: {:.4}, {:.4}, {:.4}\n\nAnimation: {animation_index}/42 {animation_name}\nArrow keys: previous and next animation\nP: pause animation\nC: toggle colliders and bones",
+        weapon.translation.x,
+        weapon.translation.y,
+        weapon.translation.z,
+        yaw,
+        pitch,
+        roll,
+        weapon.scale.x,
+        weapon.scale.y,
+        weapon.scale.z,
+    );
+    for mut text in &mut displays {
+        text.0.clone_from(&display);
     }
 }
 
@@ -293,33 +307,5 @@ fn get_animation_name(index: usize) -> &'static str {
         41 => "Walk_Formal_Loop",
         42 => "Walk_Loop",
         _ => "Unknown",
-    }
-}
-
-fn update_mount_display(
-    weapons: Query<&Transform, With<Weapon>>,
-    animations: Query<&ViewerAnimations>,
-    mut displays: Query<&mut Text, With<MountDisplay>>,
-) {
-    let Ok(weapon) = weapons.single() else {
-        return;
-    };
-    let (yaw, pitch, roll) = weapon.rotation.to_euler(EulerRot::YXZ);
-    let animation_index = animations.single().map_or(0, |animation| animation.current);
-    let animation_name = get_animation_name(animation_index);
-    let display = format!(
-        "Weapon mount\ntranslation: {:.4}, {:.4}, {:.4}\nrotation YXZ: {:.4}, {:.4}, {:.4}\nscale: {:.4}, {:.4}, {:.4}\n\nAnimation: {animation_index}/42 {animation_name}\nArrow keys: previous and next animation\nP: pause animation\nC: toggle colliders",
-        weapon.translation.x,
-        weapon.translation.y,
-        weapon.translation.z,
-        yaw,
-        pitch,
-        roll,
-        weapon.scale.x,
-        weapon.scale.y,
-        weapon.scale.z,
-    );
-    for mut text in &mut displays {
-        text.0.clone_from(&display);
     }
 }

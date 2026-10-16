@@ -52,26 +52,55 @@ pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {
     shot_direction
 }
 
-pub fn assert_received_kick(app: &App, body: Entity) {
-    let minimum_kick_speed = 0.5;
-    let kick = app
+pub fn assert_received_kick(app: &mut App, target: Entity) {
+    let minimum_kick_speed = 3.0;
+    let linear_kick = app
         .world()
-        .get::<LinearVelocity>(body)
-        .expect("shot body should have linear velocity")
+        .get::<LinearVelocity>(target)
+        .expect("shot target should have linear velocity")
         .0;
     let angular_kick = app
         .world()
-        .get::<AngularVelocity>(body)
-        .expect("shot body should have angular velocity")
+        .get::<AngularVelocity>(target)
+        .expect("shot target should have angular velocity")
         .0;
-    assert!(kick.is_finite(), "kick {kick:?} should be finite");
+    let target_kick_speed = linear_kick.length() + angular_kick.length();
     assert!(
-        kick.length() + angular_kick.length() >= minimum_kick_speed,
-        "shot body should receive a kick of at least {minimum_kick_speed}, got linear_speed={:.6}, angular_speed={:.6}",
-        kick.length(),
+        target_kick_speed >= minimum_kick_speed,
+        "shot target should receive a kick of at least {minimum_kick_speed}, got linear_speed={:.6}, angular_speed={:.6}",
+        linear_kick.length(),
         angular_kick.length()
     );
-    log_speeds(app, body, "after kick");
+
+    let most_kicked_body = find_joint_connected_bodies(app, target)
+        .into_iter()
+        .max_by(|left_body, right_body| {
+            let left_linear_kick = app
+                .world()
+                .get::<LinearVelocity>(*left_body)
+                .expect("joint-connected body should have linear velocity")
+                .0;
+            let left_angular_kick = app
+                .world()
+                .get::<AngularVelocity>(*left_body)
+                .expect("joint-connected body should have angular velocity")
+                .0;
+            let right_linear_kick = app
+                .world()
+                .get::<LinearVelocity>(*right_body)
+                .expect("joint-connected body should have linear velocity")
+                .0;
+            let right_angular_kick = app
+                .world()
+                .get::<AngularVelocity>(*right_body)
+                .expect("joint-connected body should have angular velocity")
+                .0;
+            let left_kick_speed = left_linear_kick.length() + left_angular_kick.length();
+            let right_kick_speed = right_linear_kick.length() + right_angular_kick.length();
+            left_kick_speed.total_cmp(&right_kick_speed)
+        })
+        .expect("target should be in its joint-connected bodies");
+    assert_eq!(most_kicked_body, target, "shot target should receive the most kick");
 }
 
 fn log_speeds(app: &App, body: Entity, label: &str) {
@@ -85,10 +114,12 @@ fn log_speeds(app: &App, body: Entity, label: &str) {
         .get::<AngularVelocity>(body)
         .expect("body angular velocity")
         .0;
+    let most_energetic_awake_island_body = find_awake_island_body_with_most_kinetic_energy(app, body);
     println!(
-        "{body_name} {label}: linear_speed={:.2}, angular_speed={:.2}",
+        "{body_name} {label}: linear_speed={:.2}, angular_speed={:.2}\nmost active element: {}\n",
         velocity.length(),
-        angular_velocity.length()
+        angular_velocity.length(),
+        most_energetic_awake_island_body.unwrap_or_default()
     );
 }
 
@@ -164,7 +195,7 @@ pub fn assert_settles(app: &mut App, body: Entity, settling_duration: f64) {
     let velocity = app.world().get::<LinearVelocity>(body).expect("body velocity");
     let angular_velocity = app.world().get::<AngularVelocity>(body).expect("body angular velocity");
     panic!(
-        "{body_name} never settled within {settling_duration} seconds, linear_speed={:.2}, angular_speed={:.2}\n\nThe most active element:\n{}",
+        "{body_name} never settled within {settling_duration} seconds, linear_speed={:.2}, angular_speed={:.2}\nmost active element: {}",
         velocity.length(),
         angular_velocity.length(),
         most_energetic_awake_island_body.unwrap_or_default()
