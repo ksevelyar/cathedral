@@ -2,7 +2,7 @@ use avian3d::prelude::{Collider, LinearVelocity, Position, RigidBody, Rotation};
 use bevy::animation::{AnimatedBy, AnimationTargetId};
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
-use rand::Rng;
+use rand::RngExt;
 
 use crate::bloodmarks::BloodMarks;
 use crate::health::{CharacterDamaged, CharacterDied, Health};

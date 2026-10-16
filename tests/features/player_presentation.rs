@@ -72,11 +72,9 @@ fn find_playing_animation_node(app: &App, animation_player: Entity) -> Animation
         .expect("player armature should play an animation")
 }
 
-#[test]
-fn player_presentation_uses_camera_view_models_and_hand_shadow_proxies() {
-    let mut app = build_test_app(build_map());
+fn wait_for_weapon_representation_setup(app: &mut App) -> (Entity, Entity, Entity) {
     let maximum_setup_updates = 10_000;
-    let (visible_gun, shadow_gun, player_animation_player) = (0..maximum_setup_updates)
+    (0..maximum_setup_updates)
         .find_map(|_| {
             app.update();
             let visible_gun = app
@@ -92,11 +90,17 @@ fn player_presentation_uses_camera_view_models_and_hand_shadow_proxies() {
                 .iter(app.world())
                 .find(|(_, weapon, visibility)| **weapon == visible_weapon && **visibility != Visibility::Hidden)
                 .map(|(entity, _, _)| entity)?;
-            let right_hand = find_ancestor_named(&app, shadow_gun, "hand_r")?;
-            let player_animation_player = find_ancestor_with::<AnimationPlayer>(&app, right_hand)?;
+            let right_hand = find_ancestor_named(app, shadow_gun, "hand_r")?;
+            let player_animation_player = find_ancestor_with::<AnimationPlayer>(app, right_hand)?;
             Some((visible_gun, shadow_gun, player_animation_player))
         })
-        .expect("player should load visible and shadow weapon representations");
+        .expect("player should load visible and shadow weapon representations")
+}
+
+#[test]
+fn player_presentation_uses_camera_view_models_and_hand_shadow_proxies() {
+    let mut app = build_test_app(build_map());
+    let (visible_gun, shadow_gun, player_animation_player) = wait_for_weapon_representation_setup(&mut app);
 
     assert!(find_ancestor_with::<PlayerCamera>(&app, visible_gun).is_some());
     assert!(find_ancestor_named(&app, shadow_gun, "hand_r").is_some());

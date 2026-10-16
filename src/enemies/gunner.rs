@@ -3,7 +3,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::mesh::skinning::SkinnedMesh;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
-use rand::{Rng, SeedableRng, rngs::StdRng};
+use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use super::{
     AliveEnemy, AnimationState, BoneMap, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity,

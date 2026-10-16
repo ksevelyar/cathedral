@@ -1,7 +1,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-pub mod support;
+use super::support;
 
 fn get_current_game_state(app: &mut App) -> GameState {
     app.world().resource::<State<GameState>>().get().clone()
@@ -59,8 +59,10 @@ fn find_enemy_by_name(app: &mut App, kind: EnemyKind) -> Entity {
         .query_filtered::<(Entity, &Name), With<Enemy>>()
         .iter(app.world())
         .find(|(_, name)| name.as_str() == enemy_name)
-        .map(|(entity, _)| entity)
-        .unwrap_or_else(|| panic!("enemy {enemy_name} should spawn with the map"))
+        .map_or_else(
+            || panic!("enemy {enemy_name} should spawn with the map"),
+            |(entity, _)| entity,
+        )
 }
 
 fn simulate_enemy_near_player(kind: EnemyKind, walking_updates: usize, player_position: Vec3) -> (App, Entity) {
@@ -94,7 +96,7 @@ fn find_enemy_animator(app: &mut App, enemy: Entity) -> Entity {
 
 fn is_descendant_of(app: &App, candidate: Entity, ancestor: Entity) -> bool {
     let mut current = candidate;
-    while let Some(parent) = app.world().get::<ChildOf>(current).map(|child_of| child_of.parent()) {
+    while let Some(parent) = app.world().get::<ChildOf>(current).map(ChildOf::parent) {
         if parent == ancestor {
             return true;
         }
@@ -108,8 +110,10 @@ fn find_dropped_weapon(app: &mut App, enemy: Entity) -> Entity {
         .query_filtered::<(Entity, &OwnedByCharacter), With<Weapon>>()
         .iter(app.world())
         .find(|(_, owner)| owner.0 == enemy)
-        .map(|(entity, _)| entity)
-        .unwrap_or_else(|| panic!("enemy {enemy:?} should drop its weapon"))
+        .map_or_else(
+            || panic!("enemy {enemy:?} should drop its weapon"),
+            |(entity, _)| entity,
+        )
 }
 
 fn count_playing_animations(app: &mut App, animator: Entity) -> usize {
@@ -171,7 +175,7 @@ fn assert_death(app: &mut App, enemy: Entity) {
         "dropped weapon should become a dynamic rigid body"
     );
     assert!(
-        !app.world().get::<ChildOf>(weapon).is_some(),
+        app.world().get::<ChildOf>(weapon).is_none(),
         "dropped weapon should be detached from the hand"
     );
 }
@@ -324,8 +328,7 @@ fn find_ragdoll_body(app: &mut App, enemy: Entity, part: RagdollBodyPart) -> Ent
         .query_filtered::<(Entity, &OwnedByCharacter, &RagdollBodyPart), ()>()
         .iter(app.world())
         .find(|(_, owner, body_part)| owner.0 == enemy && **body_part == part)
-        .map(|(entity, _, _)| entity)
-        .unwrap_or_else(|| panic!("ragdoll should have {part:?}"))
+        .map_or_else(|| panic!("ragdoll should have {part:?}"), |(entity, _, _)| entity)
 }
 
 #[test]
@@ -360,16 +363,12 @@ fn gunner_loads_one_hairstyle() {
     let mut stable_updates = 0;
     for _ in 0..maximum_asset_load_updates {
         app.update();
-        let hair_root_count = app
-            .world()
-            .get::<Children>(gunner)
-            .map(|children| {
-                children
-                    .iter()
-                    .filter(|child| app.world().get::<WorldAssetRoot>(*child).is_some())
-                    .count()
-            })
-            .unwrap_or_default();
+        let hair_root_count = app.world().get::<Children>(gunner).map_or(0, |children| {
+            children
+                .iter()
+                .filter(|child| app.world().get::<WorldAssetRoot>(*child).is_some())
+                .count()
+        });
         stable_updates = if hair_root_count == 1 { stable_updates + 1 } else { 0 };
         if stable_updates == required_stable_updates {
             return;
@@ -502,7 +501,7 @@ fn gunner_shot_kills_player_and_camera_falls_to_head() {
         "dead player should have no health left"
     );
     assert!(
-        !app.world().get::<RigidBodyDisabled>(head_body).is_some(),
+        app.world().get::<RigidBodyDisabled>(head_body).is_none(),
         "player head ragdoll body should activate on death"
     );
     assert_camera_follows_fallen_head(&mut app, head_body);
@@ -523,7 +522,7 @@ fn fighter_melee_kills_player_and_camera_falls_to_head() {
         "fighter melee should have damaged the player before death, got {health_after_death} from {initial_health}"
     );
     assert!(
-        !app.world().get::<RigidBodyDisabled>(head_body).is_some(),
+        app.world().get::<RigidBodyDisabled>(head_body).is_none(),
         "player head ragdoll body should activate on death"
     );
     assert_camera_follows_fallen_head(&mut app, head_body);

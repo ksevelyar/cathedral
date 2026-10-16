@@ -72,8 +72,10 @@ fn find_enemy_by_name(app: &mut App, enemy_name: &str) -> Entity {
         .query_filtered::<(Entity, &Name), With<Enemy>>()
         .iter(app.world())
         .find(|(_, name)| name.as_str() == enemy_name)
-        .map(|(entity, _)| entity)
-        .unwrap_or_else(|| panic!("enemy {enemy_name} should spawn with the map"))
+        .map_or_else(
+            || panic!("enemy {enemy_name} should spawn with the map"),
+            |(entity, _)| entity,
+        )
 }
 
 fn find_player_entity(app: &mut App) -> Entity {
