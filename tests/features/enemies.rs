@@ -1,7 +1,7 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
 
-pub mod support;
+use super::support;
 
 fn get_current_game_state(app: &mut App) -> GameState {
     app.world().resource::<State<GameState>>().get().clone()

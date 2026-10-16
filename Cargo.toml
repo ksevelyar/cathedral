@@ -4,14 +4,32 @@ version = "0.6.0"
 edition = "2024"
 default-run = "cathedral"
 
-[[test]]
-name = "support"
-path = "tests/support.rs"
+[lib]
+test = false
+
+[[bin]]
+name = "cathedral"
+path = "src/main.rs"
 test = false
 
 [[bench]]
 name = "bloodmarks"
 harness = false
+
+[[bin]]
+name = "screenshot"
+path = "src/bin/screenshot.rs"
+test = false
+required-features = ["tools"]
+
+[[bin]]
+name = "viewer"
+path = "src/bin/viewer.rs"
+test = false
+required-features = ["tools"]
+
+[features]
+tools = []
 
 [dependencies]
 avian3d = "0.7"
@@ -70,9 +88,13 @@ features = [
   "zstd_rust",
 ]
 
+[profile.test]
+debug = "line-tables-only"
+
 # Enable a small amount of optimization in the dev profile.
 [profile.dev]
 opt-level = 1
+debug = "line-tables-only"
 
 # Enable a large amount of optimization in the dev profile for dependencies.
 [profile.dev.package."*"]

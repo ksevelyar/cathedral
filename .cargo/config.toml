@@ -1,5 +1,6 @@
 [alias]
-screenshot = "run --bin screenshot --release"
+screenshot = "run --features tools --bin screenshot --release"
+viewer = "run --features tools --bin viewer --release"
 
 # [build]
 # target = "wasm32-unknown-unknown"

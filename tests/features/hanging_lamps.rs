@@ -4,9 +4,8 @@ use cathedral::app::build_test_app;
 use cathedral::maps::build_map01;
 use std::time::Duration;
 
-pub mod support;
-
-use support::{FIXED_TIMESTEP_SECONDS, find_named_body, shoot_entity};
+use super::support;
+use super::support::{FIXED_TIMESTEP_SECONDS, find_named_body, shoot_entity};
 
 struct SwingSample {
     horizontal_displacement: Vec2,
