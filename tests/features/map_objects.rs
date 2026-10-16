@@ -3,9 +3,7 @@ use cathedral::app::build_test_app;
 use cathedral::maps::build_map01;
 use std::time::Duration;
 
-pub mod support;
-
-use support::{FIXED_TIMESTEP_SECONDS, assert_received_kick, assert_settles, find_named_body, shoot_entity};
+use super::support::{FIXED_TIMESTEP_SECONDS, assert_received_kick, assert_settles, find_named_body, shoot_entity};
 
 fn create_map_test_app() -> App {
     let fixed_timestep = Duration::from_secs_f64(FIXED_TIMESTEP_SECONDS);

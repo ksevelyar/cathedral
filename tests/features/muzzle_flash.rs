@@ -6,8 +6,6 @@ use cathedral::enemies::{Enemy, EnemyKind};
 use cathedral::maps::{Map, MapBuilder};
 use cathedral::shooting::{Gun, MUZZLE_FLASH_LIGHT_INTENSITY_BOUNDS, MUZZLE_FLASH_LIGHT_RANGE_BOUNDS, MuzzleFlash};
 
-pub mod support;
-
 const FLOOR_SIZE: Vec3 = Vec3::new(60.0, 0.1, 60.0);
 
 fn build_map_with_gunner_and_fighter() -> Map {

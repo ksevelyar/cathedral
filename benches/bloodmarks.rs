@@ -73,8 +73,7 @@ fn find_gunner_by_name(app: &mut App) -> Entity {
         .query_filtered::<(Entity, &Name), With<Enemy>>()
         .iter(app.world())
         .find(|(_, name)| name.as_str() == "Gunner 1")
-        .map(|(entity, _)| entity)
-        .unwrap_or_else(|| panic!("gunner should spawn with the map"))
+        .map_or_else(|| panic!("gunner should spawn with the map"), |(entity, _)| entity)
 }
 
 fn find_ragdoll_body(app: &mut App, enemy: Entity, part: RagdollBodyPart) -> Entity {
