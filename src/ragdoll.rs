@@ -827,84 +827,151 @@ type PendingRagdollQuery<'w, 's> = Query<
 >;
 
 fn spawn_ragdoll_bodies(mut commands: Commands, pending: PendingRagdollQuery<'_, '_>, scene: RagdollSceneContext) {
-    for (root, bones, _, dying, already_spawned) in &pending {
-        if already_spawned {
-            commands.entity(root).remove::<PendingRagdoll>();
+    for (character_entity, bone_map, _, is_dying, has_ragdoll) in &pending {
+        if has_ragdoll {
+            remove_pending_ragdoll(&mut commands, character_entity);
             continue;
         }
 
-        let missing_bone = LIMBS
-            .iter()
-            .flat_map(LimbSpec::list_bone_names)
-            .find(|name| bones.get(name).is_none());
-        if let Some(name) = missing_bone {
-            warn!("Cannot create ragdoll for {root:?}: missing bone {name}");
-            commands.entity(root).remove::<PendingRagdoll>();
-            continue;
-        }
-
-        let Some(skinned_vertices) = collect_skinned_vertices(bones, &scene) else {
-            warn!("Cannot create ragdoll for {root:?}: no skinned mesh vertices");
-            commands.entity(root).remove::<PendingRagdoll>();
+        let Some(measured_limbs) = measure_limbs(character_entity, bone_map, &scene.transforms) else {
+            remove_pending_ragdoll(&mut commands, character_entity);
             continue;
         };
-
-        let mut limbs: HashMap<RagdollBodyPart, MeasuredLimb> = HashMap::new();
-        let mut part_entities: HashMap<RagdollBodyPart, Entity> = HashMap::new();
-        let mut parts: Vec<RigPart> = Vec::new();
-
-        for spec in LIMBS {
-            let Some((transform, measured)) = measure_limb(spec, bones, &scene.transforms) else {
-                warn!("Cannot create ragdoll for {root:?}: cannot measure limb {}", spec.name);
-                break;
-            };
-
-            let collider = fit_limb_collider(spec, &skinned_vertices, measured.segment);
-            let entity = spawn_body(&mut commands, root, spec, transform, collider);
-            if !dying {
-                commands.entity(entity).insert(RigidBodyDisabled);
-            }
-            part_entities.insert(spec.part, entity);
-            limbs.insert(spec.part, measured);
-            parts.push(RigPart {
-                entity,
-                body_part: spec.part,
-                initial: GlobalTransform::from(transform),
-                bones: Vec::new(),
-            });
-        }
-
-        if parts.len() < LIMBS.len() {
-            commands.entity(root).remove::<PendingRagdoll>();
+        let Some(spawned_colliders) = spawn_ragdoll_colliders(
+            &mut commands,
+            character_entity,
+            bone_map,
+            &scene,
+            &measured_limbs,
+            is_dying,
+        ) else {
+            remove_pending_ragdoll(&mut commands, character_entity);
             continue;
-        }
-
-        if dying {
-            spawn_limb_joints(&mut commands, root, &part_entities, &limbs);
-        }
-
-        let torso_entity = part_entities[&RagdollBodyPart::Torso];
-        let mut bones_by_part = assign_drivers(bones, part_entities, &scene.parents, &scene.transforms, torso_entity);
-
-        for part in &mut parts {
-            part.bones = bones_by_part.remove(&part.entity).unwrap_or_default();
-        }
-
-        commands.entity(root).insert(RagdollData {
-            bones: bones.clone(),
-            limbs,
-            parts,
-        });
-        commands.entity(root).remove::<PendingRagdoll>();
+        };
+        maybe_spawn_joints(
+            &mut commands,
+            character_entity,
+            &spawned_colliders.part_entities,
+            &measured_limbs,
+            is_dying,
+        );
+        attach_ragdoll(
+            &mut commands,
+            character_entity,
+            bone_map,
+            &scene,
+            measured_limbs,
+            spawned_colliders,
+        );
+        remove_pending_ragdoll(&mut commands, character_entity);
     }
 }
 
-fn spawn_limb_joints(
+fn remove_pending_ragdoll(commands: &mut Commands, character_entity: Entity) {
+    commands.entity(character_entity).remove::<PendingRagdoll>();
+}
+
+fn measure_limbs(
+    character_entity: Entity,
+    bone_map: &BoneMap,
+    transforms: &Query<&GlobalTransform>,
+) -> Option<HashMap<RagdollBodyPart, MeasuredLimb>> {
+    let missing_bone = LIMBS
+        .iter()
+        .flat_map(LimbSpec::list_bone_names)
+        .find(|bone_name| bone_map.get(bone_name).is_none());
+    if let Some(bone_name) = missing_bone {
+        warn!("Cannot create ragdoll for {character_entity:?}: missing bone {bone_name}");
+        return None;
+    }
+
+    let mut measured_limbs = HashMap::new();
+    for specification in LIMBS {
+        let Some((_, measured_limb)) = measure_limb(specification, bone_map, transforms) else {
+            warn!(
+                "Cannot create ragdoll for {character_entity:?}: cannot measure limb {}",
+                specification.name
+            );
+            return None;
+        };
+        measured_limbs.insert(specification.part, measured_limb);
+    }
+
+    Some(measured_limbs)
+}
+
+struct SpawnedRagdollColliders {
+    part_entities: HashMap<RagdollBodyPart, Entity>,
+    parts: Vec<RigPart>,
+}
+
+fn spawn_ragdoll_colliders(
+    commands: &mut Commands,
+    character_entity: Entity,
+    bone_map: &BoneMap,
+    scene: &RagdollSceneContext,
+    measured_limbs: &HashMap<RagdollBodyPart, MeasuredLimb>,
+    is_dying: bool,
+) -> Option<SpawnedRagdollColliders> {
+    let Some(skinned_vertices) = collect_skinned_vertices(bone_map, scene) else {
+        warn!("Cannot create ragdoll for {character_entity:?}: no skinned mesh vertices");
+        return None;
+    };
+    let mut part_entities = HashMap::new();
+    let mut parts = Vec::with_capacity(LIMBS.len());
+    for specification in LIMBS {
+        let measured_limb = measured_limbs[&specification.part];
+        let transform = measured_limb.segment.transform();
+        let collider = fit_limb_collider(specification, &skinned_vertices, measured_limb.segment);
+        let entity = spawn_body(commands, character_entity, specification, transform, collider);
+        if !is_dying {
+            commands.entity(entity).insert(RigidBodyDisabled);
+        }
+        part_entities.insert(specification.part, entity);
+        parts.push(RigPart {
+            entity,
+            body_part: specification.part,
+            initial: GlobalTransform::from(transform),
+            bones: Vec::new(),
+        });
+    }
+    Some(SpawnedRagdollColliders { part_entities, parts })
+}
+
+fn attach_ragdoll(
+    commands: &mut Commands,
+    character_entity: Entity,
+    bone_map: &BoneMap,
+    scene: &RagdollSceneContext,
+    measured_limbs: HashMap<RagdollBodyPart, MeasuredLimb>,
+    spawned_colliders: SpawnedRagdollColliders,
+) {
+    let SpawnedRagdollColliders {
+        part_entities,
+        mut parts,
+    } = spawned_colliders;
+    let torso_entity = part_entities[&RagdollBodyPart::Torso];
+    let mut bones_by_part = assign_drivers(bone_map, part_entities, &scene.parents, &scene.transforms, torso_entity);
+    for part in &mut parts {
+        part.bones = bones_by_part.remove(&part.entity).unwrap_or_default();
+    }
+    commands.entity(character_entity).insert(RagdollData {
+        bones: bone_map.clone(),
+        limbs: measured_limbs,
+        parts,
+    });
+}
+
+fn maybe_spawn_joints(
     commands: &mut Commands,
     enemy: Entity,
     part_entities: &HashMap<RagdollBodyPart, Entity>,
     limbs: &HashMap<RagdollBodyPart, MeasuredLimb>,
+    is_dying: bool,
 ) {
+    if !is_dying {
+        return;
+    }
     for spec in LIMBS {
         let (Some(parent_part), Some(joint)) = (spec.parent, spec.joint) else {
             continue;
@@ -1068,7 +1135,7 @@ fn activate_ragdoll_on_death(mut commands: Commands, pending: DyingRagdollReques
             commands.entity(part.entity).insert(run_velocity);
             commands.entity(part.entity).remove::<RigidBodyDisabled>();
         }
-        spawn_limb_joints(&mut commands, root, &part_entities, &ragdoll.limbs);
+        maybe_spawn_joints(&mut commands, root, &part_entities, &ragdoll.limbs, dying);
 
         let Some(&body) = part_entities.get(&impact.body_part) else {
             continue;
