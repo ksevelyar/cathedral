@@ -5,9 +5,7 @@ use std::process;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use cathedral::app::{
-    Configuration, build_screenshot_app, request_screenshot, wait_screenshot_capture,
-};
+use cathedral::app::{Configuration, build_screenshot_app, request_screenshot, wait_screenshot_capture};
 use cathedral::enemies::EnemyKind;
 use cathedral::maps::{Map, MapBuilder, build_map01};
 use cathedral::shooting::Gun;

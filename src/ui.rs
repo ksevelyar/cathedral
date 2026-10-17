@@ -23,7 +23,14 @@ impl Plugin for PlayerHudPlugin {
             .add_systems(OnEnter(GameState::Paused), show_cursor)
             .add_systems(OnEnter(GameState::Paused), setup_pause_menu)
             .add_systems(OnEnter(GameState::GameOver), setup_game_over_menu)
-            .add_systems(Update, (toggle_physics_pause, toggle_collider_gizmos, update_crosshair_and_gun_visibility));
+            .add_systems(
+                Update,
+                (
+                    toggle_physics_pause,
+                    toggle_collider_gizmos,
+                    update_crosshair_and_gun_visibility,
+                ),
+            );
         if show_colliders {
             app.add_systems(
                 Update,
@@ -257,10 +264,7 @@ const INSPECTION_GIZMO_DEPTH_BIAS: f32 = -1.0;
 const COLLIDER_INSPECTION_FALLBACK_COLOR: Color = Color::srgb(1.0, 0.2, 0.2);
 const COLLIDER_INSPECTION_JOINT_COLOR: Color = Color::srgb(0.2, 0.2, 1.0);
 
-pub(crate) fn toggle_collider_gizmos(
-    keyboard: Res<ButtonInput<KeyCode>>,
-    mut gizmo_configs: ResMut<GizmoConfigStore>,
-) {
+pub(crate) fn toggle_collider_gizmos(keyboard: Res<ButtonInput<KeyCode>>, mut gizmo_configs: ResMut<GizmoConfigStore>) {
     if !keyboard.just_pressed(KeyCode::KeyC) {
         return;
     }

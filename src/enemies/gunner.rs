@@ -12,13 +12,10 @@ use super::{
 };
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
-use crate::ragdoll::{
-    OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies,
-};
+use crate::ragdoll::{OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies};
 use crate::shooting::{Magazine, RangedWeapon, Weapon, WeaponFired, WeaponFiringSystems, WeaponReloadStarted};
 
 use super::is_time_running;
-
 
 const GUNNER_ACCURACY: f64 = 0.65;
 const GUNNER_MISS_DISTANCE: f32 = 0.75;
@@ -140,7 +137,12 @@ fn retarget_gunner_hair(
         let joints = skinned_mesh
             .joints
             .iter()
-            .map(|hair_joint| names.get(*hair_joint).ok().and_then(|name| bones.get(name.as_str())))
+            .map(|hair_joint| {
+                names
+                    .get(*hair_joint)
+                    .ok()
+                    .and_then(|name| bones.find_bone(name.as_str()))
+            })
             .collect::<Option<Vec<_>>>();
         let Some(joints) = joints else {
             continue;

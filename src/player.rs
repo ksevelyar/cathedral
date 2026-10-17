@@ -16,7 +16,7 @@ use crate::health::{CharacterDied, Health};
 use crate::maps::PlayerPosition;
 use crate::movement::PhysicsWorld;
 use crate::ragdoll::{
-    BoneMap, OwnedByCharacter, PendingRagdollImpactRequest, RagdollBodyPart, RagdollData, exclude_character_bodies,
+    BoneMap, LastHitImpact, OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies,
     find_head_position, setup_ragdoll,
 };
 use crate::shooting::{Gun, Reloading, ShadowGun, WeaponSlot};
@@ -281,7 +281,7 @@ fn setup_player_animation(
     mut graphs: ResMut<Assets<AnimationGraph>>,
 ) {
     for (visual_entity, animations, bones) in &pending_visuals {
-        let Some(armature_entity) = bones.get("Armature") else {
+        let Some(armature_entity) = bones.find_bone("Armature") else {
             continue;
         };
         let (mut animation_graph, idle_animation) = AnimationGraph::from_clip(animations.idle.clone());
@@ -353,7 +353,7 @@ fn attach_player_guns_to_hand(
     let Ok((bones, _)) = player_visuals.single() else {
         return;
     };
-    let Some(right_hand_entity) = bones.get("hand_r") else {
+    let Some(right_hand_entity) = bones.find_bone("hand_r") else {
         return;
     };
     for shadow_gun in &shadow_guns {
@@ -430,7 +430,7 @@ fn handle_player_death(
         commands.entity(ragdoll_root).insert((
             Dying,
             LinearVelocity(velocity.0),
-            PendingRagdollImpactRequest {
+            LastHitImpact {
                 body_part: RagdollBodyPart::Head,
                 impulse: Vec3::ZERO,
                 point: Vec3::ZERO,
@@ -465,7 +465,7 @@ fn drop_player_weapons(
         let collider_half_extents = weapon_slot.0.get_collider_half_extents();
         commands.entity(weapon_entity).remove::<ChildOf>();
         commands.entity(weapon_entity).insert((
-            OwnedByCharacter(player_entity),
+            OwnedByCharacter::new(player_entity),
             Transform {
                 translation,
                 rotation,

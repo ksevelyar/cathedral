@@ -31,28 +31,34 @@ pub(super) fn build_map() -> Map {
             position: Vec3::new(10.0, 1.9, 7.0),
             look_at: Vec3::new(-6.0, 2.0, -2.0),
         },
-        enemies: build_gunners_in_arc_before_player(),
+        enemies: build_enemies_before_player(),
         objects: build_control_room_objects(),
     }
 }
 
-fn build_gunners_in_arc_before_player() -> Vec<EnemySpawn> {
+fn build_enemies_before_player() -> Vec<EnemySpawn> {
     let player_position = Vec3::new(10.0, 0.0, 7.0);
     let player_look_at = Vec3::new(-6.0, 0.0, -2.0);
     let forward_direction = (player_look_at - player_position).normalize();
-    let gunner_count = 4;
+    let gunner_count = 3;
     let arc_radius = 7.0;
     let arc_span_radians = std::f32::consts::FRAC_PI_3;
     let first_gunner_angle = -arc_span_radians * 0.5;
     let gunner_angle_step = arc_span_radians / (gunner_count - 1) as f32;
-
-    (0..gunner_count)
-        .map(move |gunner_index| {
+    let mut enemies: Vec<EnemySpawn> = (0..gunner_count)
+        .map(|gunner_index| {
             let gunner_angle = first_gunner_angle + gunner_angle_step * gunner_index as f32;
             let gunner_direction = Quat::from_rotation_y(gunner_angle).mul_vec3(forward_direction);
             EnemySpawn::new(player_position + gunner_direction * arc_radius, EnemyKind::Gunner)
         })
-        .collect()
+        .collect();
+    let fighter_positions = [Vec3::new(-3.0, 0.0, 3.0), Vec3::new(3.0, 0.0, 3.0)];
+    enemies.extend(
+        fighter_positions
+            .into_iter()
+            .map(|position| EnemySpawn::new(position, EnemyKind::Fighter)),
+    );
+    enemies
 }
 
 fn build_control_room_objects() -> Vec<ObjectSpawn> {

@@ -1,13 +1,13 @@
 use cathedral::app::{build_screenshot_app, fetch_configuration, request_screenshot, wait_screenshot_capture};
 use cathedral::enemies::AnimationState;
 use cathedral::enemies::{Dying, EnemyActivity, EnemyKind};
-use cathedral::maps::{build_map01, Map, MapBuilder};
-use cathedral::player::{compute_look_angles, Player, PlayerCamera};
+use cathedral::maps::{Map, MapBuilder, build_map01};
+use cathedral::player::{Player, PlayerCamera, compute_look_angles};
 use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
 
 use avian3d::prelude::{Position, RigidBodyDisabled};
-use bevy::input::mouse::{MouseButton as InputMouseButton, MouseButtonInput};
 use bevy::input::ButtonState;
+use bevy::input::mouse::{MouseButton as InputMouseButton, MouseButtonInput};
 use bevy::math::EulerRot;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
@@ -78,7 +78,7 @@ fn main() {
     std::fs::create_dir_all(SCREENSHOT_DIR).unwrap();
     match screenshot_scenario {
         ScreenshotScenario::Map01 => {
-            run_regular_screenshot(build_map01(), configuration, RENDER_WIDTH, RENDER_HEIGHT, "map01")
+            run_regular_screenshot(build_map01(), configuration, RENDER_WIDTH, RENDER_HEIGHT, "map01");
         }
         ScreenshotScenario::GunnerColliders => run_regular_screenshot(
             build_gunner_colliders_map(),
@@ -122,11 +122,11 @@ fn run_gunners_ragdoll_screenshot(configuration: cathedral::app::Configuration) 
     make_simulation_time_deterministic(&mut app);
     let (left_gunner, right_gunner) = wait_for_gunners_readiness(&mut app);
     wait_for_shooting_pose(&mut app, left_gunner);
-    advance_frames(&mut app, 25);
     let right_gunner_head = find_ragdoll_body(&mut app, right_gunner, RagdollBodyPart::Head);
     aim_player_at(&mut app, right_gunner_head);
     fire_player_weapon(&mut app);
     wait_for_ragdoll_activation(&mut app, right_gunner, right_gunner_head);
+    advance_ragdoll_frames(&mut app, 10);
     request_screenshot(app.world_mut());
     wait_screenshot_capture(&mut app);
 }
@@ -143,6 +143,12 @@ fn wait_for_ragdoll_activation(app: &mut App, gunner: Entity, head: Entity) {
         std::thread::yield_now();
     }
     panic!("gunner ragdoll should activate within {maximum_activation_updates} updates");
+}
+
+fn advance_ragdoll_frames(app: &mut App, frame_count: usize) {
+    for _ in 0..frame_count {
+        app.update();
+    }
 }
 
 fn make_simulation_time_deterministic(app: &mut App) {
@@ -221,12 +227,6 @@ fn wait_for_shooting_pose(app: &mut App, gunner: Entity) {
     panic!("gunner should enter the attacking pose within {maximum_pose_updates} updates");
 }
 
-fn advance_frames(app: &mut App, frame_count: usize) {
-    for _ in 0..frame_count {
-        app.update();
-    }
-}
-
 fn find_ragdoll_body(app: &mut App, gunner: Entity, body_part: RagdollBodyPart) -> Entity {
     find_ragdoll_body_in(app, gunner, body_part)
         .unwrap_or_else(|| panic!("gunner {gunner:?} should have a {body_part:?} ragdoll body"))
@@ -236,7 +236,7 @@ fn find_ragdoll_body_in(app: &mut App, gunner: Entity, body_part: RagdollBodyPar
     app.world_mut()
         .query::<(Entity, &OwnedByCharacter, &RagdollBodyPart)>()
         .iter(app.world())
-        .find(|(_, body_owner, part)| body_owner.0 == gunner && **part == body_part)
+        .find(|(_, body_owner, part)| body_owner.get_owner() == gunner && **part == body_part)
         .map(|(body_entity, _, _)| body_entity)
 }
 

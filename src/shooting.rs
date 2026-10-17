@@ -737,7 +737,7 @@ fn exclude_shooter_bodies(
     SpatialQueryFilter::from_mask(RAGDOLL_GROUP | OBJECTS_GROUP).with_excluded_entities(
         owned_bodies
             .iter()
-            .filter(|(_, owner)| character_entities.contains(&owner.0))
+            .filter(|(_, owner)| character_entities.contains(&owner.get_owner()))
             .map(|(body_entity, _)| body_entity),
     )
 }
@@ -785,9 +785,13 @@ pub(crate) fn shoot(
             continue;
         };
         if let Ok((hit_owner, body_part)) = hit_context.ragdoll_bodies.get(hit.entity)
-            && Some(hit_owner.0) != weapon_fired_message.shooter_entity
+            && Some(hit_owner.get_owner()) != weapon_fired_message.shooter_entity
         {
-            let victim = find_health_owner(hit_owner.0, &hit_context.characters, &hit_context.collider_parents);
+            let victim = find_health_owner(
+                hit_owner.get_owner(),
+                &hit_context.characters,
+                &hit_context.collider_parents,
+            );
             let shot_damage = weapon_fired_message.weapon.get_damage() * weapon_fired_message.damage_coefficient;
             character_damaged.write(CharacterDamaged {
                 character: victim,
@@ -797,9 +801,9 @@ pub(crate) fn shoot(
             });
         }
         if let Ok((_, owner)) = hit_context.owners.get(hit.entity)
-            && Some(owner.0) != weapon_fired_message.shooter_entity
+            && Some(owner.get_owner()) != weapon_fired_message.shooter_entity
         {
-            commands.entity(owner.0).trigger(|target| EnemyHit {
+            commands.entity(owner.get_owner()).trigger(|target| EnemyHit {
                 target,
                 collider: hit.entity,
                 shot_origin: origin,

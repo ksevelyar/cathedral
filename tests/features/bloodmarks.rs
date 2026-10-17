@@ -30,7 +30,7 @@ fn wait_for_inert_ragdoll(app: &mut App, enemy: Entity) {
             .world_mut()
             .query::<(&RagdollBodyPart, &OwnedByCharacter, Has<RigidBodyDisabled>)>()
             .iter(app.world())
-            .filter(|(_, owner, _)| owner.0 == enemy)
+            .filter(|(_, owner, _)| owner.get_owner() == enemy)
             .map(|(_, _, disabled)| disabled)
             .collect();
         let body_count = enemy_ragdoll_bodies.len();
@@ -80,7 +80,7 @@ fn find_ragdoll_body(app: &mut App, enemy: Entity, part: RagdollBodyPart) -> Ent
     app.world_mut()
         .query::<(Entity, &OwnedByCharacter, &RagdollBodyPart)>()
         .iter(app.world())
-        .find(|(_, owner, body_part)| owner.0 == enemy && **body_part == part)
+        .find(|(_, owner, body_part)| owner.get_owner() == enemy && **body_part == part)
         .map_or_else(|| panic!("ragdoll should have {part:?}"), |(entity, _, _)| entity)
 }
 
