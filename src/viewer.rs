@@ -15,7 +15,16 @@ pub struct ViewerHudPlugin;
 
 impl Plugin for ViewerHudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, (update_orbit, switch_animation, toggle_animation_pause, toggle_collider_gizmos, update_mount_display));
+        app.add_systems(
+            Update,
+            (
+                update_orbit,
+                switch_animation,
+                toggle_animation_pause,
+                toggle_collider_gizmos,
+                update_mount_display,
+            ),
+        );
     }
 }
 
@@ -117,7 +126,7 @@ fn setup_animations(
     let animation_asset_path = "characters/animations/ual1-standard.glb";
     let animation_count = 43;
     for (gunner, bones) in &gunner_bones {
-        let Some(armature) = bones.get("Armature") else {
+        let Some(armature) = bones.find_bone("Armature") else {
             continue;
         };
         let Ok(mut player) = animation_players.get_mut(armature) else {

@@ -91,9 +91,9 @@ fn initialize_logging() {
         .try_init()
         .ok();
 }
+use bevy::ecs::system::RunSystemOnce;
 use bevy::mesh::MeshPlugin;
 use bevy::prelude::*;
-use bevy::ecs::system::RunSystemOnce;
 use bevy::render::{
     RenderPlugin,
     render_resource::{Extent3d, PollType, TextureDimension, TextureFormat, TextureUsages},

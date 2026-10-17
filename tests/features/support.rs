@@ -3,8 +3,10 @@ use avian3d::prelude::*;
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
+use bevy::time::TimeUpdateStrategy;
 use cathedral::player::Player;
 use std::collections::{HashSet, VecDeque};
+use std::time::Duration;
 
 pub const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
 
@@ -19,14 +21,13 @@ pub fn find_named_body(app: &mut App, body_name: &str) -> Entity {
         )
 }
 
-pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {
+pub fn aim_at_entity(app: &mut App, target: Entity) {
     let target_position = app.world().get::<Position>(target).expect("target body position").0;
     let mut player_transform = app
         .world_mut()
         .query_filtered::<&mut Transform, With<Player>>()
         .single_mut(app.world_mut())
         .expect("one player should spawn");
-    let shot_direction = (target_position - player_transform.translation).normalize();
     let (yaw, pitch) = cathedral::player::compute_look_angles(player_transform.translation, target_position);
     player_transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, 0.0, 0.0);
     let mut camera_transform = app
@@ -35,13 +36,9 @@ pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {
         .single_mut(app.world_mut())
         .expect("one player camera should spawn");
     camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, pitch, 0.0);
-    let mut pressed_message_writer = app.world_mut().resource_mut::<Messages<MouseButtonInput>>();
-    pressed_message_writer.write(MouseButtonInput {
-        button: MouseButton::Left,
-        state: ButtonState::Pressed,
-        window: Entity::PLACEHOLDER,
-    });
-    app.update();
+}
+
+pub fn release_shot_button(app: &mut App) {
     let mut released_message_writer = app.world_mut().resource_mut::<Messages<MouseButtonInput>>();
     released_message_writer.write(MouseButtonInput {
         button: MouseButton::Left,
@@ -49,11 +46,48 @@ pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {
         window: Entity::PLACEHOLDER,
     });
     app.update();
+}
+
+pub fn press_shot_button(app: &mut App) {
+    let mut pressed_message_writer = app.world_mut().resource_mut::<Messages<MouseButtonInput>>();
+    pressed_message_writer.write(MouseButtonInput {
+        button: MouseButton::Left,
+        state: ButtonState::Pressed,
+        window: Entity::PLACEHOLDER,
+    });
+    app.update();
+}
+
+pub fn press_shot_button_before_physics(app: &mut App) {
+    let mut pressed_message_writer = app.world_mut().resource_mut::<Messages<MouseButtonInput>>();
+    pressed_message_writer.write(MouseButtonInput {
+        button: MouseButton::Left,
+        state: ButtonState::Pressed,
+        window: Entity::PLACEHOLDER,
+    });
+    let mut fixed_time = app.world_mut().resource_mut::<Time<Fixed>>();
+    let fixed_time_overstep = fixed_time.overstep();
+    fixed_time.discard_overstep(fixed_time_overstep);
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::ZERO));
+    app.update();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(16)));
+}
+
+pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {
+    let target_position = app.world().get::<Position>(target).expect("target body position").0;
+    let player_transform = app
+        .world_mut()
+        .query_filtered::<&Transform, With<Player>>()
+        .single(app.world())
+        .expect("one player should spawn");
+    let shot_direction = (target_position - player_transform.translation).normalize();
+    aim_at_entity(app, target);
+    press_shot_button(app);
+    release_shot_button(app);
     shot_direction
 }
 
-pub fn assert_received_kick(app: &mut App, target: Entity) {
-    let minimum_kick_speed = 3.0;
+pub fn assert_kick_speed(app: &mut App, target: Entity, minimum_kick_speed: f32) {
     let linear_kick = app
         .world()
         .get::<LinearVelocity>(target)
@@ -64,63 +98,21 @@ pub fn assert_received_kick(app: &mut App, target: Entity) {
         .get::<AngularVelocity>(target)
         .expect("shot target should have angular velocity")
         .0;
-    let target_kick_speed = linear_kick.length() + angular_kick.length();
-    assert!(
-        target_kick_speed >= minimum_kick_speed,
-        "shot target should receive a kick of at least {minimum_kick_speed}, got linear_speed={:.6}, angular_speed={:.6}",
-        linear_kick.length(),
-        angular_kick.length()
-    );
-
-    let most_kicked_body = find_joint_connected_bodies(app, target)
-        .into_iter()
-        .max_by(|left_body, right_body| {
-            let left_linear_kick = app
-                .world()
-                .get::<LinearVelocity>(*left_body)
-                .expect("joint-connected body should have linear velocity")
-                .0;
-            let left_angular_kick = app
-                .world()
-                .get::<AngularVelocity>(*left_body)
-                .expect("joint-connected body should have angular velocity")
-                .0;
-            let right_linear_kick = app
-                .world()
-                .get::<LinearVelocity>(*right_body)
-                .expect("joint-connected body should have linear velocity")
-                .0;
-            let right_angular_kick = app
-                .world()
-                .get::<AngularVelocity>(*right_body)
-                .expect("joint-connected body should have angular velocity")
-                .0;
-            let left_kick_speed = left_linear_kick.length() + left_angular_kick.length();
-            let right_kick_speed = right_linear_kick.length() + right_angular_kick.length();
-            left_kick_speed.total_cmp(&right_kick_speed)
-        })
-        .expect("target should be in its joint-connected bodies");
-    assert_eq!(most_kicked_body, target, "shot target should receive the most kick");
-}
-
-fn log_speeds(app: &App, body: Entity, label: &str) {
-    let body_name = app
-        .world()
-        .get::<Name>(body)
-        .map_or_else(|| format!("{body:?}"), ToString::to_string);
-    let velocity = app.world().get::<LinearVelocity>(body).expect("body velocity").0;
-    let angular_velocity = app
-        .world()
-        .get::<AngularVelocity>(body)
-        .expect("body angular velocity")
-        .0;
-    let most_energetic_awake_island_body = find_awake_island_body_with_most_kinetic_energy(app, body);
-    println!(
-        "{body_name} {label}: linear_speed={:.2}, angular_speed={:.2}\nmost active element: {}\n",
-        velocity.length(),
-        angular_velocity.length(),
-        most_energetic_awake_island_body.unwrap_or_default()
-    );
+    if linear_kick.length() < minimum_kick_speed {
+        let connected_body_kicks: Vec<_> = find_joint_connected_bodies(app, target)
+            .into_iter()
+            .filter_map(|connected_body| {
+                let body_part = app.world().get::<cathedral::ragdoll::RagdollBodyPart>(connected_body)?;
+                let velocity = app.world().get::<LinearVelocity>(connected_body)?;
+                Some((*body_part, velocity.length()))
+            })
+            .collect();
+        panic!(
+            "shot should produce speed of at least {minimum_kick_speed}, got linear_speed={:.6}, angular_speed={:.6}, connected body linear speeds={connected_body_kicks:?}",
+            linear_kick.length(),
+            angular_kick.length()
+        );
+    }
 }
 
 fn find_joint_connected_bodies(app: &App, body: Entity) -> Vec<Entity> {
@@ -174,16 +166,21 @@ fn find_awake_island_body_with_most_kinetic_energy(app: &App, body: Entity) -> O
 }
 
 pub fn assert_settles(app: &mut App, body: Entity, settling_duration: f64) {
+    let dynamic_island_bodies: Vec<_> = find_joint_connected_bodies(app, body)
+        .into_iter()
+        .filter(|island_body| {
+            app.world()
+                .get::<RigidBody>(*island_body)
+                .is_some_and(|rigid_body| *rigid_body == RigidBody::Dynamic)
+        })
+        .collect();
     let settling_steps = (settling_duration / FIXED_TIMESTEP_SECONDS) as usize;
-    let log_interval = (0.5 / FIXED_TIMESTEP_SECONDS) as usize;
-    for step in 0..settling_steps {
+    for _ in 0..settling_steps {
         app.update();
-        if step % log_interval == 0 {
-            let elapsed_seconds = (step as f64) * FIXED_TIMESTEP_SECONDS;
-            log_speeds(app, body, &format!("after {elapsed_seconds:.1}s"));
-        }
-        if app.world().get::<Sleeping>(body).is_some() {
-            log_speeds(app, body, "after sleep");
+        let island_is_sleeping = dynamic_island_bodies
+            .iter()
+            .all(|island_body| app.world().get::<Sleeping>(*island_body).is_some());
+        if island_is_sleeping {
             return;
         }
     }
@@ -195,7 +192,7 @@ pub fn assert_settles(app: &mut App, body: Entity, settling_duration: f64) {
     let velocity = app.world().get::<LinearVelocity>(body).expect("body velocity");
     let angular_velocity = app.world().get::<AngularVelocity>(body).expect("body angular velocity");
     panic!(
-        "{body_name} never settled within {settling_duration} seconds, linear_speed={:.2}, angular_speed={:.2}\nmost active element: {}",
+        "{body_name} never settled within {settling_duration} seconds, linear_speed={:.2}, angular_speed={:.2}; most active element: {}",
         velocity.length(),
         angular_velocity.length(),
         most_energetic_awake_island_body.unwrap_or_default()

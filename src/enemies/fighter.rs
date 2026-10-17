@@ -8,13 +8,10 @@ use super::{
 use crate::health::CharacterDamaged;
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
-use crate::ragdoll::{
-    OwnedByCharacter, exclude_character_bodies,
-};
+use crate::ragdoll::{OwnedByCharacter, exclude_character_bodies};
 use crate::shooting::{MeleeWeapon, Weapon};
 
 use super::is_time_running;
-
 
 pub(super) struct FighterPlugin;
 
@@ -123,7 +120,6 @@ type FighterQuery<'world, 'state> = Query<
     ),
     (AliveEnemy, With<Fighter>),
 >;
-
 
 fn update_fighters(
     (time, move_and_slide, gravity): FighterMovementContext,

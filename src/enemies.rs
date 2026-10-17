@@ -296,7 +296,7 @@ fn drop_weapon(
     let (scale, rotation, translation) = global.to_scale_rotation_translation();
     commands.entity(weapon.0).remove::<ChildOf>();
     commands.entity(weapon.0).insert((
-        OwnedByCharacter(enemy),
+        OwnedByCharacter::new(enemy),
         Transform {
             translation,
             rotation,
@@ -345,7 +345,7 @@ fn setup_external_animation(
         let Ok(bones) = bone_maps.get(enemy_entity) else {
             continue;
         };
-        let Some(armature) = bones.get("Armature") else {
+        let Some(armature) = bones.find_bone("Armature") else {
             continue;
         };
 
@@ -402,7 +402,7 @@ fn attach_weapon(
     animations: &EnemyAnimations,
     weapon: &EquippedWeapon,
 ) {
-    let Some(right_hand) = bones.get("hand_r") else {
+    let Some(right_hand) = bones.find_bone("hand_r") else {
         return;
     };
 
@@ -508,7 +508,6 @@ fn update_enemy_animations(
         armature_animation.current = Some(activity.state);
     }
 }
-
 
 pub(crate) type AliveEnemy = (With<Enemy>, Without<Dying>);
 pub(super) const ENEMY_COLLISION_RADIUS: f32 = 0.35;
