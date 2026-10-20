@@ -2,6 +2,7 @@ mod support;
 
 mod bloodmarks;
 mod enemies;
+mod enemy_behavior;
 mod hanging_lamps;
 mod map_objects;
 mod mouse_look;

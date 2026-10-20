@@ -115,6 +115,13 @@ impl Weapon {
         }
     }
 
+    pub(crate) fn get_sound_loudness(self) -> Option<f32> {
+        match self {
+            Self::Ranged(ranged_weapon) => Some(ranged_weapon.get_sound_loudness()),
+            Self::Melee(_) => None,
+        }
+    }
+
     fn get_reload_sound_path(self) -> Option<&'static str> {
         match self {
             Self::Ranged(ranged_weapon) => Some(ranged_weapon.get_reload_sound_path()),
@@ -146,6 +153,7 @@ struct RangedWeaponDefinition {
     range: f32,
     attack_sound_path: &'static str,
     attack_sound_start_position: Duration,
+    sound_loudness: f32,
     fire_mode: FireMode,
     magazine_capacity: u8,
     reload_duration: Duration,
@@ -165,6 +173,7 @@ const REVOLVER_2_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
     range: 100.0,
     attack_sound_path: "weapons/revolver.mp3",
     attack_sound_start_position: Duration::from_millis(450),
+    sound_loudness: 1.2,
     fire_mode: FireMode::SingleShot,
     magazine_capacity: 8,
     reload_duration: RELOAD_DURATION,
@@ -181,6 +190,7 @@ const SHOTGUN_SHORT_STOCK_DEFINITION: RangedWeaponDefinition = RangedWeaponDefin
     range: 100.0,
     attack_sound_path: "weapons/shotgun.mp3",
     attack_sound_start_position: Duration::from_millis(328),
+    sound_loudness: 2.0,
     fire_mode: FireMode::SingleShot,
     magazine_capacity: 6,
     reload_duration: RELOAD_DURATION,
@@ -197,6 +207,7 @@ const SHOTGUN_SAWED_OFF_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinit
     range: 100.0,
     attack_sound_path: "weapons/shotgun.mp3",
     attack_sound_start_position: Duration::from_millis(328),
+    sound_loudness: 2.0,
     fire_mode: FireMode::SingleShot,
     magazine_capacity: 2,
     reload_duration: RELOAD_DURATION,
@@ -213,6 +224,7 @@ const SUBMACHINE_GUN_3_DEFINITION: RangedWeaponDefinition = RangedWeaponDefiniti
     range: 100.0,
     attack_sound_path: "weapons/submachine-gun.mp3",
     attack_sound_start_position: Duration::ZERO,
+    sound_loudness: 1.4,
     fire_mode: FireMode::Automatic,
     magazine_capacity: 24,
     reload_duration: RELOAD_DURATION,
@@ -229,6 +241,7 @@ const PISTOL_DEFINITION: RangedWeaponDefinition = RangedWeaponDefinition {
     range: 100.0,
     attack_sound_path: "weapons/pistol.mp3",
     attack_sound_start_position: Duration::from_millis(400),
+    sound_loudness: 1.0,
     fire_mode: FireMode::SingleShot,
     magazine_capacity: 9,
     reload_duration: RELOAD_DURATION,
@@ -286,6 +299,10 @@ impl RangedWeapon {
 
     fn get_attack_sound_start_position(self) -> Duration {
         self.definition.attack_sound_start_position
+    }
+
+    fn get_sound_loudness(self) -> f32 {
+        self.definition.sound_loudness
     }
 
     fn get_fire_mode(self) -> FireMode {

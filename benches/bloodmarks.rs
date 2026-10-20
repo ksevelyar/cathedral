@@ -1,7 +1,7 @@
 use avian3d::prelude::{Position, RigidBodyDisabled};
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::enemies::{Enemy, EnemyKind};
+use cathedral::enemies::{Enemy, EnemyBehavior, EnemyKind};
 use cathedral::maps::{Map, MapBuilder};
 use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
 use cathedral::shooting::{RangedWeapon, Weapon, WeaponFired};
@@ -18,7 +18,12 @@ fn build_map() -> Map {
     MapBuilder::new("bloodmarks benchmark")
         .with_player_position(player_position, player_position + Vec3::NEG_Z)
         .with_floor(floor_size)
-        .with_enemy(Vec3::new(0.0, 0.5, 0.0), EnemyKind::Gunner)
+        .with_enemy(
+            vec![Vec3::new(0.0, 0.5, 0.0)],
+            Vec3::new(0.0, 0.5, -1.0),
+            EnemyKind::Gunner,
+            EnemyBehavior::Patrol,
+        )
         .build()
 }
 

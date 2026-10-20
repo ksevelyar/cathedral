@@ -3,7 +3,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 use bevy::window::WindowPlugin;
 
-use crate::enemies::{EnemiesPlugin, Enemy, EnemyKind, ManualAnimationControl};
+use crate::enemies::{EnemiesPlugin, Enemy, EnemyBehavior, EnemyKind, ManualAnimationControl};
 use crate::health::HealthPlugin;
 use crate::maps::{MapBuilder, MapsPlugin};
 use crate::ragdoll::{BoneMap, RagdollPlugin};
@@ -56,7 +56,12 @@ type ViewerGunnerQuery<'world, 'state> =
 pub fn run() {
     let map = MapBuilder::new("viewer")
         .with_floor(Vec3::new(12.0, 0.1, 12.0))
-        .with_enemy(Vec3::ZERO, EnemyKind::Gunner)
+        .with_enemy(
+            vec![Vec3::ZERO],
+            Vec3::ZERO + Vec3::NEG_Z,
+            EnemyKind::Gunner,
+            EnemyBehavior::Patrol,
+        )
         .build();
     App::new()
         .insert_resource(map)

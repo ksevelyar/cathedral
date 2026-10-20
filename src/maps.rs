@@ -8,7 +8,7 @@ use bevy::light::FogVolume;
 use bevy::prelude::*;
 use bevy::transform::TransformSystems;
 
-use crate::enemies::{EnemyKind, spawn_enemy};
+use crate::enemies::{EnemyBehavior, EnemyKind, EnemySpawnConfiguration, spawn_enemy};
 use crate::player;
 
 pub use gltf::{CardboardBox, Desk, Jerrycan, Laptop, PlasticBottleGallon, PowerBox, Stool, StorageRack};
@@ -110,8 +110,15 @@ impl MapBuilder {
         self.with_object(ObjectSpawn::new(Transform::from_translation(position), Wall { size }))
     }
 
-    pub fn with_enemy(mut self, position: Vec3, kind: EnemyKind) -> Self {
-        self.enemies.push(EnemySpawn::new(position, kind));
+    pub fn with_enemy(
+        mut self,
+        positions: Vec<Vec3>,
+        look_at: Vec3,
+        kind: EnemyKind,
+        initial_behavior: EnemyBehavior,
+    ) -> Self {
+        self.enemies
+            .push(EnemySpawn::facing(positions, look_at, kind, initial_behavior));
         self
     }
 
@@ -170,19 +177,34 @@ pub(crate) struct FogVolumeSettings {
     pub scattering_asymmetry: f32,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub(crate) struct EnemySpawn {
-    pub position: Vec3,
+    pub positions: Vec<Vec3>,
     pub rotation: Quat,
     pub kind: EnemyKind,
+    pub initial_behavior: EnemyBehavior,
 }
 
 impl EnemySpawn {
-    pub fn new(position: Vec3, kind: EnemyKind) -> Self {
+    pub fn new(positions: Vec<Vec3>, kind: EnemyKind, initial_behavior: EnemyBehavior) -> Self {
+        assert!(!positions.is_empty(), "enemy positions should contain a spawn position");
         Self {
-            position,
+            positions,
             rotation: Quat::IDENTITY,
             kind,
+            initial_behavior,
+        }
+    }
+
+    pub fn facing(positions: Vec<Vec3>, look_at: Vec3, kind: EnemyKind, initial_behavior: EnemyBehavior) -> Self {
+        let spawn_position = positions[0];
+        let planar_offset = (look_at - spawn_position).xz().normalize_or_zero();
+        let direction = Vec3::new(planar_offset.x, 0.0, planar_offset.y);
+        let mut spawn_transform = Transform::from_translation(spawn_position);
+        spawn_transform.look_to(-direction, Vec3::Y);
+        Self {
+            rotation: spawn_transform.rotation,
+            ..Self::new(positions, kind, initial_behavior)
         }
     }
 }
@@ -225,7 +247,11 @@ fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &
             asset_server,
             enemy_spawn.kind,
             enemy_index,
-            Transform::from_translation(enemy_spawn.position).with_rotation(enemy_spawn.rotation),
+            Transform::from_translation(enemy_spawn.positions[0]).with_rotation(enemy_spawn.rotation),
+            EnemySpawnConfiguration {
+                patrol_positions: enemy_spawn.positions.clone(),
+                initial_behavior: enemy_spawn.initial_behavior,
+            },
             true,
         );
     }

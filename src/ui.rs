@@ -4,6 +4,7 @@ use bevy::prelude::*;
 use bevy::window::{CursorGrabMode, CursorOptions};
 
 use crate::app::Configuration;
+use crate::enemies::EnemyVisionGizmos;
 use crate::health::Health;
 use crate::player::Player;
 use crate::ragdoll::RagdollBoneGizmos;
@@ -69,6 +70,14 @@ impl Plugin for ColliderInspectionPlugin {
             )
             .insert_gizmo_config(
                 RagdollBoneGizmos,
+                GizmoConfig {
+                    enabled: show_colliders,
+                    depth_bias: INSPECTION_GIZMO_DEPTH_BIAS,
+                    ..default()
+                },
+            )
+            .insert_gizmo_config(
+                EnemyVisionGizmos,
                 GizmoConfig {
                     enabled: show_colliders,
                     depth_bias: INSPECTION_GIZMO_DEPTH_BIAS,
@@ -274,6 +283,7 @@ pub(crate) fn toggle_collider_gizmos(keyboard: Res<ButtonInput<KeyCode>>, mut gi
         collider_gizmos.enabled
     };
     gizmo_configs.config_mut::<RagdollBoneGizmos>().0.enabled = are_colliders_enabled;
+    gizmo_configs.config_mut::<EnemyVisionGizmos>().0.enabled = are_colliders_enabled;
 }
 
 fn toggle_physics_pause(keyboard: Res<ButtonInput<KeyCode>>, mut physics_time: ResMut<Time<Physics>>) {

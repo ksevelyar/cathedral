@@ -2,7 +2,7 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::enemies::{AnimationState, Enemy, EnemyActivity, EnemyKind};
+use cathedral::enemies::{AnimationState, Enemy, EnemyActivity, EnemyBehavior, EnemyKind};
 use cathedral::maps::{Map, MapBuilder};
 use cathedral::player::{CameraState, Player};
 use std::time::Duration;
@@ -12,13 +12,13 @@ const PATH_FINDING_UPDATES: usize = 2048;
 const PLAYER_BLOCKER_UPDATES: usize = 1024;
 const TALL_PILLAR_POSITION: Vec3 = Vec3::new(0.0, 10.0, 0.0);
 const TALL_PILLAR_SIZE: Vec3 = Vec3::new(1.0, 20.0, 1.0);
-const FIGHTER_START_POSITION: Vec3 = Vec3::new(-6.0, 0.5, 0.0);
-const PLAYER_START_POSITION: Vec3 = Vec3::new(6.0, 0.5, 0.0);
+const FIGHTER_START_POSITION: Vec3 = Vec3::new(-6.0, 0.05, 0.0);
+const PLAYER_START_POSITION: Vec3 = Vec3::new(6.0, 0.05, 0.0);
 const BLOCKED_PLAYER_START_POSITION: Vec3 = Vec3::new(-6.0, 1.5, 0.0);
 const SOUTH_FACE_PLAYER_START_POSITION: Vec3 = Vec3::new(0.0, 1.5, 2.0);
 const STAIR_PLAYER_START_POSITION: Vec3 = Vec3::new(0.0, 1.5, 12.0);
-const STAIR_PLAYER_WAITING_POSITION: Vec3 = Vec3::new(0.0, 0.5, -8.0);
-const STAIR_FIGHTER_START_POSITION: Vec3 = Vec3::new(0.0, 0.5, 2.5);
+const STAIR_PLAYER_WAITING_POSITION: Vec3 = Vec3::new(0.0, 0.05, -8.0);
+const STAIR_FIGHTER_START_POSITION: Vec3 = Vec3::new(0.0, 0.05, 2.5);
 const FIGHTER_REACH: f32 = 2.5;
 const REACH_MARGIN: f32 = 0.5;
 const MINIMUM_PROGRESS: f32 = 0.5;
@@ -31,7 +31,12 @@ fn build_tall_pillar_map(player_position: Vec3, fighter_start_position: Option<V
         .with_floor(floor_size)
         .with_wall(TALL_PILLAR_POSITION, TALL_PILLAR_SIZE);
     if let Some(fighter_start_position) = fighter_start_position {
-        map_builder = map_builder.with_enemy(fighter_start_position, EnemyKind::Fighter);
+        map_builder = map_builder.with_enemy(
+            vec![fighter_start_position],
+            player_position,
+            EnemyKind::Fighter,
+            EnemyBehavior::Engaged,
+        );
     }
     map_builder.build()
 }
@@ -54,7 +59,12 @@ fn build_staircase_map(player_position: Vec3, fighter_start_position: Option<Vec
     }
     let mut map_builder = map_builder.with_wall(apex_position, apex_size);
     if let Some(fighter_start_position) = fighter_start_position {
-        map_builder = map_builder.with_enemy(fighter_start_position, EnemyKind::Fighter);
+        map_builder = map_builder.with_enemy(
+            vec![fighter_start_position],
+            player_position,
+            EnemyKind::Fighter,
+            EnemyBehavior::Engaged,
+        );
     }
     map_builder.build()
 }

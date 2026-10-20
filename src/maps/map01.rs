@@ -4,7 +4,7 @@ use super::gltf::{CardboardBox, Desk, Jerrycan, Laptop, PlasticBottleGallon, Pow
 use super::hanging_lamp::HangingLamp;
 use super::structure::{Ceiling, Floor, Wall};
 use super::{EnemySpawn, FogVolumeSettings, Map, ObjectSpawn, PlayerPosition};
-use crate::enemies::EnemyKind;
+use crate::enemies::{EnemyBehavior, EnemyKind};
 
 pub(super) fn build_map() -> Map {
     let name = "map01";
@@ -49,15 +49,24 @@ fn build_enemies_before_player() -> Vec<EnemySpawn> {
         .map(|gunner_index| {
             let gunner_angle = first_gunner_angle + gunner_angle_step * gunner_index as f32;
             let gunner_direction = Quat::from_rotation_y(gunner_angle).mul_vec3(forward_direction);
-            EnemySpawn::new(player_position + gunner_direction * arc_radius, EnemyKind::Gunner)
+            let gunner_position = player_position + gunner_direction * arc_radius;
+            let patrol_offset = Quat::from_rotation_y(std::f32::consts::FRAC_PI_2).mul_vec3(gunner_direction) * 2.0;
+            EnemySpawn::new(
+                vec![gunner_position, gunner_position + patrol_offset],
+                EnemyKind::Gunner,
+                EnemyBehavior::Patrol,
+            )
         })
         .collect();
     let fighter_positions = [Vec3::new(-3.0, 0.0, 3.0), Vec3::new(3.0, 0.0, 3.0)];
-    enemies.extend(
-        fighter_positions
-            .into_iter()
-            .map(|position| EnemySpawn::new(position, EnemyKind::Fighter)),
-    );
+    enemies.extend(fighter_positions.into_iter().map(|position| {
+        let patrol_offset = Vec3::new(0.0, 0.0, 2.0);
+        EnemySpawn::new(
+            vec![position, position + patrol_offset],
+            EnemyKind::Fighter,
+            EnemyBehavior::Patrol,
+        )
+    }));
     enemies
 }
 

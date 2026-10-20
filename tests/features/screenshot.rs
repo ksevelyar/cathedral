@@ -6,7 +6,7 @@ use std::process;
 use avian3d::prelude::*;
 use bevy::prelude::*;
 use cathedral::app::{Configuration, build_screenshot_app, request_screenshot, wait_screenshot_capture};
-use cathedral::enemies::EnemyKind;
+use cathedral::enemies::{EnemyBehavior, EnemyKind};
 use cathedral::maps::{Map, MapBuilder, build_map01};
 use cathedral::shooting::Gun;
 
@@ -22,7 +22,12 @@ fn build_gunner_colliders_map() -> Map {
     MapBuilder::new(name)
         .with_player_position(Vec3::new(0.0, 1.8, 3.0), Vec3::new(0.0, 1.0, 0.0))
         .with_floor(floor_size)
-        .with_enemy(Vec3::ZERO, EnemyKind::Gunner)
+        .with_enemy(
+            vec![Vec3::ZERO],
+            Vec3::ZERO + Vec3::NEG_Z,
+            EnemyKind::Gunner,
+            EnemyBehavior::Patrol,
+        )
         .build()
 }
 

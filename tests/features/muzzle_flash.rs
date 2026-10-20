@@ -2,19 +2,29 @@ use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::enemies::{Enemy, EnemyKind};
+use cathedral::enemies::{Enemy, EnemyBehavior, EnemyKind};
 use cathedral::maps::{Map, MapBuilder};
 use cathedral::shooting::{Gun, MUZZLE_FLASH_LIGHT_INTENSITY_BOUNDS, MUZZLE_FLASH_LIGHT_RANGE_BOUNDS, MuzzleFlash};
 
 const FLOOR_SIZE: Vec3 = Vec3::new(60.0, 0.1, 60.0);
 
 fn build_map_with_gunner_and_fighter() -> Map {
-    let gunner_position = Vec3::new(-2.0, 0.5, 0.0);
-    let fighter_position = Vec3::new(2.0, 0.5, 0.0);
+    let gunner_position = Vec3::new(-2.0, 0.05, 0.0);
+    let fighter_position = Vec3::new(2.0, 0.05, 0.0);
     MapBuilder::new("muzzle_flash")
         .with_floor(FLOOR_SIZE)
-        .with_enemy(gunner_position, EnemyKind::Gunner)
-        .with_enemy(fighter_position, EnemyKind::Fighter)
+        .with_enemy(
+            vec![gunner_position],
+            gunner_position + Vec3::NEG_Z,
+            EnemyKind::Gunner,
+            EnemyBehavior::Patrol,
+        )
+        .with_enemy(
+            vec![fighter_position],
+            fighter_position + Vec3::NEG_Z,
+            EnemyKind::Fighter,
+            EnemyBehavior::Patrol,
+        )
         .build()
 }
 
