@@ -7,8 +7,8 @@ use rand::{RngExt, SeedableRng, rngs::StdRng};
 
 use super::{
     AliveEnemy, AnimationState, BoneMap, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity,
-    EnemyDefinition, EnemyRig, EnemyWeapon, EquippedWeapon, Seed, find_player_head_position, flatten_direction,
-    move_enemy, spawn_enemy_base,
+    EnemyBehavior, EnemyDefinition, EnemyLocomotion, EnemyRig, EnemySenses, EnemySpawnConfiguration, EnemyWeapon,
+    EquippedWeapon, Seed, find_character_part_position, flatten_direction, move_enemy, spawn_enemy_base,
 };
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
@@ -165,6 +165,7 @@ pub(super) fn spawn(
     seed: Seed,
     sequence_number: usize,
     transform: Transform,
+    spawn_configuration: EnemySpawnConfiguration,
     alive: bool,
 ) -> Entity {
     let gunner = Gunner::default();
@@ -172,6 +173,8 @@ pub(super) fn spawn(
         display_name: "Gunner",
         rig: gunner.rig.clone(),
         starting_health: gunner.starting_health,
+        patrol_positions: spawn_configuration.patrol_positions,
+        initial_behavior: spawn_configuration.initial_behavior,
     };
     let gunner_entity = spawn_enemy_base(
         commands,
@@ -183,7 +186,16 @@ pub(super) fn spawn(
         alive,
     );
     commands.entity(gunner_entity).insert((
-        gunner,
+        gunner.clone(),
+        EnemyLocomotion {
+            move_speed: gunner.move_speed,
+        },
+        EnemySenses {
+            vision_range: 12.0,
+            vision_half_angle_radians: 45.0_f32.to_radians(),
+            detection_seconds: 4.0,
+            hearing_range: 5.0,
+        },
         GunnerAttack::default(),
         GunnerAttackJitter(seed.calculate_unit_value(6)),
     ));
@@ -222,6 +234,7 @@ type GunnerQuery<'world, 'state> = Query<
         Entity,
         &'static Gunner,
         &'static GunnerAttackJitter,
+        &'static EnemyBehavior,
         &'static mut GunnerAttack,
         &'static mut Transform,
         &'static mut EnemyActivity,
@@ -233,7 +246,7 @@ type GunnerQuery<'world, 'state> = Query<
 fn update_gunners(
     (time, move_and_slide, gravity): GunnerMovementContext,
     player: PlayerTargetQuery,
-    player_children: Query<&Children, With<Player>>,
+    player_children: Query<&Children>,
     owned_bodies: Query<(Entity, &OwnedByCharacter)>,
     (enemy_weapons, mut weapons, ragdoll_roots, ragdoll_body_positions): GunnerWeaponContext,
     mut gunners: GunnerQuery,
@@ -244,9 +257,20 @@ fn update_gunners(
     };
     let delta_secs = time.delta_secs();
 
-    for (gunner_entity, gunner, attack_jitter, mut attack, mut gunner_transform, mut activity, mut velocity) in
-        &mut gunners
+    for (
+        gunner_entity,
+        gunner,
+        attack_jitter,
+        behavior,
+        mut attack,
+        mut gunner_transform,
+        mut activity,
+        mut velocity,
+    ) in &mut gunners
     {
+        if !matches!(behavior, EnemyBehavior::Engaged) {
+            continue;
+        }
         let filter = exclude_character_bodies(&[gunner_entity], &owned_bodies);
         let physics_world = PhysicsWorld::new(
             &move_and_slide,
@@ -292,9 +316,14 @@ fn update_gunners(
             continue;
         }
         let origin = weapon_transform.translation();
-        let aim_target =
-            find_player_head_position(player_entity, &player_children, &ragdoll_roots, &ragdoll_body_positions)
-                .unwrap_or(player_transform.translation);
+        let aim_target = find_character_part_position(
+            player_entity,
+            &player_children,
+            &ragdoll_roots,
+            &ragdoll_body_positions,
+            RagdollBodyPart::Head,
+        )
+        .expect("player ragdoll head should be available");
         let target = calculate_gunner_target(aim_target);
         let Some(direction) = Dir3::new(target - origin).ok() else {
             continue;
@@ -412,7 +441,7 @@ impl Gunner {
         };
         if distance < self.flee_distance {
             let away_direction = -direction;
-            enemy.look_to(direction, Vec3::Y);
+            enemy.look_to(-direction, Vec3::Y);
             enemy.translation += physics_world.steer_direction(
                 enemy.translation,
                 away_direction * (self.move_speed * physics_world.get_delta_secs()),

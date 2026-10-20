@@ -1,5 +1,10 @@
-use avian3d::prelude::{Collider, LinearVelocity, Physics, PhysicsTime, Position, RigidBody, Rotation};
+use avian3d::prelude::{
+    Collider, Gravity, LinearVelocity, MoveAndSlide, Physics, PhysicsTime, Position, RigidBody, Rotation, SpatialQuery,
+    SpatialQueryFilter,
+};
 use bevy::animation::{AnimatedBy, AnimationTargetId};
+use bevy::app::AnimationSystems;
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAsset, WorldInstanceReady};
 use rand::RngExt;
@@ -8,8 +13,11 @@ use crate::bloodmarks::BloodMarks;
 use crate::health::{CharacterDamaged, CharacterDied, Health};
 use crate::movement::PhysicsWorld;
 use crate::player::Player;
-use crate::ragdoll::{BoneMap, OwnedByCharacter, RagdollBodyPart, RagdollData, find_head_position, setup_ragdoll};
-use crate::shooting::{Magazine, Weapon, observe_muzzle_flash};
+use crate::ragdoll::{
+    BoneMap, OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies, find_part_position,
+    setup_ragdoll,
+};
+use crate::shooting::{Magazine, Weapon, WeaponFired, WeaponFiringSystems, observe_muzzle_flash};
 use crate::state::GameState;
 
 pub(crate) fn is_time_running(time: Res<Time<Physics>>) -> bool {
@@ -24,13 +32,22 @@ pub struct EnemiesPlugin;
 impl Plugin for EnemiesPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins((fighter::FighterPlugin, gunner::GunnerPlugin))
+            .configure_sets(Update, EnemyBehaviorSystems.after(WeaponFiringSystems))
+            .add_systems(
+                Update,
+                update_enemy_behavior
+                    .in_set(EnemyBehaviorSystems)
+                    .run_if(in_state(GameState::Playing))
+                    .run_if(is_time_running),
+            )
+            .add_systems(Update, draw_enemy_vision_gizmos.run_if(in_state(GameState::Playing)))
             .add_systems(Update, kill_enemy_on_death.run_if(in_state(GameState::Playing)))
             .add_systems(
                 PostUpdate,
                 (
                     setup_external_animation,
                     dance_when_player_is_dead,
-                    update_enemy_animations.run_if(is_time_running),
+                    update_enemy_animations.run_if(is_time_running).before(AnimationSystems),
                 )
                     .chain(),
             );
@@ -42,6 +59,47 @@ pub struct Enemy;
 
 #[derive(Component)]
 pub struct Dying;
+
+#[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct EnemyBehaviorSystems;
+
+#[derive(Default, Reflect, GizmoConfigGroup)]
+pub struct EnemyVisionGizmos;
+
+#[derive(Component)]
+struct EnemyPatrol {
+    positions: Vec<Vec3>,
+    next_position_index: usize,
+    wait_sequence_number: u64,
+    waiting_remaining_seconds: f32,
+}
+
+#[derive(Component, Clone, Copy)]
+struct EnemySenses {
+    vision_range: f32,
+    vision_half_angle_radians: f32,
+    detection_seconds: f32,
+    hearing_range: f32,
+}
+
+#[derive(Component, Clone, Copy)]
+pub enum EnemyBehavior {
+    Patrol,
+    Investigating { position: Vec3 },
+    Engaged,
+}
+
+#[derive(Component)]
+struct DetectionProgress(f32);
+
+#[derive(Component)]
+struct EnemyLocomotion {
+    move_speed: f32,
+}
+
+const PATROL_WAIT_MINIMUM_SECONDS: f32 = 3.0;
+const PATROL_WAIT_MAXIMUM_SECONDS: f32 = 5.0;
+const DESTINATION_ARRIVAL_DISTANCE: f32 = 0.25;
 
 #[derive(EntityEvent)]
 pub(crate) struct EnemyHit {
@@ -171,18 +229,40 @@ pub(crate) struct ManualAnimationControl;
 #[derive(Component)]
 struct EnemyWeapon(Entity);
 
+pub(crate) struct EnemySpawnConfiguration {
+    pub(crate) patrol_positions: Vec<Vec3>,
+    pub(crate) initial_behavior: EnemyBehavior,
+}
+
 pub(crate) fn spawn_enemy(
     commands: &mut Commands,
     asset_server: &AssetServer,
     kind: EnemyKind,
     sequence_number: usize,
     transform: Transform,
+    spawn_configuration: EnemySpawnConfiguration,
     alive: bool,
 ) -> Entity {
     let seed = Seed(rand::rng().random());
     match kind {
-        EnemyKind::Fighter => fighter::spawn(commands, asset_server, seed, sequence_number, transform, alive),
-        EnemyKind::Gunner => gunner::spawn(commands, asset_server, seed, sequence_number, transform, alive),
+        EnemyKind::Fighter => fighter::spawn(
+            commands,
+            asset_server,
+            seed,
+            sequence_number,
+            transform,
+            spawn_configuration,
+            alive,
+        ),
+        EnemyKind::Gunner => gunner::spawn(
+            commands,
+            asset_server,
+            seed,
+            sequence_number,
+            transform,
+            spawn_configuration,
+            alive,
+        ),
     }
 }
 
@@ -190,6 +270,8 @@ pub(super) struct EnemyDefinition {
     pub(super) display_name: &'static str,
     pub(super) rig: EnemyRig,
     pub(super) starting_health: f32,
+    pub(super) patrol_positions: Vec<Vec3>,
+    pub(super) initial_behavior: EnemyBehavior,
 }
 
 pub(super) fn spawn_enemy_base(
@@ -211,6 +293,14 @@ pub(super) fn spawn_enemy_base(
         transform,
         Health::new(definition.starting_health),
         BloodMarks::default(),
+        EnemyPatrol {
+            positions: definition.patrol_positions,
+            next_position_index: 0,
+            wait_sequence_number: 0,
+            waiting_remaining_seconds: 0.0,
+        },
+        definition.initial_behavior,
+        DetectionProgress(0.0),
     ));
     if alive {
         enemy.insert((
@@ -509,6 +599,312 @@ fn update_enemy_animations(
     }
 }
 
+type EnemyPlayerQuery<'world, 'state> =
+    Query<'world, 'state, (Entity, &'static Transform), (With<Player>, Without<Enemy>)>;
+type EnemyBehaviorQuery<'world, 'state> = Query<
+    'world,
+    'state,
+    (
+        Entity,
+        &'static Seed,
+        &'static EnemySenses,
+        &'static EnemyLocomotion,
+        &'static mut EnemyPatrol,
+        &'static mut EnemyBehavior,
+        &'static mut DetectionProgress,
+        &'static mut EnemyActivity,
+        &'static mut Transform,
+        &'static mut LinearVelocity,
+    ),
+    AliveEnemy,
+>;
+
+#[derive(SystemParam)]
+struct EnemyBehaviorContext<'w, 's> {
+    time: Res<'w, Time>,
+    move_and_slide: MoveAndSlide<'w, 's>,
+    gravity: Res<'w, Gravity>,
+    spatial_query: SpatialQuery<'w, 's>,
+    player: EnemyPlayerQuery<'w, 's>,
+    owned_bodies: Query<'w, 's, (Entity, &'static OwnedByCharacter)>,
+    character_children: Query<'w, 's, &'static Children>,
+    ragdoll_roots: Query<'w, 's, &'static RagdollData>,
+    ragdoll_body_positions: Query<'w, 's, &'static Position, With<RagdollBodyPart>>,
+}
+
+struct EnemyVisionTargets {
+    level_geometry_filter: SpatialQueryFilter,
+    player_body_positions: Vec<Vec3>,
+}
+
+fn find_enemy_vision_targets(context: &EnemyBehaviorContext, player_entity: Entity) -> EnemyVisionTargets {
+    let character_entities = context
+        .owned_bodies
+        .iter()
+        .map(|(_, owner)| owner.get_owner())
+        .collect::<Vec<_>>();
+    let level_geometry_filter = exclude_character_bodies(&character_entities, &context.owned_bodies);
+    let player_body_positions = [
+        find_character_part_position(
+            player_entity,
+            &context.character_children,
+            &context.ragdoll_roots,
+            &context.ragdoll_body_positions,
+            RagdollBodyPart::Head,
+        ),
+        find_character_part_position(
+            player_entity,
+            &context.character_children,
+            &context.ragdoll_roots,
+            &context.ragdoll_body_positions,
+            RagdollBodyPart::Pelvis,
+        ),
+    ]
+    .into_iter()
+    .flatten()
+    .collect::<Vec<_>>();
+    EnemyVisionTargets {
+        level_geometry_filter,
+        player_body_positions,
+    }
+}
+
+fn can_enemy_see_player(
+    enemy_entity: Entity,
+    context: &EnemyBehaviorContext,
+    vision_targets: &EnemyVisionTargets,
+    enemy_transform: &Transform,
+    player_transform: &Transform,
+    senses: &EnemySenses,
+) -> bool {
+    let enemy_head_position = find_character_part_position(
+        enemy_entity,
+        &context.character_children,
+        &context.ragdoll_roots,
+        &context.ragdoll_body_positions,
+        RagdollBodyPart::Head,
+    );
+    can_see_player(
+        enemy_transform,
+        enemy_head_position,
+        player_transform,
+        &vision_targets.player_body_positions,
+        senses,
+        &context.spatial_query,
+        &vision_targets.level_geometry_filter,
+    )
+}
+
+fn update_enemy_behavior(
+    context: EnemyBehaviorContext,
+    mut weapon_fired: MessageReader<WeaponFired>,
+    mut character_damaged: MessageReader<CharacterDamaged>,
+    mut enemies: EnemyBehaviorQuery,
+) {
+    let Ok((player_entity, player_transform)) = context.player.single() else {
+        return;
+    };
+    let gunshots: Vec<_> = weapon_fired.read().copied().collect();
+    let damaged_enemies: Vec<_> = character_damaged.read().map(|damage| damage.character).collect();
+    let delta_secs = context.time.delta_secs();
+    let vision_targets = find_enemy_vision_targets(&context, player_entity);
+
+    for (
+        enemy_entity,
+        seed,
+        senses,
+        locomotion,
+        mut patrol,
+        mut behavior,
+        mut detection_progress,
+        mut activity,
+        mut enemy_transform,
+        mut velocity,
+    ) in &mut enemies
+    {
+        if damaged_enemies.contains(&enemy_entity) {
+            *behavior = EnemyBehavior::Engaged;
+        }
+        if !matches!(*behavior, EnemyBehavior::Engaged) {
+            if can_enemy_see_player(
+                enemy_entity,
+                &context,
+                &vision_targets,
+                &enemy_transform,
+                player_transform,
+                senses,
+            ) {
+                detection_progress.0 += delta_secs;
+                if detection_progress.0 >= senses.detection_seconds {
+                    *behavior = EnemyBehavior::Engaged;
+                }
+            } else {
+                detection_progress.0 = 0.0;
+            }
+            if !matches!(*behavior, EnemyBehavior::Engaged)
+                && let Some(sound_position) =
+                    find_loudest_audible_gunshot(&gunshots, enemy_transform.translation, senses)
+            {
+                *behavior = EnemyBehavior::Investigating {
+                    position: sound_position,
+                };
+            }
+        }
+
+        let movement_destination = match *behavior {
+            EnemyBehavior::Patrol => {
+                get_patrol_destination(&mut patrol, *seed, enemy_transform.translation, delta_secs)
+            }
+            EnemyBehavior::Investigating { position } => {
+                let planar_distance = (position - enemy_transform.translation).xz().length();
+                if planar_distance <= DESTINATION_ARRIVAL_DISTANCE {
+                    *behavior = EnemyBehavior::Patrol;
+                    get_patrol_destination(&mut patrol, *seed, enemy_transform.translation, delta_secs)
+                } else {
+                    Some(position)
+                }
+            }
+            EnemyBehavior::Engaged => continue,
+        };
+        let Some(destination) = movement_destination else {
+            activity.state = AnimationState::Idle;
+            continue;
+        };
+        let filter = exclude_character_bodies(&[enemy_entity], &context.owned_bodies);
+        let physics_world = PhysicsWorld::new(
+            &context.move_and_slide,
+            context.gravity.0.y,
+            delta_secs,
+            &filter,
+            ENEMY_COLLISION_RADIUS,
+            ENEMY_COLLISION_CENTER_HEIGHT,
+            0.0,
+        );
+        move_enemy(
+            &physics_world,
+            &mut enemy_transform,
+            &mut activity,
+            &mut velocity,
+            |enemy_transform, activity, physics_world| {
+                let planar_offset = destination - enemy_transform.translation;
+                let planar_direction = Vec3::new(planar_offset.x, 0.0, planar_offset.z);
+                let planar_distance = planar_direction.length();
+                if planar_distance <= DESTINATION_ARRIVAL_DISTANCE {
+                    return false;
+                }
+                let direction = planar_direction / planar_distance;
+                enemy_transform.look_to(-direction, Vec3::Y);
+                enemy_transform.translation += physics_world.steer_direction(
+                    enemy_transform.translation,
+                    direction * (locomotion.move_speed * physics_world.get_delta_secs()),
+                );
+                activity.state = AnimationState::Moving;
+                false
+            },
+        );
+    }
+}
+
+fn get_patrol_destination(patrol: &mut EnemyPatrol, seed: Seed, enemy_position: Vec3, delta_secs: f32) -> Option<Vec3> {
+    if patrol.waiting_remaining_seconds > 0.0 {
+        patrol.waiting_remaining_seconds -= delta_secs;
+        return None;
+    }
+    let destination = patrol.positions[patrol.next_position_index];
+    let planar_distance = (destination - enemy_position).xz().length();
+    if planar_distance > DESTINATION_ARRIVAL_DISTANCE {
+        return Some(destination);
+    }
+    patrol.next_position_index = (patrol.next_position_index + 1) % patrol.positions.len();
+    patrol.wait_sequence_number += 1;
+    let wait_span_seconds = PATROL_WAIT_MAXIMUM_SECONDS - PATROL_WAIT_MINIMUM_SECONDS;
+    patrol.waiting_remaining_seconds =
+        PATROL_WAIT_MINIMUM_SECONDS + seed.calculate_unit_value(patrol.wait_sequence_number) * wait_span_seconds;
+    None
+}
+
+fn can_see_player(
+    enemy_transform: &Transform,
+    enemy_head_position: Option<Vec3>,
+    player_transform: &Transform,
+    player_body_positions: &[Vec3],
+    senses: &EnemySenses,
+    spatial_query: &SpatialQuery,
+    level_geometry_filter: &SpatialQueryFilter,
+) -> bool {
+    let Some(enemy_head_position) = enemy_head_position else {
+        return false;
+    };
+    if player_body_positions.is_empty() {
+        return false;
+    }
+    let offset = player_transform.translation - enemy_transform.translation;
+    let planar_offset = Vec3::new(offset.x, 0.0, offset.z);
+    let planar_distance = planar_offset.length();
+    if planar_distance == 0.0 || planar_distance > senses.vision_range {
+        return false;
+    }
+    let facing_direction = get_enemy_facing_direction(enemy_transform);
+    let direction_to_player = planar_offset / planar_distance;
+    if facing_direction.dot(direction_to_player) < senses.vision_half_angle_radians.cos() {
+        return false;
+    }
+    player_body_positions.iter().any(|player_body_position| {
+        let offset_to_body = *player_body_position - enemy_head_position;
+        let Ok(ray_direction) = Dir3::new(offset_to_body) else {
+            return false;
+        };
+        spatial_query
+            .cast_ray(
+                enemy_head_position,
+                ray_direction,
+                offset_to_body.length(),
+                true,
+                level_geometry_filter,
+            )
+            .is_none()
+    })
+}
+
+fn find_loudest_audible_gunshot(gunshots: &[WeaponFired], enemy_position: Vec3, senses: &EnemySenses) -> Option<Vec3> {
+    gunshots
+        .iter()
+        .filter_map(|gunshot| {
+            let loudness = gunshot.weapon.get_sound_loudness()?;
+            let audible_range = senses.hearing_range * loudness;
+            let distance = enemy_position.distance(gunshot.origin);
+            (distance <= audible_range).then_some((gunshot.origin, loudness / distance.max(0.01)))
+        })
+        .max_by(|(_, left_loudness), (_, right_loudness)| left_loudness.total_cmp(right_loudness))
+        .map(|(position, _)| position)
+}
+
+fn get_enemy_facing_direction(enemy_transform: &Transform) -> Vec3 {
+    let enemy_forward = enemy_transform.back().as_vec3();
+    Vec3::new(enemy_forward.x, 0.0, enemy_forward.z).normalize_or_zero()
+}
+
+fn draw_enemy_vision_gizmos(
+    mut gizmos: Option<Gizmos<EnemyVisionGizmos>>,
+    enemies: Query<(&Transform, &EnemySenses, &EnemyBehavior), AliveEnemy>,
+) {
+    let Some(gizmos) = gizmos.as_mut() else {
+        return;
+    };
+    let cone_color = Color::srgb(1.0, 0.8, 0.1);
+    for (transform, senses, behavior) in &enemies {
+        let origin = transform.translation + Vec3::Y * 0.05;
+        let forward = get_enemy_facing_direction(transform);
+        let left = Quat::from_rotation_y(senses.vision_half_angle_radians) * forward * senses.vision_range;
+        let right = Quat::from_rotation_y(-senses.vision_half_angle_radians) * forward * senses.vision_range;
+        gizmos.line(origin, origin + left, cone_color);
+        gizmos.line(origin, origin + right, cone_color);
+        if let EnemyBehavior::Investigating { position } = behavior {
+            gizmos.line(origin, *position + Vec3::Y * 0.05, Color::srgb(0.2, 0.7, 1.0));
+        }
+    }
+}
+
 pub(crate) type AliveEnemy = (With<Enemy>, Without<Dying>);
 pub(super) const ENEMY_COLLISION_RADIUS: f32 = 0.35;
 pub(super) const ENEMY_COLLISION_CENTER_HEIGHT: f32 = 1.0;
@@ -573,13 +969,17 @@ pub(super) fn deliver_pending_melee_hit(
     }
 }
 
-pub(super) fn find_player_head_position(
-    player_entity: Entity,
-    player_children: &Query<&Children, With<Player>>,
+pub(super) fn find_character_part_position(
+    character_entity: Entity,
+    character_children: &Query<&Children>,
     ragdoll_roots: &Query<&RagdollData>,
     ragdoll_body_positions: &Query<&Position, With<RagdollBodyPart>>,
+    body_part: RagdollBodyPart,
 ) -> Option<Vec3> {
-    let player_children = player_children.get(player_entity).ok()?;
-    let ragdoll_root = player_children.iter().find(|child| ragdoll_roots.contains(*child))?;
-    find_head_position(ragdoll_roots.get(ragdoll_root).ok()?, ragdoll_body_positions)
+    if let Ok(ragdoll) = ragdoll_roots.get(character_entity) {
+        return find_part_position(ragdoll, ragdoll_body_positions, body_part);
+    }
+    let character_children = character_children.get(character_entity).ok()?;
+    let ragdoll_root = character_children.iter().find(|child| ragdoll_roots.contains(*child))?;
+    find_part_position(ragdoll_roots.get(ragdoll_root).ok()?, ragdoll_body_positions, body_part)
 }

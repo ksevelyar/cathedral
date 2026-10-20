@@ -2,8 +2,9 @@ use avian3d::prelude::{Gravity, LinearVelocity, MoveAndSlide};
 use bevy::prelude::*;
 
 use super::{
-    AliveEnemy, AnimationState, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity, EnemyDefinition,
-    EnemyRig, EquippedWeapon, Seed, deliver_pending_melee_hit, flatten_direction, move_enemy, spawn_enemy_base,
+    AliveEnemy, AnimationState, ENEMY_COLLISION_CENTER_HEIGHT, ENEMY_COLLISION_RADIUS, EnemyActivity, EnemyBehavior,
+    EnemyDefinition, EnemyLocomotion, EnemyRig, EnemySenses, EnemySpawnConfiguration, EquippedWeapon, Seed,
+    deliver_pending_melee_hit, flatten_direction, move_enemy, spawn_enemy_base,
 };
 use crate::health::CharacterDamaged;
 use crate::movement::PhysicsWorld;
@@ -20,6 +21,7 @@ impl Plugin for FighterPlugin {
         app.add_systems(
             Update,
             update_fighters
+                .after(super::EnemyBehaviorSystems)
                 .run_if(in_state(crate::state::GameState::Playing))
                 .run_if(is_time_running),
         );
@@ -70,6 +72,7 @@ pub(super) fn spawn(
     seed: Seed,
     sequence_number: usize,
     transform: Transform,
+    spawn_configuration: EnemySpawnConfiguration,
     alive: bool,
 ) -> Entity {
     let fighter = Fighter::default();
@@ -77,6 +80,8 @@ pub(super) fn spawn(
         display_name: "Fighter",
         rig: fighter.rig.clone(),
         starting_health: fighter.starting_health,
+        patrol_positions: spawn_configuration.patrol_positions,
+        initial_behavior: spawn_configuration.initial_behavior,
     };
     let fighter_entity = spawn_enemy_base(
         commands,
@@ -89,9 +94,19 @@ pub(super) fn spawn(
     );
     let cooldown_jitter_range = 0.15;
     let cooldown_multiplier = 1.0 + (seed.calculate_unit_value(6) * 2.0 - 1.0) * cooldown_jitter_range;
-    commands
-        .entity(fighter_entity)
-        .insert((fighter.clone(), FighterAttackJitter(cooldown_multiplier)));
+    commands.entity(fighter_entity).insert((
+        fighter.clone(),
+        FighterAttackJitter(cooldown_multiplier),
+        EnemyLocomotion {
+            move_speed: fighter.move_speed,
+        },
+        EnemySenses {
+            vision_range: 6.0,
+            vision_half_angle_radians: 70.0_f32.to_radians(),
+            detection_seconds: 2.0,
+            hearing_range: 5.0,
+        },
+    ));
     if alive {
         commands.entity(fighter_entity).insert(EnemyActivity {
             attack_cooldown: fighter.attack_cooldown * cooldown_multiplier,
@@ -114,6 +129,7 @@ type FighterQuery<'world, 'state> = Query<
         Entity,
         &'static Fighter,
         &'static FighterAttackJitter,
+        &'static EnemyBehavior,
         &'static mut Transform,
         &'static mut EnemyActivity,
         &'static mut LinearVelocity,
@@ -133,7 +149,12 @@ fn update_fighters(
     };
     let delta_secs = time.delta_secs();
 
-    for (fighter_entity, fighter, attack_jitter, mut fighter_transform, mut activity, mut velocity) in &mut fighters {
+    for (fighter_entity, fighter, attack_jitter, behavior, mut fighter_transform, mut activity, mut velocity) in
+        &mut fighters
+    {
+        if !matches!(behavior, EnemyBehavior::Engaged) {
+            continue;
+        }
         activity.attack_cooldown -= delta_secs;
         deliver_pending_melee_hit(
             fighter_entity,

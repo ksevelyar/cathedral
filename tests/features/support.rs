@@ -88,17 +88,12 @@ pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {
 }
 
 pub fn assert_kick_speed(app: &mut App, target: Entity, minimum_kick_speed: f32) {
-    let linear_kick = app
+    let target_linear_speed = app
         .world()
         .get::<LinearVelocity>(target)
         .expect("shot target should have linear velocity")
-        .0;
-    let angular_kick = app
-        .world()
-        .get::<AngularVelocity>(target)
-        .expect("shot target should have angular velocity")
-        .0;
-    if linear_kick.length() < minimum_kick_speed {
+        .length();
+    if target_linear_speed < minimum_kick_speed {
         let connected_body_kicks: Vec<_> = find_joint_connected_bodies(app, target)
             .into_iter()
             .filter_map(|connected_body| {
@@ -108,9 +103,7 @@ pub fn assert_kick_speed(app: &mut App, target: Entity, minimum_kick_speed: f32)
             })
             .collect();
         panic!(
-            "shot should produce speed of at least {minimum_kick_speed}, got linear_speed={:.6}, angular_speed={:.6}, connected body linear speeds={connected_body_kicks:?}",
-            linear_kick.length(),
-            angular_kick.length()
+            "shot should produce linear speed of at least {minimum_kick_speed}, got target_linear_speed={target_linear_speed:.6}, connected body linear speeds={connected_body_kicks:?}"
         );
     }
 }

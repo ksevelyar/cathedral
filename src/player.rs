@@ -17,7 +17,7 @@ use crate::maps::PlayerPosition;
 use crate::movement::PhysicsWorld;
 use crate::ragdoll::{
     BoneMap, LastHitImpact, OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies,
-    find_head_position, setup_ragdoll,
+    find_part_position, setup_ragdoll,
 };
 use crate::shooting::{Gun, Reloading, ShadowGun, WeaponSlot};
 
@@ -495,7 +495,7 @@ fn fall_camera_to_head_on_death(
             let Ok(ragdoll) = ragdoll_roots.get(child) else {
                 continue;
             };
-            let Some(head_position) = find_head_position(ragdoll, &body_positions) else {
+            let Some(head_position) = find_part_position(ragdoll, &body_positions, RagdollBodyPart::Head) else {
                 continue;
             };
             let head_offset = head_position + Vec3::Y * camera_height_above_head - player_transform.translation;

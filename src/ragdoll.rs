@@ -360,12 +360,14 @@ pub(crate) struct Segment {
 }
 
 impl Segment {
-    pub(crate) fn create_between(start: Vec3, end: Vec3) -> Option<Self> {
+    pub(crate) fn create_between(start: Vec3, end: Vec3, root_rotation: Quat) -> Option<Self> {
         let direction = (end - start).try_normalize()?;
+        let direction_in_root_space = root_rotation.inverse() * direction;
+        let limb_rotation_in_root_space = Quat::from_rotation_arc(Vec3::Y, direction_in_root_space);
         Some(Self {
             start,
             midpoint: (start + end) * 0.5,
-            rotation: Quat::from_rotation_arc(Vec3::Y, direction),
+            rotation: root_rotation * limb_rotation_in_root_space,
         })
     }
 
@@ -685,25 +687,20 @@ pub fn list_ragdoll_limbs() -> &'static [LimbSpec] {
     LIMBS
 }
 
-fn get_bone_position(name: &str, bones: &BoneMap, transforms: &Query<&GlobalTransform>) -> Option<Vec3> {
-    let entity = bones.find_bone(name)?;
-    transforms.get(entity).ok().map(GlobalTransform::translation)
-}
-
 fn measure_limb(
     spec: &LimbSpec,
     bones: &BoneMap,
     transforms: &Query<&GlobalTransform>,
 ) -> Option<(Transform, MeasuredLimb)> {
-    let start = get_bone_position(spec.start, bones, transforms)?;
-    let end = get_bone_position(spec.end, bones, transforms)?;
-    let segment = if let Some(segment) = Segment::create_between(start, end) {
-        segment
-    } else {
-        let start_joint_entity = bones.find_bone(spec.start)?;
-        let start_joint_transform = transforms.get(start_joint_entity).ok()?;
-        Segment::create_at(start, start_joint_transform.rotation())
-    };
+    let armature_entity = bones.find_bone("Armature")?;
+    let armature_rotation = transforms.get(armature_entity).ok()?.rotation();
+    let start_joint_entity = bones.find_bone(spec.start)?;
+    let start_joint_transform = transforms.get(start_joint_entity).ok()?;
+    let start = start_joint_transform.translation();
+    let end_joint_entity = bones.find_bone(spec.end)?;
+    let end = transforms.get(end_joint_entity).ok()?.translation();
+    let segment = Segment::create_between(start, end, armature_rotation)
+        .unwrap_or_else(|| Segment::create_at(start, start_joint_transform.rotation()));
     Some((segment.transform(), MeasuredLimb { anchor: start, segment }))
 }
 
@@ -1165,7 +1162,6 @@ fn synchronize_ragdoll_bodies(
         if dying.as_ref().is_some_and(|dying| !dying.is_added()) {
             continue;
         }
-
         synchronize_from_bones(&mut ragdoll, &bone_transforms, &mut body_transforms);
     }
 }
@@ -1361,14 +1357,15 @@ fn apply_pose_to_bones(
     }
 }
 
-pub(crate) fn find_head_position(
+pub(crate) fn find_part_position(
     ragdoll: &RagdollData,
     body_positions: &Query<&Position, With<RagdollBodyPart>>,
+    body_part: RagdollBodyPart,
 ) -> Option<Vec3> {
-    let head_entity = ragdoll
+    let part_entity = ragdoll
         .parts
         .iter()
-        .find(|part| part.body_part == RagdollBodyPart::Head)
+        .find(|part| part.body_part == body_part)
         .map(|part| part.entity)?;
-    body_positions.get(head_entity).ok().map(|position| position.0)
+    body_positions.get(part_entity).ok().map(|position| position.0)
 }

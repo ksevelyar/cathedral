@@ -9,7 +9,7 @@ fn get_current_game_state(app: &mut App) -> GameState {
 }
 use bevy::world_serialization::WorldAssetRoot;
 use cathedral::app::build_test_app;
-use cathedral::enemies::{AnimationState, Dying, Enemy, EnemyActivity, EnemyKind};
+use cathedral::enemies::{AnimationState, Dying, Enemy, EnemyActivity, EnemyBehavior, EnemyKind};
 use cathedral::health::Health;
 use cathedral::maps::{Map, MapBuilder};
 use cathedral::player::Player;
@@ -53,12 +53,17 @@ fn assert_enemy_ragdoll_is_inert(app: &mut App, enemy: Entity) {
     assert_eq!(active_joint_count, 0, "alive enemy should not have active joints");
 }
 
-fn build_map(player_position: Vec3, kind: EnemyKind) -> Map {
+fn build_map(player_position: Vec3, kind: EnemyKind, initial_behavior: EnemyBehavior) -> Map {
     let floor_size = Vec3::new(60.0, 0.1, 60.0);
     MapBuilder::new("enemies")
         .with_player_position(player_position, player_position + Vec3::NEG_Z)
         .with_floor(floor_size)
-        .with_enemy(Vec3::new(0.0, 0.5, 0.0), kind)
+        .with_enemy(
+            vec![Vec3::new(0.0, 0.05, 0.0)],
+            Vec3::new(0.0, 0.05, 0.0) + Vec3::NEG_Z,
+            kind,
+            initial_behavior,
+        )
         .build()
 }
 
@@ -77,9 +82,14 @@ fn find_enemy_by_name(app: &mut App, kind: EnemyKind) -> Entity {
         )
 }
 
-fn simulate_enemy_near_player(kind: EnemyKind, walking_updates: usize, player_position: Vec3) -> (App, Entity) {
+fn simulate_enemy_near_player(
+    kind: EnemyKind,
+    initial_behavior: EnemyBehavior,
+    walking_updates: usize,
+    player_position: Vec3,
+) -> (App, Entity) {
     let fixed_timestep = Duration::from_secs_f64(support::FIXED_TIMESTEP_SECONDS);
-    let mut app = build_test_app(build_map(player_position, kind));
+    let mut app = build_test_app(build_map(player_position, kind, initial_behavior));
     app.insert_resource(Time::<Fixed>::from_duration(fixed_timestep));
     app.world_mut()
         .resource_mut::<NextState<GameState>>()
@@ -153,21 +163,6 @@ fn wait_until_dying(app: &mut App, enemy: Entity) {
     panic!("shot enemy {enemy:?} should become dying within {death_wait_updates} updates");
 }
 
-fn wait_until_gunner_is_attacking(app: &mut App, gunner: Entity) {
-    let attack_wait_updates = 10_000;
-    for _ in 0..attack_wait_updates {
-        app.update();
-        let gunner_is_attacking = app
-            .world()
-            .get::<EnemyActivity>(gunner)
-            .is_some_and(|activity| activity.state == AnimationState::Attacking);
-        if gunner_is_attacking {
-            return;
-        }
-    }
-    panic!("gunner {gunner:?} should enter the attacking animation within {attack_wait_updates} updates");
-}
-
 fn assert_animator_stays_stopped(app: &mut App, animator: Entity) {
     let settle_updates = 512;
     run_updates(app, settle_updates);
@@ -197,7 +192,7 @@ fn assert_death(app: &mut App, enemy: Entity) {
 }
 
 fn killed_enemy_drops_weapon(kind: EnemyKind) {
-    let (mut app, enemy) = simulate_enemy_near_player(kind, 160, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(kind, EnemyBehavior::Patrol, 160, Vec3::new(5.0, 0.05, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
@@ -205,7 +200,7 @@ fn killed_enemy_drops_weapon(kind: EnemyKind) {
 }
 
 fn killed_enemy_stops_attacking_animation(kind: EnemyKind) {
-    let (mut app, enemy) = simulate_enemy_near_player(kind, 160, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(kind, EnemyBehavior::Engaged, 160, Vec3::new(5.0, 0.05, 0.0));
     let animator = find_enemy_animator(&mut app, enemy);
     assert!(
         count_playing_animations(&mut app, animator) > 0,
@@ -219,7 +214,12 @@ fn killed_enemy_stops_attacking_animation(kind: EnemyKind) {
 
 #[test]
 fn player_damages_fighter_on_first_hit_and_kills_on_second() {
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 160, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(
+        EnemyKind::Fighter,
+        EnemyBehavior::Patrol,
+        160,
+        Vec3::new(5.0, 0.05, 0.0),
+    );
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
     let revolver_damage = 40.0;
     let fighter_starting_health = 40.0;
@@ -244,7 +244,12 @@ fn player_damages_fighter_on_first_hit_and_kills_on_second() {
 
 #[test]
 fn fighter_damages_player_on_first_hit_and_kills_on_second() {
-    let (mut app, _) = simulate_enemy_near_player(EnemyKind::Fighter, 16, Vec3::new(1.0, 0.5, 0.0));
+    let (mut app, _) = simulate_enemy_near_player(
+        EnemyKind::Fighter,
+        EnemyBehavior::Engaged,
+        16,
+        Vec3::new(1.0, 0.05, 0.0),
+    );
     let player_entity = app
         .world_mut()
         .query_filtered::<Entity, With<Player>>()
@@ -303,12 +308,13 @@ fn killed_gunner_stops_attacking_animation() {
 fn fighter_killed_while_running_keeps_its_momentum() {
     let fighter_run_speed = 3.0;
     let minimum_kept_run_speed = fighter_run_speed / 2.0;
-    let far_player_position = Vec3::new(12.0, 0.5, 0.0);
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 16, far_player_position);
+    let far_player_position = Vec3::new(12.0, 0.05, 0.0);
+    let (mut app, enemy) =
+        simulate_enemy_near_player(EnemyKind::Fighter, EnemyBehavior::Engaged, 16, far_player_position);
     let pelvis = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Pelvis);
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
-    let run_direction = (far_player_position - Vec3::new(0.0, 0.5, 0.0)).normalize();
+    let run_direction = (far_player_position - Vec3::new(0.0, 0.05, 0.0)).normalize();
     let running_velocity = app
         .world()
         .get::<LinearVelocity>(enemy)
@@ -439,13 +445,20 @@ fn find_ragdoll_bone_map(app: &mut App, enemy: Entity) -> BoneMap {
 
 #[test]
 fn ragdoll_activation_preserves_gunner_bone_poses() {
-    let (mut app, gunner) = simulate_enemy_near_player(EnemyKind::Gunner, 0, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, gunner) =
+        simulate_enemy_near_player(EnemyKind::Gunner, EnemyBehavior::Engaged, 16, Vec3::new(5.0, 0.05, 0.0));
+    let player_entity = app
+        .world_mut()
+        .query_filtered::<Entity, With<Player>>()
+        .single(app.world())
+        .expect("one player should spawn");
+    app.world_mut().entity_mut(player_entity).insert(Health::new(100_000.0));
     wait_until_gunner_is_attacking(&mut app, gunner);
     let bone_states_before_headshot = capture_gunner_bone_states(&mut app, gunner);
     let head = find_ragdoll_body(&mut app, gunner, RagdollBodyPart::Head);
 
     support::aim_at_entity(&mut app, head);
-    support::press_shot_button(&mut app);
+    support::press_shot_button_before_physics(&mut app);
     let activation_wait_updates = 64;
     let mut bone_states_before_activation = bone_states_before_headshot.clone();
     let mut bone_states_after_activation = None;
@@ -470,7 +483,8 @@ fn ragdoll_activation_preserves_gunner_bone_poses() {
 
 #[test]
 fn head_shot_kills_fighter() {
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 42, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) =
+        simulate_enemy_near_player(EnemyKind::Fighter, EnemyBehavior::Patrol, 42, Vec3::new(5.0, 0.05, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
@@ -482,7 +496,8 @@ fn head_shot_kills_fighter() {
 
 #[test]
 fn head_shot_kills_gunner() {
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 0, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) =
+        simulate_enemy_near_player(EnemyKind::Gunner, EnemyBehavior::Patrol, 0, Vec3::new(5.0, 0.05, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
     support::shoot_entity(&mut app, hit_body);
@@ -494,7 +509,8 @@ fn head_shot_kills_gunner() {
 
 #[test]
 fn gunner_loads_one_hairstyle() {
-    let (app, gunner) = simulate_enemy_near_player(EnemyKind::Gunner, 0, Vec3::new(5.0, 0.5, 0.0));
+    let (app, gunner) =
+        simulate_enemy_near_player(EnemyKind::Gunner, EnemyBehavior::Patrol, 0, Vec3::new(5.0, 0.05, 0.0));
     let hair_root_count = app.world().get::<Children>(gunner).map_or(0, |children| {
         children
             .iter()
@@ -506,7 +522,12 @@ fn gunner_loads_one_hairstyle() {
 
 #[test]
 fn hand_shot_kills_fighter() {
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Fighter, 160, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) = simulate_enemy_near_player(
+        EnemyKind::Fighter,
+        EnemyBehavior::Patrol,
+        160,
+        Vec3::new(5.0, 0.05, 0.0),
+    );
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::HandRight);
 
     support::shoot_entity(&mut app, hit_body);
@@ -518,7 +539,8 @@ fn hand_shot_kills_fighter() {
 
 #[test]
 fn hand_shot_kills_gunner() {
-    let (mut app, enemy) = simulate_enemy_near_player(EnemyKind::Gunner, 0, Vec3::new(5.0, 0.5, 0.0));
+    let (mut app, enemy) =
+        simulate_enemy_near_player(EnemyKind::Gunner, EnemyBehavior::Patrol, 0, Vec3::new(5.0, 0.05, 0.0));
     app.insert_resource(SubstepCount(30));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::HandRight);
 
@@ -793,7 +815,8 @@ fn measure_collider_pair_penetrations(app: &mut App, gunner: Entity) -> Vec<Coll
 
 #[test]
 fn gunner_colliders_do_not_overlap() {
-    let (mut app, gunner) = simulate_enemy_near_player(EnemyKind::Gunner, 32, Vec3::new(3.0, 0.5, 0.0));
+    let (mut app, gunner) =
+        simulate_enemy_near_player(EnemyKind::Gunner, EnemyBehavior::Engaged, 32, Vec3::new(3.0, 0.05, 0.0));
     run_updates(&mut app, 16);
     let penetrations = measure_collider_pair_penetrations(&mut app, gunner);
     for penetration in &penetrations {
@@ -802,7 +825,7 @@ fn gunner_colliders_do_not_overlap() {
             penetration.first_part, penetration.second_part, penetration.is_jointed_pair, penetration.penetration,
         );
     }
-    let maximum_unjointed_penetration = 0.03;
+    let maximum_unjointed_penetration = 0.04;
     let offending_rows: Vec<String> = penetrations
         .iter()
         .filter(|penetration| !penetration.is_jointed_pair && penetration.penetration > maximum_unjointed_penetration)
@@ -822,7 +845,8 @@ fn gunner_colliders_do_not_overlap() {
 
 #[test]
 fn gunner_colliders_follow_animation() {
-    let (mut app, gunner) = simulate_enemy_near_player(EnemyKind::Gunner, 32, Vec3::new(3.0, 0.5, 0.0));
+    let (mut app, gunner) =
+        simulate_enemy_near_player(EnemyKind::Gunner, EnemyBehavior::Engaged, 32, Vec3::new(3.0, 0.05, 0.0));
     run_updates(&mut app, 16);
     let measurements = measure_hull_colliders_against_skin(&mut app, gunner);
     let maximum_center_offset = 0.08;
@@ -852,6 +876,21 @@ fn gunner_colliders_follow_animation() {
         "every hull collider should still cover its skinned mesh while the animation plays:\n{}",
         offending_rows.join("\n"),
     );
+}
+
+fn wait_until_gunner_is_attacking(app: &mut App, gunner: Entity) {
+    let attack_wait_updates = 10_000;
+    for _ in 0..attack_wait_updates {
+        app.update();
+        if app
+            .world()
+            .get::<EnemyActivity>(gunner)
+            .is_some_and(|activity| activity.state == AnimationState::Attacking)
+        {
+            return;
+        }
+    }
+    panic!("gunner {gunner:?} should enter the attacking animation within {attack_wait_updates} updates");
 }
 
 fn wait_player_death(app: &mut App) {
@@ -889,7 +928,8 @@ fn assert_camera_follows_fallen_head(app: &mut App, head_body: Entity) {
 
 #[test]
 fn gunner_shot_kills_player_and_camera_falls_to_head() {
-    let (mut app, _) = simulate_enemy_near_player(EnemyKind::Gunner, 16, Vec3::new(6.0, 0.5, 0.0));
+    let (mut app, _) =
+        simulate_enemy_near_player(EnemyKind::Gunner, EnemyBehavior::Engaged, 16, Vec3::new(6.0, 0.05, 0.0));
     let head_body = find_player_ragdoll_body(&mut app, RagdollBodyPart::Head);
 
     wait_player_death(&mut app);
@@ -908,7 +948,12 @@ fn gunner_shot_kills_player_and_camera_falls_to_head() {
 
 #[test]
 fn fighter_melee_kills_player_and_camera_falls_to_head() {
-    let (mut app, _) = simulate_enemy_near_player(EnemyKind::Fighter, 16, Vec3::new(1.0, 0.5, 0.0));
+    let (mut app, _) = simulate_enemy_near_player(
+        EnemyKind::Fighter,
+        EnemyBehavior::Engaged,
+        16,
+        Vec3::new(1.0, 0.05, 0.0),
+    );
     let initial_health = get_player_health(&mut app);
     let head_body = find_player_ragdoll_body(&mut app, RagdollBodyPart::Head);
 

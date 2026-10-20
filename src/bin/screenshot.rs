@@ -1,6 +1,6 @@
 use cathedral::app::{build_screenshot_app, fetch_configuration, request_screenshot, wait_screenshot_capture};
 use cathedral::enemies::AnimationState;
-use cathedral::enemies::{Dying, EnemyActivity, EnemyKind};
+use cathedral::enemies::{Dying, EnemyActivity, EnemyBehavior, EnemyKind};
 use cathedral::maps::{Map, MapBuilder, build_map01};
 use cathedral::player::{Player, PlayerCamera, compute_look_angles};
 use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
@@ -55,7 +55,12 @@ fn build_gunner_colliders_map() -> Map {
     MapBuilder::new(name)
         .with_player_position(player_position, player_look_at)
         .with_floor(floor_size)
-        .with_enemy(Vec3::ZERO, EnemyKind::Gunner)
+        .with_enemy(
+            vec![Vec3::ZERO],
+            Vec3::new(0.0, 0.0, 5.0),
+            EnemyKind::Gunner,
+            EnemyBehavior::Patrol,
+        )
         .build()
 }
 
@@ -67,8 +72,18 @@ fn build_gunners_ragdoll_map() -> Map {
     MapBuilder::new(name)
         .with_player_position(player_position, player_look_at)
         .with_floor(floor_size)
-        .with_enemy(Vec3::new(-0.75, 0.0, 0.0), EnemyKind::Gunner)
-        .with_enemy(Vec3::new(0.75, 0.0, 0.0), EnemyKind::Gunner)
+        .with_enemy(
+            vec![Vec3::new(-0.75, 0.0, 0.0)],
+            Vec3::new(0.0, 0.0, 5.0),
+            EnemyKind::Gunner,
+            EnemyBehavior::Patrol,
+        )
+        .with_enemy(
+            vec![Vec3::new(0.75, 0.0, 0.0)],
+            Vec3::new(0.0, 0.0, 5.0),
+            EnemyKind::Gunner,
+            EnemyBehavior::Patrol,
+        )
         .build()
 }
 
