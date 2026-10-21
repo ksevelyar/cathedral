@@ -49,7 +49,7 @@ const WRIST_ANGULAR_DAMPING: f32 = 15.0;
 const NECK_ANGULAR_DAMPING: f32 = 15.0;
 const HIP_ANGULAR_DAMPING: f32 = 15.0;
 const ANKLE_ANGULAR_DAMPING: f32 = 15.0;
-const RAGDOLL_ANGULAR_SLEEP_THRESHOLD: f32 = 2.5;
+const RAGDOLL_ANGULAR_SLEEP_THRESHOLD: f32 = 3.5;
 
 const COLLIDER_DENSITY: f32 = 1000.0;
 
@@ -168,19 +168,29 @@ struct RagdollColliderInspectionColor(Option<Color>);
 #[derive(Component)]
 pub(crate) struct PendingRagdollImpact {
     pub impulse: Vec3,
-    pub point: Vec3,
+    pub point_in_body_space: Vec3,
 }
 
 #[derive(Component)]
 pub(crate) struct LastHitImpact {
     pub(crate) body_part: RagdollBodyPart,
     pub(crate) impulse: Vec3,
-    pub(crate) point: Vec3,
+    pub(crate) point_in_body_space: Vec3,
 }
 
-fn apply_pending_impacts(mut commands: Commands, mut impacted_bodies: Query<(Entity, &PendingRagdollImpact, Forces)>) {
-    for (entity, impact, mut forces) in &mut impacted_bodies {
-        forces.apply_linear_impulse_at_point(impact.impulse, impact.point);
+fn apply_pending_impacts(
+    mut commands: Commands,
+    mut impacted_bodies: Query<(
+        Entity,
+        &PendingRagdollImpact,
+        Forces,
+        &Position,
+        &Rotation,
+    )>,
+) {
+    for (entity, impact, mut forces, position, rotation) in &mut impacted_bodies {
+        let impact_point_in_world_space = position.0 + *rotation * impact.point_in_body_space;
+        forces.apply_linear_impulse_at_point(impact.impulse, impact_point_in_world_space);
         commands.entity(entity).remove::<PendingRagdollImpact>();
     }
 }
@@ -188,16 +198,17 @@ fn apply_pending_impacts(mut commands: Commands, mut impacted_bodies: Query<(Ent
 fn record_last_hit_impact(
     hit: On<EnemyHit>,
     mut commands: Commands,
-    ragdoll_bodies: Query<(&OwnedByCharacter, &RagdollBodyPart)>,
+    ragdoll_bodies: Query<(&OwnedByCharacter, &RagdollBodyPart, &Position, &Rotation)>,
 ) {
-    let Some(body_part) = ragdoll_bodies.get(hit.collider).ok().map(|(_, part)| *part) else {
+    let Ok((_, body_part, position, rotation)) = ragdoll_bodies.get(hit.collider) else {
         return;
     };
     let impact_point = hit.shot_origin + hit.shot_direction.as_vec3() * hit.impact_distance;
+    let impact_point_in_body_space = rotation.inverse() * (impact_point - position.0);
     commands.entity(hit.target).insert(LastHitImpact {
-        body_part,
+        body_part: *body_part,
         impulse: hit.impulse,
-        point: impact_point,
+        point_in_body_space: impact_point_in_body_space,
     });
 }
 
@@ -1313,7 +1324,7 @@ fn activate_with_last_hit(
     let impact_body_entity = part_entities[impact.body_part];
     commands.entity(impact_body_entity).insert(PendingRagdollImpact {
         impulse: impact.impulse,
-        point: impact.point,
+        point_in_body_space: impact.point_in_body_space,
     });
 }
 

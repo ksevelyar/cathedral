@@ -433,7 +433,7 @@ fn handle_player_death(
             LastHitImpact {
                 body_part: RagdollBodyPart::Head,
                 impulse: Vec3::ZERO,
-                point: Vec3::ZERO,
+                point_in_body_space: Vec3::ZERO,
             },
         ));
         next_state.set(GameState::GameOver);
