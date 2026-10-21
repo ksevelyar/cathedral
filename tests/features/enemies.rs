@@ -152,17 +152,6 @@ fn run_updates(app: &mut App, update_count: usize) {
     }
 }
 
-fn wait_until_dying(app: &mut App, enemy: Entity) {
-    let death_wait_updates = 64;
-    for _ in 0..death_wait_updates {
-        app.update();
-        if app.world().entity(enemy).contains::<Dying>() {
-            return;
-        }
-    }
-    panic!("shot enemy {enemy:?} should become dying within {death_wait_updates} updates");
-}
-
 fn assert_animator_stays_stopped(app: &mut App, animator: Entity) {
     let settle_updates = 512;
     run_updates(app, settle_updates);
@@ -487,9 +476,7 @@ fn head_shot_kills_fighter() {
         simulate_enemy_near_player(EnemyKind::Fighter, EnemyBehavior::Patrol, 42, Vec3::new(5.0, 0.05, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
-    support::shoot_entity(&mut app, hit_body);
-    wait_until_dying(&mut app, enemy);
-    support::assert_kick_speed(&mut app, hit_body, 2.9);
+    support::shoot_and_assert_kick_speed(&mut app, hit_body, 2.9);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
 }
@@ -500,9 +487,7 @@ fn head_shot_kills_gunner() {
         simulate_enemy_near_player(EnemyKind::Gunner, EnemyBehavior::Patrol, 0, Vec3::new(5.0, 0.05, 0.0));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::Head);
 
-    support::shoot_entity(&mut app, hit_body);
-    wait_until_dying(&mut app, enemy);
-    support::assert_kick_speed(&mut app, hit_body, 2.9);
+    support::shoot_and_assert_kick_speed(&mut app, hit_body, 2.9);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
 }
@@ -530,9 +515,7 @@ fn hand_shot_kills_fighter() {
     );
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::HandRight);
 
-    support::shoot_entity(&mut app, hit_body);
-    wait_until_dying(&mut app, enemy);
-    support::assert_kick_speed(&mut app, hit_body, 2.9);
+    support::shoot_and_assert_kick_speed(&mut app, hit_body, 2.9);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
 }
@@ -544,9 +527,7 @@ fn hand_shot_kills_gunner() {
     app.insert_resource(SubstepCount(30));
     let hit_body = find_ragdoll_body(&mut app, enemy, RagdollBodyPart::HandRight);
 
-    support::shoot_entity(&mut app, hit_body);
-    wait_until_dying(&mut app, enemy);
-    support::assert_kick_speed(&mut app, hit_body, 2.9);
+    support::shoot_and_assert_kick_speed(&mut app, hit_body, 2.9);
     let settling_duration = 10.0;
     support::assert_settles(&mut app, hit_body, settling_duration);
 }

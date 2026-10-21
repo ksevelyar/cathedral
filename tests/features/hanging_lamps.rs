@@ -210,8 +210,7 @@ fn shot_lamp_settles_within_documented_time() {
     let mut app = create_lamp_test_app();
     let shade = find_named_body(&mut app, "Lamp shade");
 
-    shoot_entity(&mut app, shade);
-    support::assert_kick_speed(&mut app, shade, 4.0);
+    support::shoot_and_assert_kick_speed(&mut app, shade, 4.0);
     let visible_swing_duration = 30.0;
     let visible_swing_steps = (visible_swing_duration / FIXED_TIMESTEP_SECONDS) as usize;
     for _ in 0..visible_swing_steps {
