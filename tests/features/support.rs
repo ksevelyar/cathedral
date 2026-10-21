@@ -87,7 +87,24 @@ pub fn shoot_entity(app: &mut App, target: Entity) -> Vec3 {
     shot_direction
 }
 
-pub fn assert_kick_speed(app: &mut App, target: Entity, minimum_kick_speed: f32) {
+pub fn shoot_and_assert_kick_speed(app: &mut App, target: Entity, minimum_kick_speed: f32) {
+    aim_at_entity(app, target);
+    press_shot_button_before_physics(app);
+
+    if app.world().get::<RigidBodyDisabled>(target).is_some() {
+        let activation_wait_updates = 64;
+        for _ in 0..activation_wait_updates {
+            if app.world().get::<RigidBodyDisabled>(target).is_none() {
+                break;
+            }
+            app.update();
+        }
+        assert!(
+            app.world().get::<RigidBodyDisabled>(target).is_none(),
+            "shot target should activate within {activation_wait_updates} updates"
+        );
+    }
+
     let target_linear_speed = app
         .world()
         .get::<LinearVelocity>(target)
@@ -106,6 +123,8 @@ pub fn assert_kick_speed(app: &mut App, target: Entity, minimum_kick_speed: f32)
             "shot should produce linear speed of at least {minimum_kick_speed}, got target_linear_speed={target_linear_speed:.6}, connected body linear speeds={connected_body_kicks:?}"
         );
     }
+
+    release_shot_button(app);
 }
 
 fn find_joint_connected_bodies(app: &App, body: Entity) -> Vec<Entity> {
