@@ -37,6 +37,7 @@
 
               jq
               blender
+              python3
               (
                 rust-bin.nightly.latest.default.override {
                   extensions = ["rust-src"];

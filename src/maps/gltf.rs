@@ -27,7 +27,7 @@ impl MapObject for Desk {
             context,
             transform,
             "desk",
-            "objects/table/metal_office_desk_2k.gltf",
+            "models/table/metal_office_desk_2k.gltf",
             Collider::cuboid(2.0, 0.788, 0.947),
             Transform::from_translation(Vec3::new(0.0, 0.394, 0.0)),
             ColliderDensity(300.0),
@@ -41,7 +41,7 @@ impl MapObject for Laptop {
             context,
             transform,
             "laptop",
-            "objects/classic-laptop/classic_laptop_2k.gltf",
+            "models/classic-laptop/classic_laptop_2k.gltf",
             Collider::cuboid(0.66, 0.46, 0.49),
             Transform::from_translation(Vec3::new(0.0, 0.23, 0.0)),
             ColliderDensity(1000.0),
@@ -55,7 +55,7 @@ impl MapObject for Stool {
             context,
             transform,
             "stool",
-            "objects/metal-stool/metal_stool_03_2k.gltf",
+            "models/metal-stool/metal_stool_03_2k.gltf",
             Collider::cuboid(0.46, 1.024, 0.47),
             Transform::from_translation(Vec3::new(0.0, 0.512, 0.0)),
             ColliderDensity(500.0),
@@ -69,7 +69,7 @@ impl MapObject for StorageRack {
             context,
             transform,
             "storage rack",
-            "objects/worn-metal-rack/worn_metal_rack_2k.gltf",
+            "models/worn-metal-rack/worn_metal_rack_2k.gltf",
             Collider::cuboid(0.92, 1.9, 0.6),
             Transform::from_translation(Vec3::new(0.0, 0.95, 0.0)),
             ColliderDensity(300.0),
@@ -83,7 +83,7 @@ impl MapObject for CardboardBox {
             context,
             transform,
             "cardboard box",
-            "objects/cardboard-box/cardboard_box_01_2k.gltf",
+            "models/cardboard-box/cardboard_box_01_2k.gltf",
             Collider::cuboid(0.39, 0.34, 0.52),
             Transform::from_translation(Vec3::new(0.0, 0.17, 0.03)),
             ColliderDensity(100.0),
@@ -97,7 +97,7 @@ impl MapObject for Jerrycan {
             context,
             transform,
             "jerrycan",
-            "objects/metal-jerrycan/metal_jerrycan_2k.gltf",
+            "models/metal-jerrycan/metal_jerrycan_2k.gltf",
             Collider::cuboid(0.35, 0.455, 0.172),
             Transform::from_translation(Vec3::new(0.005, 0.228, -0.003)),
             ColliderDensity(500.0),
@@ -111,7 +111,7 @@ impl MapObject for PlasticBottleGallon {
             context,
             transform,
             "plastic bottle gallon",
-            "objects/plastic-bottle-gallon/plastic_bottle_gallon_2k.gltf",
+            "models/plastic-bottle-gallon/plastic_bottle_gallon_2k.gltf",
             Collider::cuboid(0.166, 0.275, 0.126),
             Transform::from_translation(Vec3::new(-0.005, 0.137, -0.002)),
             ColliderDensity(100.0),
@@ -121,7 +121,7 @@ impl MapObject for PlasticBottleGallon {
 
 impl MapObject for PowerBox {
     fn spawn(&self, context: &mut SpawnContext, transform: Transform) {
-        let asset_path = "objects/power-box/power_box_01_2k.gltf";
+        let asset_path = "models/power-box/power_box_01_2k.gltf";
         let scene = context
             .asset_server
             .load(GltfAssetLabel::Scene(0).from_asset(asset_path));

@@ -110,8 +110,8 @@ use crate::{
     bloodmarks::BloodmarksPlugin,
     enemies::EnemiesPlugin,
     health::HealthPlugin,
-    maps::{Map, MapsPlugin, build_map01},
-    player::{CameraState, PlayerCamera, PlayerPlugin},
+    maps::{Map, MapsPlugin},
+    player::{PlayerCamera, PlayerPlugin},
     ragdoll::RagdollPlugin,
     shooting::ShootingPlugin,
     state::{ColliderInspection, GameState, GameStatePlugin},
@@ -163,12 +163,12 @@ fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
     .clone()
 }
 
-pub fn build_gui_app(configuration: Configuration) -> App {
+pub fn build_gui_app(configuration: Configuration, map: Map) -> App {
     initialize_logging();
     let spatial_scale = SpatialScale::new(0.1);
     let mut app = App::new();
     app.insert_resource(configuration);
-    app.insert_resource(build_map01());
+    app.insert_resource(map);
     app.add_plugins(DefaultPlugins.build().disable::<LogPlugin>().set(ImagePlugin {
         default_sampler: make_tiling_image_sampler(),
     }));
@@ -349,10 +349,12 @@ fn attach_screenshot_camera(
         let direction = (look_target - eye).normalize();
         let pitch = direction.y.asin();
         let yaw = (-direction.x).atan2(-direction.z);
-        commands.entity(player_camera).remove::<ChildOf>();
+        let camera_rotation = Quat::from_rotation_y(yaw) * Quat::from_rotation_x(pitch);
+        let camera_transform = Transform::from_translation(eye).with_rotation(camera_rotation);
         commands
             .entity(player_camera)
-            .insert((CameraState { yaw, pitch }, Transform::from_translation(eye)));
+            .remove::<ChildOf>()
+            .insert(camera_transform);
     }
 }
 
