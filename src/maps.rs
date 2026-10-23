@@ -3,6 +3,7 @@ mod hanging_lamp;
 mod intro;
 mod map01;
 mod meshes;
+mod moon;
 mod sandfield;
 mod structure;
 
@@ -54,6 +55,7 @@ pub struct SpawnContext<'commands, 'world, 'state> {
     pub(crate) commands: &'commands mut Commands<'world, 'state>,
     pub(crate) asset_server: &'commands AssetServer,
     pub(crate) meshes: &'commands mut Assets<Mesh>,
+    pub(crate) images: &'commands mut Assets<Image>,
     pub(crate) materials: &'commands mut Assets<StandardMaterial>,
 }
 
@@ -62,12 +64,14 @@ impl<'commands, 'world, 'state> SpawnContext<'commands, 'world, 'state> {
         commands: &'commands mut Commands<'world, 'state>,
         asset_server: &'commands AssetServer,
         meshes: &'commands mut Assets<Mesh>,
+        images: &'commands mut Assets<Image>,
         materials: &'commands mut Assets<StandardMaterial>,
     ) -> Self {
         Self {
             commands,
             asset_server,
             meshes,
+            images,
             materials,
         }
     }
@@ -242,6 +246,7 @@ fn spawn_map(
     mut commands: Commands,
     asset_server: Res<AssetServer>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     info!("spawning map {}", map.name);
@@ -263,7 +268,7 @@ fn spawn_map(
             Transform::from_translation(fog_volume.center).with_scale(fog_volume.size),
         ));
     }
-    let mut spawn_context = SpawnContext::new(&mut commands, &asset_server, &mut meshes, &mut materials);
+    let mut spawn_context = SpawnContext::new(&mut commands, &asset_server, &mut meshes, &mut images, &mut materials);
     for object_spawn in &map.objects {
         object_spawn.object.spawn(&mut spawn_context, object_spawn.transform);
     }
