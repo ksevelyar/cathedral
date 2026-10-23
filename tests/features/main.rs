@@ -12,3 +12,4 @@ mod path_finding;
 mod pause;
 mod player_presentation;
 mod screenshot;
+mod viewpoints;

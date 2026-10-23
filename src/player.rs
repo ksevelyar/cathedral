@@ -13,7 +13,7 @@ use bevy::world_serialization::WorldInstanceReady;
 
 use crate::enemies::Dying;
 use crate::health::{CharacterDied, Health};
-use crate::maps::PlayerPosition;
+use crate::maps::{ActiveViewpointIndex, Map, PlayerPosition};
 use crate::movement::PhysicsWorld;
 use crate::ragdoll::{
     BoneMap, LastHitImpact, OwnedByCharacter, RagdollBodyPart, RagdollData, exclude_character_bodies,
@@ -43,7 +43,8 @@ impl Plugin for PlayerPlugin {
             Update,
             (
                 apply_mouse_look.run_if(not(in_state(GameState::Paused))),
-                record_player_viewpoint.after(apply_mouse_look),
+                navigate_viewpoints.after(apply_mouse_look),
+                record_player_viewpoint.after(navigate_viewpoints),
                 settle_player_on_startup,
                 move_player,
                 handle_player_death,
@@ -142,14 +143,8 @@ const PLAYER_IDLE_ANIMATION_INDEX: usize = 21;
 const PLAYER_RELOAD_ANIMATION_INDEX: usize = 22;
 const PLAYER_MOVING_ANIMATION_INDEX: usize = 36;
 
-pub fn setup_player(
-    mut commands: Commands,
-    asset_server: Res<AssetServer>,
-    start_position: Option<Res<PlayerPosition>>,
-) {
-    let player_position =
-        start_position.map_or_else(|| PlayerPosition::new(Vec3::ZERO), |start_position| *start_position);
-    spawn_player(&mut commands, &asset_server, player_position);
+pub fn setup_player(mut commands: Commands, asset_server: Res<AssetServer>, start_position: Res<PlayerPosition>) {
+    spawn_player(&mut commands, &asset_server, *start_position);
 }
 
 pub fn spawn_player(
@@ -586,6 +581,31 @@ pub fn apply_mouse_look(
     }
 }
 
+fn navigate_viewpoints(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    map: Res<Map>,
+    mut active_viewpoint_index: ResMut<ActiveViewpointIndex>,
+    mut player_position: ResMut<PlayerPosition>,
+    player_query: PlayerBodyTransformQuery,
+    camera_query: PlayerCameraTransformQuery,
+) {
+    let viewpoint_count = map.viewpoints.len();
+    let selected_viewpoint_index = if keyboard.just_pressed(KeyCode::Comma) {
+        Some((active_viewpoint_index.0 + viewpoint_count - 1) % viewpoint_count)
+    } else if keyboard.just_pressed(KeyCode::Period) {
+        Some((active_viewpoint_index.0 + 1) % viewpoint_count)
+    } else {
+        None
+    };
+    let Some(selected_viewpoint_index) = selected_viewpoint_index else {
+        return;
+    };
+    active_viewpoint_index.0 = selected_viewpoint_index;
+    *player_position = map.viewpoints[selected_viewpoint_index];
+    reset_player(player_query, camera_query, &player_position);
+    info!("Selected viewpoint: {}", player_position.label);
+}
+
 fn record_player_viewpoint(
     keyboard: Res<ButtonInput<KeyCode>>,
     players: Query<(&Transform, &CameraState), With<Player>>,
@@ -605,7 +625,7 @@ fn record_player_viewpoint(
     );
     let look_at_position = eye_position + forward_direction;
     info!(
-        "PlayerPosition {{ position: Vec3::new({:.6}, {:.6}, {:.6}), look_at: Vec3::new({:.6}, {:.6}, {:.6}) }}",
+        "PlayerPosition {{ label: \"Recorded viewpoint\", position: Vec3::new({:.3}, {:.3}, {:.3}), look_at: Vec3::new({:.3}, {:.3}, {:.3}) }}",
         eye_position.x, eye_position.y, eye_position.z, look_at_position.x, look_at_position.y, look_at_position.z,
     );
 }

@@ -27,10 +27,18 @@ pub(super) fn build_map() -> Map {
             scattering: 0.45,
             scattering_asymmetry: 0.7,
         }),
-        player_position: PlayerPosition {
-            position: Vec3::new(10.0, 1.9, 7.0),
-            look_at: Vec3::new(-6.0, 2.0, -2.0),
-        },
+        viewpoints: vec![
+            PlayerPosition {
+                label: "control-room-entrance",
+                position: Vec3::new(10.0, 1.9, 7.0),
+                look_at: Vec3::new(-6.0, 2.0, -2.0),
+            },
+            PlayerPosition {
+                label: "control-room-north",
+                position: Vec3::new(-8.0, 1.9, -7.0),
+                look_at: Vec3::new(0.0, 2.0, 0.0),
+            },
+        ],
         enemies: build_enemies_before_player(),
         objects: build_control_room_objects(),
     }

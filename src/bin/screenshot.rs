@@ -29,7 +29,7 @@ enum ScreenshotScenario {
 
 impl ScreenshotScenario {
     fn parse(argument: Option<String>) -> Self {
-        match argument.as_deref().unwrap_or("map01") {
+        match argument.as_deref().unwrap_or("intro") {
             "intro" => Self::Intro,
             "map01" => Self::Map01,
             "gunner-colliders" => Self::GunnerColliders,

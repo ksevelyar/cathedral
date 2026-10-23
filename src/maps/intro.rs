@@ -22,10 +22,23 @@ pub(super) fn build_map() -> Map {
         tower_base_height,
         tower_horizontal_position.y,
     );
-    let player_position = PlayerPosition {
-        position: Vec3::new(8.857, 3.108, 17.065),
-        look_at: Vec3::new(8.680, 3.366, 16.115),
-    };
+    let viewpoints = vec![
+        PlayerPosition {
+            label: "tower",
+            position: Vec3::new(8.857, 3.108, 17.065),
+            look_at: Vec3::new(8.680, 3.366, 16.115),
+        },
+        PlayerPosition {
+            label: "dunes",
+            position: Vec3::new(-14.755, 3.537, 37.628),
+            look_at: Vec3::new(-15.352, 3.543, 38.430),
+        },
+        PlayerPosition {
+            label: "stairwell",
+            position: Vec3::new(14.462, 1.896, -55.609),
+            look_at: Vec3::new(14.076, 2.488, -56.317),
+        },
+    ];
 
     let moon_direction = Vec3::new(-0.7, 0.42, -0.7).normalize();
     let tower_transform = Transform::from_translation(tower_base_position);
@@ -46,7 +59,7 @@ pub(super) fn build_map() -> Map {
         },
         clear_color: ClearColor(Color::srgb(0.004, 0.009, 0.025)),
         fog_volume: None,
-        player_position,
+        viewpoints,
         enemies: Vec::new(),
         objects: vec![
             ObjectSpawn::new(Transform::IDENTITY, sand_field),
