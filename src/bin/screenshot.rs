@@ -1,7 +1,7 @@
 use cathedral::app::{build_screenshot_app, fetch_configuration, request_screenshot, wait_screenshot_capture};
 use cathedral::enemies::AnimationState;
 use cathedral::enemies::{Dying, EnemyActivity, EnemyBehavior, EnemyKind};
-use cathedral::maps::{Map, MapBuilder, build_map01};
+use cathedral::maps::{Map, MapBuilder, build_intro, build_map01};
 use cathedral::player::{Player, PlayerCamera, compute_look_angles};
 use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
 
@@ -21,6 +21,7 @@ const COLLIDER_RENDER_HEIGHT: u32 = 1440;
 
 #[derive(Clone, Copy)]
 enum ScreenshotScenario {
+    Intro,
     Map01,
     GunnerColliders,
     GunnersRagdoll,
@@ -29,6 +30,7 @@ enum ScreenshotScenario {
 impl ScreenshotScenario {
     fn parse(argument: Option<String>) -> Self {
         match argument.as_deref().unwrap_or("map01") {
+            "intro" => Self::Intro,
             "map01" => Self::Map01,
             "gunner-colliders" => Self::GunnerColliders,
             "gunners-ragdoll" => Self::GunnersRagdoll,
@@ -92,6 +94,9 @@ fn main() {
     let screenshot_scenario = parse_screenshot_scenario();
     std::fs::create_dir_all(SCREENSHOT_DIR).unwrap();
     match screenshot_scenario {
+        ScreenshotScenario::Intro => {
+            run_regular_screenshot(build_intro(), configuration, RENDER_WIDTH, RENDER_HEIGHT, "intro");
+        }
         ScreenshotScenario::Map01 => {
             run_regular_screenshot(build_map01(), configuration, RENDER_WIDTH, RENDER_HEIGHT, "map01");
         }

@@ -1,16 +1,24 @@
 # Maps
 ## Contract
-* A map defines player initial position, enemies, pieces.
-* Pieces are built from data, using primitives.
+* A map defines its environment, player initial position, enemies, and objects.
+* Every object implements `MapObject`.
 
-## Lifecycle
-* spawn_map inserts PlayerPosition, spawns pieces, enemies.
+## Object workflow
+### Imported
+1. Generate a low-poly initial `.blend` model with a Python script.
+2. Open the model in Blender and add details.
+3. Export the model and load it in the game.
+4. Create static colliders from its meshes.
 
-## Open Questions
-1) how to make irregular structures? like caves, or walls angles
-2) how to make textures look 3d? reflections + shadows like it not just solid plane
-3) how to review work? i want to see my progress realtime
-4) how to make api convenient for quick iterations?
+Examples: tower, laptop.
 
-## Ideas
-* api should describe relationships
+### Runtime generated
+1. Define named parameters for the object.
+2. Generate its render geometry and materials in game code.
+3. Create collision appropriate to its physics behavior.
+4. Update generated geometry when its source state changes.
+
+Examples: sandfield, hanging lamp.
+
+## Levels
+* [Intro](maps/intro.md)

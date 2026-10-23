@@ -180,13 +180,7 @@ pub(crate) struct LastHitImpact {
 
 fn apply_pending_impacts(
     mut commands: Commands,
-    mut impacted_bodies: Query<(
-        Entity,
-        &PendingRagdollImpact,
-        Forces,
-        &Position,
-        &Rotation,
-    )>,
+    mut impacted_bodies: Query<(Entity, &PendingRagdollImpact, Forces, &Position, &Rotation)>,
 ) {
     for (entity, impact, mut forces, position, rotation) in &mut impacted_bodies {
         let impact_point_in_world_space = position.0 + *rotation * impact.point_in_body_space;

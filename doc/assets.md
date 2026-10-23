@@ -12,7 +12,7 @@
 * guns: Poly Pizza https://poly.pizza/m/J3i9KDQ3kt
 * katana: Poly Pizza https://poly.pizza/m/15A7InejC7
 
-## Objects
+## Models
 * cardboard_box_01: PolyHaven "Cardboard Box 01" (CC0) https://polyhaven.com/a/cardboard_box_01
 * classic_laptop: PolyHaven "Classic Laptop" (CC0) https://polyhaven.com/a/classic_laptop
 * metal_jerrycan: PolyHaven "Metal Jerrycan" (CC0) https://polyhaven.com/a/metal_jerrycan

@@ -38,14 +38,7 @@ impl MapObject for Wall {
 }
 
 fn spawn_concrete_cuboid(context: &mut SpawnContext, transform: Transform, size: Vec3, tile_size: f32) {
-    let texture_directory = "textures/concrete-floor";
-    let material = context.materials.add(StandardMaterial {
-        base_color: Color::WHITE,
-        base_color_texture: Some(context.asset_server.load(format!("{texture_directory}/base-color.jpg"))),
-        normal_map_texture: Some(context.asset_server.load(format!("{texture_directory}/normal.png"))),
-        perceptual_roughness: 0.85,
-        ..default()
-    });
+    let material = build_concrete_material(context);
     context.commands.spawn((
         Mesh3d(context.meshes.add(build_cuboid_mesh(size, tile_size))),
         MeshMaterial3d(material),
@@ -53,4 +46,15 @@ fn spawn_concrete_cuboid(context: &mut SpawnContext, transform: Transform, size:
         Collider::cuboid(size.x, size.y, size.z),
         transform,
     ));
+}
+
+pub(super) fn build_concrete_material(context: &mut SpawnContext) -> Handle<StandardMaterial> {
+    let texture_directory = "textures/concrete-floor";
+    context.materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        base_color_texture: Some(context.asset_server.load(format!("{texture_directory}/base-color.jpg"))),
+        normal_map_texture: Some(context.asset_server.load(format!("{texture_directory}/normal.png"))),
+        perceptual_roughness: 0.85,
+        ..default()
+    })
 }

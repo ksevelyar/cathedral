@@ -1,7 +1,9 @@
 mod gltf;
 mod hanging_lamp;
+mod intro;
 mod map01;
 mod meshes;
+mod sandfield;
 mod structure;
 
 use bevy::light::FogVolume;
@@ -13,6 +15,7 @@ use crate::player;
 
 pub use gltf::{CardboardBox, Desk, Jerrycan, Laptop, PlasticBottleGallon, PowerBox, Stool, StorageRack};
 pub use hanging_lamp::HangingLamp;
+pub use sandfield::{SandField, SandFieldGeometry, SandFieldOpening};
 pub use structure::{Ceiling, Floor, Wall};
 
 pub struct MapsPlugin;
@@ -27,8 +30,20 @@ impl Plugin for MapsPlugin {
     }
 }
 
+pub fn build_intro() -> Map {
+    intro::build_map()
+}
+
 pub fn build_map01() -> Map {
     map01::build_map()
+}
+
+pub fn build_named_map(name: &str) -> Option<Map> {
+    match name {
+        "intro" => Some(build_intro()),
+        "map01" => Some(build_map01()),
+        _ => None,
+    }
 }
 
 pub trait MapObject: Send + Sync {
@@ -263,7 +278,9 @@ pub(crate) fn restart(
     commands: &mut Commands,
     asset_server: &AssetServer,
 ) {
-    *map = build_map01();
+    let current_map_name = map.name;
+    *map =
+        build_named_map(current_map_name).unwrap_or_else(|| panic!("cannot restart unknown map '{current_map_name}'"));
     *player_position = map.player_position;
     spawn_enemies(commands, asset_server, &map.enemies);
 }

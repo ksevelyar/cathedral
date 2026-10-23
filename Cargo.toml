@@ -16,6 +16,10 @@ test = false
 name = "bloodmarks"
 harness = false
 
+[[bench]]
+name = "sandfield"
+harness = false
+
 [[bin]]
 name = "screenshot"
 path = "src/bin/screenshot.rs"

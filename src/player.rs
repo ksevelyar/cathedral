@@ -43,6 +43,7 @@ impl Plugin for PlayerPlugin {
             Update,
             (
                 apply_mouse_look.run_if(not(in_state(GameState::Paused))),
+                record_player_viewpoint.after(apply_mouse_look),
                 settle_player_on_startup,
                 move_player,
                 handle_player_death,
@@ -130,10 +131,10 @@ impl Default for CameraState {
 }
 
 const MOUSE_SENSITIVITY: f32 = 0.003;
-const PLAYER_MOVE_SPEED: f32 = 5.0;
+const PLAYER_MOVE_SPEED: f32 = 12.0;
 const CAMERA_PITCH_LIMIT: f32 = std::f32::consts::FRAC_PI_2 - 0.01;
 const PLAYER_COLLISION_RADIUS: f32 = 0.4;
-const PLAYER_EYE_HEIGHT: f32 = 1.8;
+const PLAYER_EYE_HEIGHT: f32 = 1.9;
 const PLAYER_BODY_ASSET_PATH: &str = "characters/bodies/female.gltf";
 const PLAYER_ANIMATION_ASSET_PATH: &str = "characters/animations/ual1-standard.glb";
 const PLAYER_BODY_CAMERA_OFFSET: Vec3 = Vec3::new(0.0, -1.85, 0.3);
@@ -583,6 +584,30 @@ pub fn apply_mouse_look(
     if let Ok(mut camera_transform) = camera_query.single_mut() {
         camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, camera_state.pitch, 0.0);
     }
+}
+
+fn record_player_viewpoint(
+    keyboard: Res<ButtonInput<KeyCode>>,
+    players: Query<(&Transform, &CameraState), With<Player>>,
+) {
+    if !keyboard.just_pressed(KeyCode::KeyV) {
+        return;
+    }
+    let Ok((player_transform, camera_state)) = players.single() else {
+        return;
+    };
+    let eye_position = player_transform.translation;
+    let horizontal_direction_scale = camera_state.pitch.cos();
+    let forward_direction = Vec3::new(
+        -camera_state.yaw.sin() * horizontal_direction_scale,
+        camera_state.pitch.sin(),
+        -camera_state.yaw.cos() * horizontal_direction_scale,
+    );
+    let look_at_position = eye_position + forward_direction;
+    info!(
+        "PlayerPosition {{ position: Vec3::new({:.6}, {:.6}, {:.6}), look_at: Vec3::new({:.6}, {:.6}, {:.6}) }}",
+        eye_position.x, eye_position.y, eye_position.z, look_at_position.x, look_at_position.y, look_at_position.z,
+    );
 }
 
 pub fn move_player(
