@@ -110,7 +110,7 @@ use crate::{
     bloodmarks::BloodmarksPlugin,
     enemies::EnemiesPlugin,
     health::HealthPlugin,
-    maps::{Map, MapsPlugin},
+    maps::{Map, MapsPlugin, PlayerPosition},
     player::{PlayerCamera, PlayerPlugin},
     ragdoll::RagdollPlugin,
     shooting::ShootingPlugin,
@@ -122,7 +122,7 @@ use crate::{
 pub struct Configuration {
     pub show_fps: bool,
     pub show_colliders: bool,
-    pub viewpoint: Option<(Vec3, Vec3)>,
+    pub viewpoint: Option<String>,
 }
 
 pub fn fetch_configuration() -> Configuration {
@@ -131,7 +131,8 @@ pub fn fetch_configuration() -> Configuration {
         .filter_map(|argument| {
             argument
                 .strip_prefix("--")
-                .and_then(|named_argument| named_argument.split_once('='))
+                .unwrap_or(&argument)
+                .split_once('=')
                 .map(|(name, value)| (name.to_owned(), value.to_owned()))
         })
         .collect::<HashMap<_, _>>();
@@ -139,18 +140,8 @@ pub fn fetch_configuration() -> Configuration {
     Configuration {
         show_fps: values.get("fps").is_some_and(|value| value.parse().unwrap()),
         show_colliders: values.get("colliders").is_some_and(|value| value.parse().unwrap()),
-        viewpoint: values.get("viewpoint").map(|value| parse_viewpoint(value)),
+        viewpoint: values.get("viewpoint").cloned(),
     }
-}
-
-fn parse_viewpoint(value: &str) -> (Vec3, Vec3) {
-    let coordinates = value
-        .split([':', ','])
-        .map(str::parse)
-        .collect::<Result<Vec<f32>, _>>()
-        .unwrap();
-
-    (Vec3::from_slice(&coordinates[..3]), Vec3::from_slice(&coordinates[3..]))
 }
 
 fn make_tiling_image_sampler() -> ImageSamplerDescriptor {
@@ -245,7 +236,7 @@ fn wait_initialization(app: &mut App) {
 struct ScreenshotDir(String);
 
 #[derive(Resource)]
-struct ScreenshotName(&'static str);
+struct ScreenshotName(String);
 
 #[derive(Resource, Default)]
 pub struct CapturedScreenshots(pub Vec<Image>);
@@ -258,8 +249,11 @@ pub fn build_screenshot_app(
     screenshot_dir: String,
     screenshot_name: &'static str,
 ) -> App {
+    let selected_viewpoint = resolve_screenshot_viewpoint(&map, configuration.viewpoint.as_deref())
+        .unwrap_or_else(|error_message| panic!("{error_message}"));
+    let screenshot_camera_viewpoint = Some((selected_viewpoint.position, selected_viewpoint.look_at));
+    let screenshot_name = format!("{screenshot_name}-{}", selected_viewpoint.label);
     initialize_logging();
-    let viewpoint = configuration.viewpoint;
     let show_colliders = configuration.show_colliders;
     let render_plugin = RenderPlugin {
         synchronous_pipeline_compilation: true,
@@ -303,7 +297,7 @@ pub fn build_screenshot_app(
     .insert_resource(ScreenshotDir(screenshot_dir))
     .insert_resource(ScreenshotName(screenshot_name))
     .insert_resource(CapturedScreenshots::default())
-    .insert_resource(Viewpoint(viewpoint))
+    .insert_resource(Viewpoint(screenshot_camera_viewpoint))
     .add_systems(Update, attach_screenshot_camera);
     let render_target = create_render_target(&mut app, render_width, render_height);
     app.insert_resource(ScreenshotRenderTarget(render_target));
@@ -313,6 +307,32 @@ pub fn build_screenshot_app(
     wait_initialization(&mut app);
 
     app
+}
+
+fn resolve_screenshot_viewpoint(map: &Map, viewpoint_name: Option<&str>) -> Result<PlayerPosition, String> {
+    let Some(viewpoint_name) = viewpoint_name else {
+        return map
+            .viewpoints
+            .first()
+            .copied()
+            .ok_or_else(|| format!("map '{}' has no viewpoints", map.name));
+    };
+    map.viewpoints
+        .iter()
+        .find(|viewpoint| viewpoint.label.eq_ignore_ascii_case(viewpoint_name))
+        .copied()
+        .ok_or_else(|| {
+            let available_viewpoint_names = map
+                .viewpoints
+                .iter()
+                .map(|viewpoint| viewpoint.label)
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "unknown viewpoint '{viewpoint_name}' for map '{}'; available viewpoints: {available_viewpoint_names}",
+                map.name
+            )
+        })
 }
 
 fn create_render_target(app: &mut App, render_width: u32, render_height: u32) -> Handle<Image> {

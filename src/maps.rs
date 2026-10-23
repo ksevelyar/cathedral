@@ -92,7 +92,7 @@ pub struct MapBuilder {
     ambient: GlobalAmbientLight,
     clear_color: ClearColor,
     fog_volume: Option<FogVolumeSettings>,
-    player_position: PlayerPosition,
+    viewpoints: Vec<PlayerPosition>,
     enemies: Vec<EnemySpawn>,
     objects: Vec<ObjectSpawn>,
 }
@@ -104,7 +104,7 @@ impl MapBuilder {
             ambient: GlobalAmbientLight::default(),
             clear_color: ClearColor(Color::srgb(0.05, 0.05, 0.05)),
             fog_volume: None,
-            player_position: PlayerPosition::new(Vec3::new(0.0, 0.5, 0.0)),
+            viewpoints: vec![PlayerPosition::new("Default", Vec3::new(0.0, 0.5, 0.0))],
             enemies: vec![],
             objects: vec![],
         }
@@ -112,9 +112,17 @@ impl MapBuilder {
 
     pub fn with_player_position(self, position: Vec3, look_at: Vec3) -> Self {
         Self {
-            player_position: PlayerPosition { position, look_at },
+            viewpoints: vec![PlayerPosition {
+                label: "default",
+                position,
+                look_at,
+            }],
             ..self
         }
+    }
+
+    pub fn with_viewpoints(self, viewpoints: Vec<PlayerPosition>) -> Self {
+        Self { viewpoints, ..self }
     }
 
     pub fn with_floor(self, size: Vec3) -> Self {
@@ -148,7 +156,7 @@ impl MapBuilder {
             ambient: self.ambient,
             clear_color: self.clear_color,
             fog_volume: self.fog_volume,
-            player_position: self.player_position,
+            viewpoints: self.viewpoints,
             enemies: self.enemies,
             objects: self.objects,
         }
@@ -157,18 +165,23 @@ impl MapBuilder {
 
 #[derive(Resource, Clone, Copy)]
 pub struct PlayerPosition {
+    pub label: &'static str,
     pub position: Vec3,
     pub look_at: Vec3,
 }
 
 impl PlayerPosition {
-    pub fn new(position: Vec3) -> Self {
+    pub fn new(label: &'static str, position: Vec3) -> Self {
         Self {
+            label,
             position,
             look_at: position + Vec3::NEG_Z,
         }
     }
 }
+
+#[derive(Resource, Default)]
+pub struct ActiveViewpointIndex(pub usize);
 
 #[derive(Resource)]
 pub struct Map {
@@ -176,7 +189,7 @@ pub struct Map {
     pub(crate) ambient: GlobalAmbientLight,
     pub(crate) clear_color: ClearColor,
     pub(crate) fog_volume: Option<FogVolumeSettings>,
-    pub(crate) player_position: PlayerPosition,
+    pub(crate) viewpoints: Vec<PlayerPosition>,
     pub(crate) enemies: Vec<EnemySpawn>,
     pub(crate) objects: Vec<ObjectSpawn>,
 }
@@ -232,7 +245,9 @@ fn spawn_map(
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     info!("spawning map {}", map.name);
-    commands.insert_resource(map.player_position);
+    assert!(!map.viewpoints.is_empty(), "map should contain at least one viewpoint");
+    commands.insert_resource(map.viewpoints[0]);
+    commands.insert_resource(ActiveViewpointIndex(0));
     commands.insert_resource(map.ambient.clone());
     commands.insert_resource(map.clear_color.clone());
     if let Some(fog_volume) = map.fog_volume {
@@ -275,12 +290,14 @@ fn spawn_enemies(commands: &mut Commands, asset_server: &AssetServer, enemies: &
 pub(crate) fn restart(
     map: &mut Map,
     player_position: &mut PlayerPosition,
+    active_viewpoint_index: &mut ActiveViewpointIndex,
     commands: &mut Commands,
     asset_server: &AssetServer,
 ) {
     let current_map_name = map.name;
     *map =
         build_named_map(current_map_name).unwrap_or_else(|| panic!("cannot restart unknown map '{current_map_name}'"));
-    *player_position = map.player_position;
+    *player_position = map.viewpoints[0];
+    active_viewpoint_index.0 = 0;
     spawn_enemies(commands, asset_server, &map.enemies);
 }

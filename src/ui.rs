@@ -98,7 +98,7 @@ fn setup_health_display(mut commands: Commands) {
         Node {
             position_type: PositionType::Absolute,
             bottom: px(12),
-            right: px(12),
+            left: px(12),
             ..default()
         },
         Text::new("HP --"),
@@ -133,7 +133,7 @@ fn setup_ammunition_display(mut commands: Commands) {
         Node {
             position_type: PositionType::Absolute,
             bottom: px(12),
-            left: px(12),
+            right: px(12),
             ..default()
         },
         Text::new("-- / --"),

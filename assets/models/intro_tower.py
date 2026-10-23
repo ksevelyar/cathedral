@@ -94,6 +94,49 @@ def build_tower_shell_mesh():
     return tower_mesh
 
 
+def build_stair_clipping_volume_mesh():
+    inner_base_width = TOWER_BASE_WIDTH - WALL_THICKNESS * 2.0
+    inner_top_width = TOWER_TOP_WIDTH - WALL_THICKNESS * 2.0
+    inner_base_corner_cut = TOWER_BASE_CORNER_CUT * inner_base_width / TOWER_BASE_WIDTH
+    inner_top_corner_cut = TOWER_BASE_CORNER_CUT * inner_top_width / TOWER_BASE_WIDTH
+    profiles = [
+        build_beveled_square_profile(inner_base_width, inner_base_corner_cut, -STAIRCASE_TOTAL_HEIGHT),
+        build_beveled_square_profile(inner_base_width, inner_base_corner_cut, 0.0),
+        build_beveled_square_profile(inner_top_width, inner_top_corner_cut, TOWER_HEIGHT),
+    ]
+    vertices = [vertex for profile in profiles for vertex in profile]
+    faces = [tuple(range(7, -1, -1)), tuple(range(16, 24))]
+    for profile_index in range(len(profiles) - 1):
+        lower_profile_vertex_index = profile_index * 8
+        upper_profile_vertex_index = lower_profile_vertex_index + 8
+        for face_index in range(8):
+            next_face_index = (face_index + 1) % 8
+            faces.append((
+                lower_profile_vertex_index + face_index,
+                lower_profile_vertex_index + next_face_index,
+                upper_profile_vertex_index + next_face_index,
+                upper_profile_vertex_index + face_index,
+            ))
+    clipping_volume_mesh = bpy.data.meshes.new("Tower interior stair clipping volume mesh")
+    clipping_volume_mesh.from_pydata(vertices, [], faces)
+    clipping_volume_mesh.update()
+    return clipping_volume_mesh
+
+
+def clip_stair_geometry_to_tower_walls(stair_collection, construction_collection):
+    clipping_volume = bpy.data.objects.new("Tower interior stair clipping volume", build_stair_clipping_volume_mesh())
+    construction_collection.objects.link(clipping_volume)
+    clipping_volume.hide_render = True
+    clipping_volume.hide_viewport = True
+    for stair_object in stair_collection.objects:
+        if stair_object.get("architectural_role") != "stair_corner_landing":
+            continue
+        clipping_modifier = stair_object.modifiers.new("Clip stairs to tower interior", "BOOLEAN")
+        clipping_modifier.operation = "INTERSECT"
+        clipping_modifier.solver = "EXACT"
+        clipping_modifier.object = clipping_volume
+
+
 def append_box_mesh_geometry(vertices, faces, minimum_corner, maximum_corner):
     start_vertex_index = len(vertices)
     minimum_x, minimum_y, minimum_z = minimum_corner
@@ -486,6 +529,7 @@ def create_stair_core(stair_collection, construction_collection, concrete_materi
         lower_first_flight[6],
     )
     add_stair_openings(entrance_floor, "Entrance", entrance_floor_openings)
+    clip_stair_geometry_to_tower_walls(stair_collection, construction_collection)
 
 
 def create_stair_lights(lighting_collection, light_material, metal_material):

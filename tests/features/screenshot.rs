@@ -8,6 +8,7 @@ use bevy::prelude::*;
 use cathedral::app::{Configuration, build_screenshot_app, request_screenshot, wait_screenshot_capture};
 use cathedral::enemies::{EnemyBehavior, EnemyKind};
 use cathedral::maps::{Map, MapBuilder, build_map01};
+use cathedral::player::PlayerCamera;
 use cathedral::shooting::Gun;
 
 const RENDER_WIDTH: u32 = 64;
@@ -34,7 +35,7 @@ fn build_gunner_colliders_map() -> Map {
 #[test]
 fn screenshot_app_captures_map01_frame() {
     let screenshot_dir = create_temp_screenshot_dir("map01");
-    let viewpoint = (Vec3::new(0.0, 1.85, 6.0), Vec3::new(0.0, 2.0, -6.0));
+    let viewpoint = "control-room-entrance".to_owned();
     let mut app = build_screenshot_app(
         build_map01(),
         Configuration {
@@ -48,16 +49,25 @@ fn screenshot_app_captures_map01_frame() {
     );
     request_screenshot(app.world_mut());
 
-    let captured_screenshots = wait_screenshot_capture(&mut app);
-    assert_eq!(
-        captured_screenshots.0.len(),
-        1,
-        "expected exactly one captured screenshot"
+    let captured_image = wait_screenshot_capture(&mut app)
+        .0
+        .first()
+        .expect("exactly one screenshot should be captured")
+        .clone();
+    assert_eq!(captured_image.width(), RENDER_WIDTH, "unexpected captured width");
+    assert_eq!(captured_image.height(), RENDER_HEIGHT, "unexpected captured height");
+    let screenshot_camera_position = app
+        .world_mut()
+        .query_filtered::<&Transform, With<PlayerCamera>>()
+        .single(app.world())
+        .expect("screenshot should retain the selected player camera")
+        .translation;
+    let expected_screenshot_camera_position = Vec3::new(10.0, 1.9, 7.0);
+    assert!(
+        screenshot_camera_position.distance(expected_screenshot_camera_position) < 0.001,
+        "screenshot camera should use the selected named viewpoint, got {screenshot_camera_position:?}"
     );
-    let image = &captured_screenshots.0[0];
-    assert_eq!(image.width(), RENDER_WIDTH, "unexpected captured width");
-    assert_eq!(image.height(), RENDER_HEIGHT, "unexpected captured height");
-    let pixels = image.data.as_deref().unwrap();
+    let pixels = captured_image.data.as_deref().unwrap();
     let (rgba_pixels, incomplete_pixel_channels) = pixels.as_chunks::<4>();
     assert!(
         incomplete_pixel_channels.is_empty(),
@@ -85,7 +95,7 @@ fn screenshot_app_captures_map01_frame() {
         1,
         "expected exactly one screenshot in {screenshot_dir:?}, got {entries:?}"
     );
-    let expected_name = format!("{}-map01.png", env!("CARGO_PKG_VERSION"));
+    let expected_name = format!("{}-map01-control-room-entrance.png", env!("CARGO_PKG_VERSION"));
     assert_eq!(
         entries[0].file_name().unwrap().to_string_lossy(),
         expected_name,
@@ -93,6 +103,62 @@ fn screenshot_app_captures_map01_frame() {
     );
 
     fs::remove_dir_all(&screenshot_dir).unwrap();
+}
+
+#[test]
+fn screenshot_app_captures_the_intro_dunes_viewpoint_by_name() {
+    let screenshot_dir = create_temp_screenshot_dir("intro-dunes");
+    let mut app = build_screenshot_app(
+        cathedral::maps::build_intro(),
+        Configuration {
+            viewpoint: Some("dunes".to_owned()),
+            ..default()
+        },
+        RENDER_WIDTH,
+        RENDER_HEIGHT,
+        screenshot_dir.to_string_lossy().into_owned(),
+        "intro",
+    );
+    request_screenshot(app.world_mut());
+    assert_eq!(wait_screenshot_capture(&mut app).0.len(), 1);
+    let screenshot_camera_position = app
+        .world_mut()
+        .query_filtered::<&Transform, With<PlayerCamera>>()
+        .single(app.world())
+        .expect("screenshot should retain the selected player camera")
+        .translation;
+    let expected_screenshot_camera_position = Vec3::new(-14.755, 3.537, 37.628);
+    assert!(
+        screenshot_camera_position.distance(expected_screenshot_camera_position) < 0.001,
+        "dunes screenshot should use the map's named viewpoint"
+    );
+    let screenshot_entries: Vec<PathBuf> = fs::read_dir(&screenshot_dir)
+        .unwrap()
+        .map(|entry| entry.unwrap().path())
+        .collect();
+    let expected_screenshot_name = format!("{}-intro-dunes.png", env!("CARGO_PKG_VERSION"));
+    assert_eq!(
+        screenshot_entries[0].file_name().unwrap().to_string_lossy(),
+        expected_screenshot_name
+    );
+    fs::remove_dir_all(&screenshot_dir).unwrap();
+}
+
+#[test]
+#[should_panic(expected = "unknown viewpoint 'dunes'")]
+fn screenshot_app_panics_with_available_viewpoints_for_an_unknown_name() {
+    let screenshot_dir = create_temp_screenshot_dir("unknown-viewpoint");
+    let _screenshot_app = build_screenshot_app(
+        build_map01(),
+        Configuration {
+            viewpoint: Some("dunes".to_owned()),
+            ..default()
+        },
+        RENDER_WIDTH,
+        RENDER_HEIGHT,
+        screenshot_dir.to_string_lossy().into_owned(),
+        "map01",
+    );
 }
 
 #[test]
@@ -124,7 +190,7 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
         .unwrap()
         .map(|entry| entry.unwrap().path())
         .collect();
-    let expected_screenshot_name = format!("{}-gunner-colliders.png", env!("CARGO_PKG_VERSION"));
+    let expected_screenshot_name = format!("{}-gunner-colliders-default.png", env!("CARGO_PKG_VERSION"));
     assert_eq!(
         screenshot_entries[0].file_name().unwrap().to_string_lossy(),
         expected_screenshot_name,
