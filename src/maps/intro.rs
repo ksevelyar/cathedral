@@ -36,8 +36,13 @@ pub(super) fn build_map() -> Map {
     let viewpoints = vec![
         PlayerPosition {
             label: "tower",
-            position: Vec3::new(79.662, 3.177, -2.069),
-            look_at: Vec3::new(78.831, 3.389, -2.585),
+            position: Vec3::new(70.374, 3.095, 3.826),
+            look_at: Vec3::new(69.603, 3.336, 3.237),
+        },
+        PlayerPosition {
+            label: "tower-entrance",
+            position: Vec3::new(-9.987, 3.315, -50.426),
+            look_at: Vec3::new(-9.708, 3.166, -51.374),
         },
         PlayerPosition {
             label: "dunes",
@@ -46,13 +51,14 @@ pub(super) fn build_map() -> Map {
         },
         PlayerPosition {
             label: "stairwell",
-            position: Vec3::new(14.462, 1.896, -55.609),
-            look_at: Vec3::new(14.076, 2.488, -56.317),
+            position: Vec3::new(18.937, 13.396, -73.338),
+            look_at: Vec3::new(18.052, 13.757, -73.631),
         },
     ];
 
     let moon_direction = Vec3::new(-0.859, 0.438, 0.265).normalize();
-    let tower_transform = Transform::from_translation(tower_base_position);
+    let mut tower_transform = Transform::from_translation(tower_base_position);
+    tower_transform.rotation = Quat::from_rotation_y(-28.0_f32.to_radians());
     let tower = Tower;
     let moon = Moon::create(moon_direction);
     Map {
