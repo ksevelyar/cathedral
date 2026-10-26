@@ -16,13 +16,17 @@ use crate::player;
 
 pub use gltf::{CardboardBox, Desk, Jerrycan, Laptop, PlasticBottleGallon, PowerBox, Stool, StorageRack};
 pub use hanging_lamp::HangingLamp;
-pub use sandfield::{SandField, SandFieldGeometry, SandFieldOpening};
+pub use sandfield::{SandField, SandFieldGeometry, SandFieldSurface, TerrainCutout};
 pub use structure::{Ceiling, Floor, Wall};
+
+#[derive(Component)]
+pub struct MapLoadingDependency;
 
 pub struct MapsPlugin;
 
 impl Plugin for MapsPlugin {
     fn build(&self, app: &mut App) {
+        intro::register_systems(app);
         app.add_systems(Startup, spawn_map.before(player::setup_player))
             .add_systems(
                 FixedPostUpdate,

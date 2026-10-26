@@ -1,16 +1,32 @@
 use avian3d::prelude::{ColliderConstructor, ColliderConstructorHierarchy, RigidBody};
+use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
 use super::moon::Moon;
-use super::{Map, MapObject, ObjectSpawn, PlayerPosition, SandField, SandFieldOpening, SpawnContext};
+use super::{
+    Map, MapLoadingDependency, MapObject, ObjectSpawn, PlayerPosition, SandField, SpawnContext, TerrainCutout,
+};
 
 struct Tower;
 
-const TOWER_HORIZONTAL_POSITION: Vec2 = Vec2::new(0.0, -72.0);
-const TOWER_TERRAIN_OPENING_HALF_WIDTH: f32 = 17.5;
+pub(super) fn register_systems(app: &mut App) {
+    app.add_observer(mark_terrain_cutout_scene_ready).add_systems(
+        PostUpdate,
+        spawn_sand_field_from_terrain_cutout.after(TransformSystems::Propagate),
+    );
+}
+
+#[derive(Component)]
+struct SpawnSandFieldFromTerrainCutout {
+    radius: f32,
+}
+
+#[derive(Component)]
+struct TerrainCutoutSceneReady;
 
 pub(super) fn build_map() -> Map {
-    let tower_horizontal_position = TOWER_HORIZONTAL_POSITION;
+    let tower_horizontal_position = Vec2::new(0.0, -72.0);
     let tower_base_height = SandField::calculate_height_at(tower_horizontal_position);
     let tower_base_position = Vec3::new(
         tower_horizontal_position.x,
@@ -20,8 +36,8 @@ pub(super) fn build_map() -> Map {
     let viewpoints = vec![
         PlayerPosition {
             label: "tower",
-            position: Vec3::new(8.857, 3.108, 17.065),
-            look_at: Vec3::new(8.680, 3.366, 16.115),
+            position: Vec3::new(79.662, 3.177, -2.069),
+            look_at: Vec3::new(78.831, 3.389, -2.585),
         },
         PlayerPosition {
             label: "dunes",
@@ -35,19 +51,15 @@ pub(super) fn build_map() -> Map {
         },
     ];
 
-    let moon_direction = Vec3::new(-0.7, 0.42, -0.7).normalize();
+    let moon_direction = Vec3::new(-0.859, 0.438, 0.265).normalize();
     let tower_transform = Transform::from_translation(tower_base_position);
-    let sand_field_radius = 300.0;
-    let tower_terrain_opening =
-        SandFieldOpening::create(TOWER_HORIZONTAL_POSITION, Vec2::splat(TOWER_TERRAIN_OPENING_HALF_WIDTH));
-    let sand_field = SandField::create(sand_field_radius).with_opening(tower_terrain_opening);
     let tower = Tower;
     let moon = Moon::create(moon_direction);
     Map {
         name: "intro",
         ambient: GlobalAmbientLight {
             color: Color::srgb(0.25, 0.34, 0.55),
-            brightness: 35.0,
+            brightness: 15.0,
             ..default()
         },
         clear_color: ClearColor(Color::srgb(0.004, 0.009, 0.025)),
@@ -55,9 +67,8 @@ pub(super) fn build_map() -> Map {
         viewpoints,
         enemies: Vec::new(),
         objects: vec![
-            ObjectSpawn::new(Transform::IDENTITY, sand_field),
             ObjectSpawn::new(tower_transform, tower),
-            ObjectSpawn::new(Transform::IDENTITY, moon),
+            ObjectSpawn::new(Transform::from_translation(tower_base_position), moon),
         ],
     }
 }
@@ -65,13 +76,126 @@ pub(super) fn build_map() -> Map {
 impl MapObject for Tower {
     fn spawn(&self, context: &mut SpawnContext, transform: Transform) {
         let tower_scene = context.asset_server.load("models/intro-tower.glb#Scene0");
+        let sand_field_radius = 300.0;
 
         context.commands.spawn((
             WorldAssetRoot(tower_scene),
             ColliderConstructorHierarchy::new(ColliderConstructor::TrimeshFromMesh),
             RigidBody::Static,
+            MapLoadingDependency,
+            SpawnSandFieldFromTerrainCutout {
+                radius: sand_field_radius,
+            },
             Name::new("Intro tower"),
             transform,
         ));
     }
+}
+
+fn mark_terrain_cutout_scene_ready(
+    world_instance_ready: On<WorldInstanceReady>,
+    tower_roots: Query<(), With<SpawnSandFieldFromTerrainCutout>>,
+    mut commands: Commands,
+) {
+    if tower_roots.get(world_instance_ready.entity).is_ok() {
+        commands
+            .entity(world_instance_ready.entity)
+            .insert(TerrainCutoutSceneReady);
+    }
+}
+
+#[derive(SystemParam)]
+struct SpawnSandFieldFromTerrainCutoutContext<'w, 's> {
+    commands: Commands<'w, 's>,
+    tower_roots: Query<'w, 's, (Entity, &'static SpawnSandFieldFromTerrainCutout), With<TerrainCutoutSceneReady>>,
+    descendants: Query<'w, 's, &'static Children>,
+    names: Query<'w, 's, &'static Name>,
+    global_transforms: Query<'w, 's, &'static GlobalTransform>,
+    asset_server: Res<'w, AssetServer>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    images: ResMut<'w, Assets<Image>>,
+    materials: ResMut<'w, Assets<StandardMaterial>>,
+}
+
+fn spawn_sand_field_from_terrain_cutout(mut context: SpawnSandFieldFromTerrainCutoutContext) {
+    let mut spawn_context = SpawnContext::new(
+        &mut context.commands,
+        &context.asset_server,
+        &mut context.meshes,
+        &mut context.images,
+        &mut context.materials,
+    );
+    for (tower_root, sand_field_spawn) in &context.tower_roots {
+        let terrain_cutout_vertices = collect_terrain_cutout_vertices(
+            tower_root,
+            &context.descendants,
+            &context.names,
+            &context.global_transforms,
+        );
+        let sand_field =
+            SandField::create(sand_field_spawn.radius).with_cutout(TerrainCutout::new(terrain_cutout_vertices));
+        sand_field.spawn(&mut spawn_context, Transform::IDENTITY);
+        spawn_context
+            .commands
+            .entity(tower_root)
+            .remove::<SpawnSandFieldFromTerrainCutout>()
+            .remove::<MapLoadingDependency>()
+            .remove::<TerrainCutoutSceneReady>();
+    }
+}
+
+fn collect_terrain_cutout_vertices(
+    tower_root: Entity,
+    descendants: &Query<&Children>,
+    names: &Query<&Name>,
+    global_transforms: &Query<&GlobalTransform>,
+) -> Vec<Vec2> {
+    let mut entities_to_visit = descendants
+        .get(tower_root)
+        .map_or_default(|child_entities| child_entities.iter().collect::<Vec<_>>());
+    let terrain_cutout_entity = loop {
+        let Some(entity) = entities_to_visit.pop() else {
+            panic!("intro tower scene should contain a Terrain cutout marker");
+        };
+        if let Ok(child_entities) = descendants.get(entity) {
+            entities_to_visit.extend(child_entities.iter());
+        }
+        if names
+            .get(entity)
+            .is_ok_and(|entity_name| entity_name.as_str() == "Terrain cutout")
+        {
+            break entity;
+        }
+    };
+    let terrain_cutout_children = descendants
+        .get(terrain_cutout_entity)
+        .map_or_default(|child_entities| child_entities.iter().collect::<Vec<_>>());
+    let required_vertex_count = 8;
+    let terrain_cutout_vertices = (0..required_vertex_count)
+        .map(|vertex_index| {
+            let required_vertex_name = format!("Terrain cutout vertex {vertex_index:02}");
+            let vertex_entity = terrain_cutout_children
+                .iter()
+                .copied()
+                .find(|child_entity| {
+                    names
+                        .get(*child_entity)
+                        .is_ok_and(|entity_name| entity_name.as_str() == required_vertex_name)
+                })
+                .unwrap_or_else(|| {
+                    panic!("intro tower scene should contain terrain cutout vertex {vertex_index:02}");
+                });
+            global_transforms
+                .get(vertex_entity)
+                .expect("terrain cutout vertex should have a global transform")
+                .translation()
+                .xz()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        terrain_cutout_children.len(),
+        required_vertex_count,
+        "intro tower scene should contain exactly eight direct children under the Terrain cutout marker"
+    );
+    terrain_cutout_vertices
 }

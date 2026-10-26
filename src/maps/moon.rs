@@ -25,13 +25,13 @@ impl Moon {
 }
 
 impl MapObject for Moon {
-    fn spawn(&self, context: &mut SpawnContext, _transform: Transform) {
+    fn spawn(&self, context: &mut SpawnContext, transform: Transform) {
         let moon_direction = self.direction.normalize();
-        let moon_distance = 300.0;
-        let moon_position = moon_direction * moon_distance;
+        let moon_distance = 600.0;
+        let moon_position = transform.translation + moon_direction * moon_distance;
         let moon_color = Color::srgb(0.72, 0.82, 1.0);
         let moon_emissive_luminance = 18.0;
-        let moon_radius = 6.0;
+        let moon_radius = 5.2;
         let moon_mesh = Sphere::new(moon_radius)
             .mesh()
             .ico(5)
@@ -46,9 +46,10 @@ impl MapObject for Moon {
             unlit: true,
             ..default()
         });
+        let moon_mesh = context.meshes.add(moon_mesh);
         let moonlight_color = Color::srgb(0.56, 0.68, 1.0);
         let moonlight_illuminance = 900.0;
-        let moonlight_transform = Transform::from_translation(moon_position).looking_at(Vec3::ZERO, Vec3::Y);
+        let moonlight_transform = Transform::from_translation(moon_position).looking_at(transform.translation, Vec3::Y);
 
         context.commands.spawn((
             DirectionalLight {
@@ -58,13 +59,15 @@ impl MapObject for Moon {
                 ..default()
             },
             moonlight_transform,
+            Name::new("Moonlight"),
         ));
         context.commands.spawn((
-            Mesh3d(context.meshes.add(moon_mesh)),
+            Mesh3d(moon_mesh),
             MeshMaterial3d(moon_material),
             NotShadowCaster,
             NotShadowReceiver,
             Transform::from_translation(moon_position),
+            Name::new("Moon"),
         ));
     }
 }

@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
 use crate::enemies::Enemy;
-use crate::maps::{self, ActiveViewpointIndex, Map, PlayerPosition};
+use crate::maps::{self, ActiveViewpointIndex, Map, MapLoadingDependency, PlayerPosition};
 use crate::player;
 use crate::player::Player;
 use crate::ragdoll::CharacterPhysicsEntities;
@@ -82,10 +82,11 @@ fn finish_asset_loading(
 
 fn finish_level_loading(
     world_assets: Query<(), (With<WorldAssetRoot>, Without<WorldAssetReady>)>,
+    pending_map_loading_dependencies: Query<(), With<MapLoadingDependency>>,
     mut next_state: ResMut<NextState<GameState>>,
     loading_started: Res<LoadingStarted>,
 ) {
-    if world_assets.is_empty() {
+    if world_assets.is_empty() && pending_map_loading_dependencies.is_empty() {
         let elapsed_seconds = loading_started.0.elapsed().as_secs_f32();
         info!("level is rendered in {elapsed_seconds:.2} seconds");
         next_state.set(GameState::Playing);
