@@ -7,13 +7,15 @@ use super::{MapObject, SpawnContext};
 
 pub struct SandField {
     radius: f32,
-    openings: Vec<SandFieldOpening>,
+    cutout: Option<TerrainCutout>,
 }
 
-pub struct SandFieldOpening {
-    center: Vec2,
-    half_size: Vec2,
+pub struct TerrainCutout {
+    vertices: Vec<Vec2>,
 }
+
+#[derive(Component)]
+pub struct SandFieldSurface;
 
 pub struct SandFieldGeometry {
     pub mesh: Mesh,
@@ -37,16 +39,20 @@ struct SandFieldGridVertexBuilder<'a> {
     ultraviolet_coordinates: &'a mut Vec<[f32; 2]>,
 }
 
+#[derive(Clone, Copy)]
+struct ClippedTerrainVertex {
+    position: Vec3,
+    ultraviolet_coordinates: Vec2,
+    original_index: Option<u32>,
+}
+
 impl SandField {
     pub fn create(radius: f32) -> Self {
-        Self {
-            radius,
-            openings: Vec::new(),
-        }
+        Self { radius, cutout: None }
     }
 
-    pub fn with_opening(mut self, opening: SandFieldOpening) -> Self {
-        self.openings.push(opening);
+    pub fn with_cutout(mut self, cutout: TerrainCutout) -> Self {
+        self.cutout = Some(cutout);
         self
     }
 
@@ -55,7 +61,7 @@ impl SandField {
     }
 
     pub fn generate_geometry(&self) -> SandFieldGeometry {
-        let sand_field_mesh_data = build_mesh_data(self.radius, &self.openings);
+        let sand_field_mesh_data = build_mesh_data(self.radius, self.cutout.as_ref());
         let collider_vertices = sand_field_mesh_data
             .positions
             .iter()
@@ -68,14 +74,35 @@ impl SandField {
     }
 }
 
-impl SandFieldOpening {
-    pub fn create(center: Vec2, half_size: Vec2) -> Self {
-        Self { center, half_size }
-    }
-
-    fn contains_position(&self, horizontal_position: Vec2) -> bool {
-        let position_offset = (horizontal_position - self.center).abs();
-        position_offset.x < self.half_size.x && position_offset.y < self.half_size.y
+impl TerrainCutout {
+    pub fn new(vertices: Vec<Vec2>) -> Self {
+        let minimum_convex_polygon_vertex_count = 3;
+        let has_at_least_three_vertices = vertices.len() >= minimum_convex_polygon_vertex_count;
+        let doubled_signed_area = if has_at_least_three_vertices {
+            (0..vertices.len())
+                .map(|vertex_index| {
+                    let next_vertex_index = (vertex_index + 1) % vertices.len();
+                    vertices[vertex_index].perp_dot(vertices[next_vertex_index])
+                })
+                .sum::<f32>()
+        } else {
+            0.0
+        };
+        let polygon_winding = doubled_signed_area.signum();
+        let every_turn_matches_polygon_winding = has_at_least_three_vertices
+            && doubled_signed_area != 0.0
+            && (0..vertices.len()).all(|vertex_index| {
+                let next_vertex_index = (vertex_index + 1) % vertices.len();
+                let following_vertex_index = (vertex_index + 2) % vertices.len();
+                let turn = (vertices[next_vertex_index] - vertices[vertex_index])
+                    .perp_dot(vertices[following_vertex_index] - vertices[next_vertex_index]);
+                turn * polygon_winding > 0.0
+            });
+        assert!(
+            every_turn_matches_polygon_winding,
+            "terrain cutout should be a convex polygon with at least three vertices"
+        );
+        Self { vertices }
     }
 }
 
@@ -94,12 +121,13 @@ impl MapObject for SandField {
             MeshMaterial3d(sand_material),
             RigidBody::Static,
             collider,
+            SandFieldSurface,
             transform,
         ));
     }
 }
 
-fn build_mesh_data(radius: f32, openings: &[SandFieldOpening]) -> SandFieldMeshData {
+fn build_mesh_data(radius: f32, cutout: Option<&TerrainCutout>) -> SandFieldMeshData {
     let terrain_vertex_spacing = 2.0_f32;
     let grid_radius = (radius / terrain_vertex_spacing).ceil() as i32;
     let grid_vertex_width = usize::try_from(grid_radius * 2 + 1).expect("terrain grid width should be positive");
@@ -146,7 +174,14 @@ fn build_mesh_data(radius: f32, openings: &[SandFieldOpening]) -> SandFieldMeshD
         }
     }
 
-    remove_triangles_in_openings(&positions, &mut triangle_indices, openings);
+    if let Some(cutout) = cutout {
+        clip_terrain_triangles(
+            &mut positions,
+            &mut ultraviolet_coordinates,
+            &mut triangle_indices,
+            cutout,
+        );
+    }
     let normals = calculate_vertex_normals(&positions, &triangle_indices);
     SandFieldMeshData {
         positions,
@@ -186,28 +221,233 @@ impl SandFieldGridVertexBuilder<'_> {
     }
 }
 
-fn remove_triangles_in_openings(
-    positions: &[[f32; 3]],
+fn clip_terrain_triangles(
+    positions: &mut Vec<[f32; 3]>,
+    ultraviolet_coordinates: &mut Vec<[f32; 2]>,
     triangle_indices: &mut Vec<u32>,
-    openings: &[SandFieldOpening],
+    cutout: &TerrainCutout,
 ) {
-    let remaining_triangle_indices = triangle_indices
-        .as_chunks::<3>()
-        .0
+    let cutout_winding = calculate_cutout_winding(&cutout.vertices);
+    let original_triangle_indices = std::mem::take(triangle_indices);
+    let mut clipped_triangle_indices = Vec::new();
+
+    for triangle_vertex_indices in original_triangle_indices.as_chunks::<3>().0 {
+        let terrain_triangle = triangle_vertex_indices.map(|vertex_index| {
+            let vertex_array_index = usize::try_from(vertex_index).expect("terrain index should fit into usize");
+            ClippedTerrainVertex {
+                position: Vec3::from_array(positions[vertex_array_index]),
+                ultraviolet_coordinates: Vec2::from_array(ultraviolet_coordinates[vertex_array_index]),
+                original_index: Some(vertex_index),
+            }
+        });
+
+        if is_triangle_outside_cutout(&terrain_triangle, &cutout.vertices, cutout_winding) {
+            clipped_triangle_indices.extend(triangle_vertex_indices);
+        } else if !is_triangle_inside_cutout(&terrain_triangle, &cutout.vertices, cutout_winding) {
+            let mut remaining_inside_polygon = terrain_triangle.to_vec();
+            for cutout_edge_index in 0..cutout.vertices.len() {
+                let next_cutout_edge_index = (cutout_edge_index + 1) % cutout.vertices.len();
+                let cutout_edge_start = cutout.vertices[cutout_edge_index];
+                let cutout_edge_end = cutout.vertices[next_cutout_edge_index];
+                let outside_fragment = clip_terrain_polygon_to_edge(
+                    &remaining_inside_polygon,
+                    cutout_edge_start,
+                    cutout_edge_end,
+                    cutout_winding,
+                    false,
+                );
+                append_clipped_terrain_polygon(
+                    &outside_fragment,
+                    positions,
+                    ultraviolet_coordinates,
+                    &mut clipped_triangle_indices,
+                );
+                remaining_inside_polygon = clip_terrain_polygon_to_edge(
+                    &remaining_inside_polygon,
+                    cutout_edge_start,
+                    cutout_edge_end,
+                    cutout_winding,
+                    true,
+                );
+                if remaining_inside_polygon.len() < 3 {
+                    break;
+                }
+            }
+        }
+    }
+
+    *triangle_indices = clipped_triangle_indices;
+}
+
+fn calculate_cutout_winding(vertices: &[Vec2]) -> f32 {
+    let mut doubled_signed_area = 0.0;
+    for vertex_index in 0..vertices.len() {
+        let next_vertex_index = (vertex_index + 1) % vertices.len();
+        doubled_signed_area += vertices[vertex_index].perp_dot(vertices[next_vertex_index]);
+    }
+    doubled_signed_area.signum()
+}
+
+fn is_triangle_outside_cutout(
+    terrain_triangle: &[ClippedTerrainVertex; 3],
+    cutout_vertices: &[Vec2],
+    cutout_winding: f32,
+) -> bool {
+    for cutout_edge_index in 0..cutout_vertices.len() {
+        let next_cutout_edge_index = (cutout_edge_index + 1) % cutout_vertices.len();
+        let cutout_edge_start = cutout_vertices[cutout_edge_index];
+        let cutout_edge_end = cutout_vertices[next_cutout_edge_index];
+        if terrain_triangle.iter().all(|terrain_vertex| {
+            calculate_cutout_edge_distance(
+                terrain_vertex.position.xz(),
+                cutout_edge_start,
+                cutout_edge_end,
+                cutout_winding,
+            ) <= 0.0
+        }) {
+            return true;
+        }
+    }
+    false
+}
+
+fn is_triangle_inside_cutout(
+    terrain_triangle: &[ClippedTerrainVertex; 3],
+    cutout_vertices: &[Vec2],
+    cutout_winding: f32,
+) -> bool {
+    cutout_vertices
         .iter()
-        .filter(|triangle_indices| {
-            openings.iter().all(|opening| {
-                triangle_indices.iter().all(|triangle_index| {
-                    let vertex_index = usize::try_from(*triangle_index).expect("terrain index should fit into usize");
-                    let vertex = Vec3::from_array(positions[vertex_index]);
-                    !opening.contains_position(vertex.xz())
-                })
+        .enumerate()
+        .all(|(cutout_edge_index, cutout_edge_start)| {
+            let next_cutout_edge_index = (cutout_edge_index + 1) % cutout_vertices.len();
+            let cutout_edge_end = cutout_vertices[next_cutout_edge_index];
+            terrain_triangle.iter().all(|terrain_vertex| {
+                calculate_cutout_edge_distance(
+                    terrain_vertex.position.xz(),
+                    *cutout_edge_start,
+                    cutout_edge_end,
+                    cutout_winding,
+                ) >= 0.0
             })
         })
-        .flatten()
-        .copied()
-        .collect();
-    *triangle_indices = remaining_triangle_indices;
+}
+
+fn calculate_cutout_edge_distance(
+    horizontal_position: Vec2,
+    cutout_edge_start: Vec2,
+    cutout_edge_end: Vec2,
+    cutout_winding: f32,
+) -> f32 {
+    (cutout_edge_end - cutout_edge_start).perp_dot(horizontal_position - cutout_edge_start) * cutout_winding
+}
+
+fn clip_terrain_polygon_to_edge(
+    terrain_polygon: &[ClippedTerrainVertex],
+    cutout_edge_start: Vec2,
+    cutout_edge_end: Vec2,
+    cutout_winding: f32,
+    retain_inside: bool,
+) -> Vec<ClippedTerrainVertex> {
+    let mut clipped_polygon = Vec::with_capacity(terrain_polygon.len() + 1);
+    let mut previous_vertex = *terrain_polygon
+        .last()
+        .expect("terrain polygon should contain vertices before clipping");
+    let mut previous_distance = calculate_cutout_edge_distance(
+        previous_vertex.position.xz(),
+        cutout_edge_start,
+        cutout_edge_end,
+        cutout_winding,
+    );
+    let mut previous_vertex_is_inside = previous_distance >= 0.0;
+
+    for current_vertex in terrain_polygon {
+        let current_distance = calculate_cutout_edge_distance(
+            current_vertex.position.xz(),
+            cutout_edge_start,
+            cutout_edge_end,
+            cutout_winding,
+        );
+        let current_vertex_is_inside = current_distance >= 0.0;
+        let previous_vertex_is_retained = previous_vertex_is_inside == retain_inside;
+        let current_vertex_is_retained = current_vertex_is_inside == retain_inside;
+
+        if current_vertex_is_retained {
+            if !previous_vertex_is_retained {
+                clipped_polygon.push(calculate_terrain_edge_intersection(
+                    previous_vertex,
+                    *current_vertex,
+                    previous_distance,
+                    current_distance,
+                ));
+            }
+            clipped_polygon.push(*current_vertex);
+        } else if previous_vertex_is_retained {
+            clipped_polygon.push(calculate_terrain_edge_intersection(
+                previous_vertex,
+                *current_vertex,
+                previous_distance,
+                current_distance,
+            ));
+        }
+
+        previous_vertex = *current_vertex;
+        previous_distance = current_distance;
+        previous_vertex_is_inside = current_vertex_is_inside;
+    }
+
+    clipped_polygon
+}
+
+fn calculate_terrain_edge_intersection(
+    previous_vertex: ClippedTerrainVertex,
+    current_vertex: ClippedTerrainVertex,
+    previous_distance: f32,
+    current_distance: f32,
+) -> ClippedTerrainVertex {
+    let interpolation_factor = previous_distance / (previous_distance - current_distance);
+    ClippedTerrainVertex {
+        position: previous_vertex
+            .position
+            .lerp(current_vertex.position, interpolation_factor),
+        ultraviolet_coordinates: previous_vertex
+            .ultraviolet_coordinates
+            .lerp(current_vertex.ultraviolet_coordinates, interpolation_factor),
+        original_index: None,
+    }
+}
+
+fn append_clipped_terrain_polygon(
+    terrain_polygon: &[ClippedTerrainVertex],
+    positions: &mut Vec<[f32; 3]>,
+    ultraviolet_coordinates: &mut Vec<[f32; 2]>,
+    triangle_indices: &mut Vec<u32>,
+) {
+    if terrain_polygon.len() < 3 {
+        return;
+    }
+
+    let terrain_polygon_vertex_indices = terrain_polygon
+        .iter()
+        .map(|terrain_vertex| {
+            if let Some(original_index) = terrain_vertex.original_index {
+                original_index
+            } else {
+                let vertex_index =
+                    u32::try_from(positions.len()).expect("terrain mesh vertex count should fit into u32 indices");
+                positions.push(terrain_vertex.position.to_array());
+                ultraviolet_coordinates.push(terrain_vertex.ultraviolet_coordinates.to_array());
+                vertex_index
+            }
+        })
+        .collect::<Vec<_>>();
+    for polygon_vertex_index in 1..terrain_polygon_vertex_indices.len() - 1 {
+        triangle_indices.extend([
+            terrain_polygon_vertex_indices[0],
+            terrain_polygon_vertex_indices[polygon_vertex_index],
+            terrain_polygon_vertex_indices[polygon_vertex_index + 1],
+        ]);
+    }
 }
 
 fn terrain_height(horizontal_position: Vec2) -> f32 {

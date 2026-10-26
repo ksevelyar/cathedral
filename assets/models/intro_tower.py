@@ -295,6 +295,23 @@ def create_tower_shell(tower_collection, concrete_material):
     return tower_shell
 
 
+def create_terrain_cutout_markers(tower_collection):
+    terrain_cutout = bpy.data.objects.new("Terrain cutout", None)
+    tower_collection.objects.link(terrain_cutout)
+    terrain_cutout.empty_display_type = "PLAIN_AXES"
+    terrain_cutout.empty_display_size = 0.25
+    terrain_cutout.rotation_euler[2] = math.pi
+    for vertex_number, profile_vertex in enumerate(
+        build_beveled_square_profile(TOWER_BASE_WIDTH, TOWER_BASE_CORNER_CUT, 0.0)
+    ):
+        terrain_cutout_vertex = bpy.data.objects.new(f"Terrain cutout vertex {vertex_number:02d}", None)
+        tower_collection.objects.link(terrain_cutout_vertex)
+        terrain_cutout_vertex.empty_display_type = "PLAIN_AXES"
+        terrain_cutout_vertex.empty_display_size = 0.15
+        terrain_cutout_vertex.parent = terrain_cutout
+        terrain_cutout_vertex.location = profile_vertex
+
+
 def calculate_entrance_wall_normal():
     tower_taper_per_height = (TOWER_BASE_WIDTH - TOWER_TOP_WIDTH) * 0.5 / TOWER_HEIGHT
     return Vector((0.0, -1.0, tower_taper_per_height)).normalized()
@@ -609,6 +626,7 @@ def main():
     light_material = create_light_material()
     metal_material = create_metal_material()
     tower_shell = create_tower_shell(tower_collection, concrete_material)
+    create_terrain_cutout_markers(tower_collection)
     entrance_opening = create_entrance_opening(construction_collection)
     add_opening_modifier(tower_shell, "Tower entrance opening", entrance_opening)
     create_stair_core(stair_collection, construction_collection, concrete_material)

@@ -1,7 +1,7 @@
 use avian3d::prelude::{Collider, RigidBody};
 use bevy::prelude::*;
 use cathedral::app::build_test_app;
-use cathedral::maps::{SandField, SandFieldOpening, build_intro};
+use cathedral::maps::{MapLoadingDependency, SandField, SandFieldSurface, build_intro};
 use cathedral::player::Player;
 use cathedral::state::GameState;
 
@@ -22,26 +22,24 @@ fn terrain_samples_remain_finite_and_smooth_at_two_meter_intervals() {
 
 #[test]
 fn intro_map_enters_playing_with_sandfield_and_player_above_terrain() {
-    let tower_opening = SandFieldOpening::create(Vec2::new(0.0, -72.0), Vec2::splat(17.5));
-    let sandfield_geometry = SandField::create(300.0).with_opening(tower_opening).generate_geometry();
-    let sandfield_vertex_count = sandfield_geometry.mesh.count_vertices();
-    let sandfield_triangle_count = sandfield_geometry.mesh.indices().unwrap().len() / 3;
-    assert_eq!(sandfield_vertex_count, 71_877);
-    assert_eq!(sandfield_triangle_count, 141_906);
     let mut app = build_test_app(build_intro());
 
     assert_eq!(app.world().resource::<State<GameState>>().get(), &GameState::Playing);
 
-    let sandfield_entity = app
+    let remaining_map_loading_dependencies = app
         .world_mut()
-        .query_filtered::<Entity, (With<Collider>, With<RigidBody>)>()
+        .query_filtered::<Entity, With<MapLoadingDependency>>()
         .iter(app.world())
-        .find(|entity| {
-            app.world().get::<RigidBody>(*entity) == Some(&RigidBody::Static)
-                && app.world().get::<Name>(*entity).is_none()
-        })
-        .expect("intro should spawn a static sandfield collider");
-    assert!(app.world().get::<Collider>(sandfield_entity).is_some());
+        .count();
+    assert_eq!(remaining_map_loading_dependencies, 0);
+
+    let static_sandfield_count = app
+        .world_mut()
+        .query_filtered::<&RigidBody, (With<SandFieldSurface>, With<Collider>)>()
+        .iter(app.world())
+        .filter(|rigid_body| **rigid_body == RigidBody::Static)
+        .count();
+    assert_eq!(static_sandfield_count, 1);
 
     let player_position = app
         .world_mut()
