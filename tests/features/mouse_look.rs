@@ -2,9 +2,9 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseMotion;
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::maps::{Map, MapBuilder};
-use cathedral::player::{CameraState, Player, PlayerCamera};
+use terminal::app::build_test_app;
+use terminal::maps::{Map, MapBuilder};
+use terminal::player::{CameraState, Player, PlayerCamera};
 
 fn create_test_app() -> App {
     build_test_app(mouse_look_map())

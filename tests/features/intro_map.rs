@@ -1,9 +1,9 @@
 use avian3d::prelude::{Collider, RigidBody};
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::maps::{MapLoadingDependency, SandField, SandFieldSurface, build_intro};
-use cathedral::player::Player;
-use cathedral::state::GameState;
+use terminal::app::build_test_app;
+use terminal::maps::{MapLoadingDependency, SandField, SandFieldSurface, build_intro};
+use terminal::player::Player;
+use terminal::state::GameState;
 
 const ENTRANCE_ALIGNMENT_TOLERANCE: f32 = 0.01;
 const TOWER_WALL_THICKNESS: f32 = 0.5;

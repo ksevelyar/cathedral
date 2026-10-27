@@ -1,7 +1,7 @@
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::maps::build_map01;
 use std::time::Duration;
+use terminal::app::build_test_app;
+use terminal::maps::build_map01;
 
 use super::support::{FIXED_TIMESTEP_SECONDS, assert_settles, find_named_body, shoot_and_assert_kick_speed};
 

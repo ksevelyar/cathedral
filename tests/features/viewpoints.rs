@@ -1,10 +1,10 @@
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::maps::{ActiveViewpointIndex, MapBuilder, PlayerPosition};
-use cathedral::player::{CameraState, Player, PlayerCamera, compute_look_angles};
-use cathedral::state::GameState;
+use terminal::app::build_test_app;
+use terminal::maps::{ActiveViewpointIndex, MapBuilder, PlayerPosition};
+use terminal::player::{CameraState, Player, PlayerCamera, compute_look_angles};
+use terminal::state::GameState;
 
 fn create_test_app(map_name: &'static str) -> App {
     let viewpoints = vec![

@@ -8,17 +8,17 @@ fn get_current_game_state(app: &mut App) -> GameState {
     app.world().resource::<State<GameState>>().get().clone()
 }
 use bevy::world_serialization::WorldAssetRoot;
-use cathedral::app::build_test_app;
-use cathedral::enemies::{AnimationState, Dying, Enemy, EnemyActivity, EnemyBehavior, EnemyKind};
-use cathedral::health::Health;
-use cathedral::maps::{Map, MapBuilder};
-use cathedral::player::Player;
-use cathedral::player::{PlayerCamera, PlayerDead};
-use cathedral::ragdoll::{BoneMap, OwnedByCharacter, RagdollBodyPart, list_ragdoll_limbs};
-use cathedral::shooting::Weapon;
-use cathedral::state::GameState;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
+use terminal::app::build_test_app;
+use terminal::enemies::{AnimationState, Dying, Enemy, EnemyActivity, EnemyBehavior, EnemyKind};
+use terminal::health::Health;
+use terminal::maps::{Map, MapBuilder};
+use terminal::player::Player;
+use terminal::player::{PlayerCamera, PlayerDead};
+use terminal::ragdoll::{BoneMap, OwnedByCharacter, RagdollBodyPart, list_ragdoll_limbs};
+use terminal::shooting::Weapon;
+use terminal::state::GameState;
 
 fn assert_enemy_ragdoll_is_inert(app: &mut App, enemy: Entity) {
     let minimum_ragdoll_bodies = 19;

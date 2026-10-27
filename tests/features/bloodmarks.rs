@@ -1,14 +1,14 @@
 use avian3d::prelude::*;
 use bevy::mesh::{Mesh, Mesh3d, VertexAttributeValues};
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::enemies::{Enemy, EnemyBehavior, EnemyKind};
-use cathedral::maps::{Map, MapBuilder};
-use cathedral::player::{Player, PlayerCamera};
-use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
-use cathedral::shooting::{RangedWeapon, Weapon, WeaponFired};
-use cathedral::state::GameState;
 use std::time::Duration;
+use terminal::app::build_test_app;
+use terminal::enemies::{Enemy, EnemyBehavior, EnemyKind};
+use terminal::maps::{Map, MapBuilder};
+use terminal::player::{Player, PlayerCamera};
+use terminal::ragdoll::{OwnedByCharacter, RagdollBodyPart};
+use terminal::shooting::{RangedWeapon, Weapon, WeaponFired};
+use terminal::state::GameState;
 
 use super::support;
 

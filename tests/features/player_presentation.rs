@@ -4,10 +4,10 @@ use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::input::mouse::MouseButtonInput;
 use bevy::light::NotShadowReceiver;
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::maps::{Map, MapBuilder};
-use cathedral::player::{Player, PlayerCamera};
-use cathedral::shooting::{Gun, ShadowGun, Weapon, WeaponFired};
+use terminal::app::build_test_app;
+use terminal::maps::{Map, MapBuilder};
+use terminal::player::{Player, PlayerCamera};
+use terminal::shooting::{Gun, ShadowGun, Weapon, WeaponFired};
 
 fn build_map() -> Map {
     let floor_size = Vec3::new(60.0, 0.1, 60.0);

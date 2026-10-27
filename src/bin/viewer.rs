@@ -1,3 +1,3 @@
 fn main() {
-    cathedral::viewer::run();
+    terminal::viewer::run();
 }

@@ -1,9 +1,9 @@
-use cathedral::app::{build_screenshot_app, fetch_configuration, request_screenshot, wait_screenshot_capture};
-use cathedral::enemies::AnimationState;
-use cathedral::enemies::{Dying, EnemyActivity, EnemyBehavior, EnemyKind};
-use cathedral::maps::{Map, MapBuilder, build_intro, build_map01};
-use cathedral::player::{Player, PlayerCamera, compute_look_angles};
-use cathedral::ragdoll::{OwnedByCharacter, RagdollBodyPart};
+use terminal::app::{build_screenshot_app, fetch_configuration, request_screenshot, wait_screenshot_capture};
+use terminal::enemies::AnimationState;
+use terminal::enemies::{Dying, EnemyActivity, EnemyBehavior, EnemyKind};
+use terminal::maps::{Map, MapBuilder, build_intro, build_map01};
+use terminal::player::{Player, PlayerCamera, compute_look_angles};
+use terminal::ragdoll::{OwnedByCharacter, RagdollBodyPart};
 
 use avian3d::prelude::{Position, RigidBodyDisabled};
 use bevy::input::ButtonState;
@@ -113,7 +113,7 @@ fn main() {
 
 fn run_regular_screenshot(
     map: Map,
-    configuration: cathedral::app::Configuration,
+    configuration: terminal::app::Configuration,
     render_width: u32,
     render_height: u32,
     screenshot_name: &'static str,
@@ -130,7 +130,7 @@ fn run_regular_screenshot(
     wait_screenshot_capture(&mut app);
 }
 
-fn run_gunners_ragdoll_screenshot(configuration: cathedral::app::Configuration) {
+fn run_gunners_ragdoll_screenshot(configuration: terminal::app::Configuration) {
     let mut app = build_screenshot_app(
         build_gunners_ragdoll_map(),
         configuration,

@@ -73,7 +73,7 @@ pub fn run() {
         })
         .add_plugins(DefaultPlugins.set(WindowPlugin {
             primary_window: Some(Window {
-                title: "Cathedral viewer".to_owned(),
+                title: "Terminal viewer".to_owned(),
                 ..default()
             }),
             ..default()

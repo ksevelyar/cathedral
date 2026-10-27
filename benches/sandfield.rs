@@ -1,7 +1,7 @@
-use cathedral::maps::SandField;
 use criterion::{Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 use std::time::Duration;
+use terminal::maps::SandField;
 
 fn benchmark_sand_field_generation(criterion: &mut Criterion) {
     let sand_field_measurement_duration = Duration::from_secs(10);

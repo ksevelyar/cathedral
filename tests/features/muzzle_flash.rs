@@ -1,10 +1,10 @@
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::enemies::{Enemy, EnemyBehavior, EnemyKind};
-use cathedral::maps::{Map, MapBuilder};
-use cathedral::shooting::{Gun, MUZZLE_FLASH_LIGHT_INTENSITY_BOUNDS, MUZZLE_FLASH_LIGHT_RANGE_BOUNDS, MuzzleFlash};
+use terminal::app::build_test_app;
+use terminal::enemies::{Enemy, EnemyBehavior, EnemyKind};
+use terminal::maps::{Map, MapBuilder};
+use terminal::shooting::{Gun, MUZZLE_FLASH_LIGHT_INTENSITY_BOUNDS, MUZZLE_FLASH_LIGHT_RANGE_BOUNDS, MuzzleFlash};
 
 const FLOOR_SIZE: Vec3 = Vec3::new(60.0, 0.1, 60.0);
 

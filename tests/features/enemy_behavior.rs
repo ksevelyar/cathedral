@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
-use cathedral::app::build_test_app;
-use cathedral::enemies::{AnimationState, Enemy, EnemyActivity, EnemyBehavior, EnemyKind};
-use cathedral::health::{CharacterDamaged, Health};
-use cathedral::maps::{Map, MapBuilder};
-use cathedral::player::Player;
-use cathedral::shooting::{RangedWeapon, Weapon, WeaponFired};
-use cathedral::state::GameState;
 use std::time::Duration;
+use terminal::app::build_test_app;
+use terminal::enemies::{AnimationState, Enemy, EnemyActivity, EnemyBehavior, EnemyKind};
+use terminal::health::{CharacterDamaged, Health};
+use terminal::maps::{Map, MapBuilder};
+use terminal::player::Player;
+use terminal::shooting::{RangedWeapon, Weapon, WeaponFired};
+use terminal::state::GameState;
 
 use super::support::FIXED_TIMESTEP_SECONDS;
 

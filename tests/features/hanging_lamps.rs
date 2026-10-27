@@ -1,8 +1,8 @@
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::maps::build_map01;
 use std::time::Duration;
+use terminal::app::build_test_app;
+use terminal::maps::build_map01;
 
 use super::support;
 use super::support::{FIXED_TIMESTEP_SECONDS, find_named_body, shoot_entity};

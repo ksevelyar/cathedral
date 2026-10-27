@@ -4,9 +4,9 @@ use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
-use cathedral::player::Player;
 use std::collections::{HashSet, VecDeque};
 use std::time::Duration;
+use terminal::player::Player;
 
 pub const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
 
@@ -28,11 +28,11 @@ pub fn aim_at_entity(app: &mut App, target: Entity) {
         .query_filtered::<&mut Transform, With<Player>>()
         .single_mut(app.world_mut())
         .expect("one player should spawn");
-    let (yaw, pitch) = cathedral::player::compute_look_angles(player_transform.translation, target_position);
+    let (yaw, pitch) = terminal::player::compute_look_angles(player_transform.translation, target_position);
     player_transform.rotation = Quat::from_euler(EulerRot::YXZ, yaw, 0.0, 0.0);
     let mut camera_transform = app
         .world_mut()
-        .query_filtered::<&mut Transform, With<cathedral::player::PlayerCamera>>()
+        .query_filtered::<&mut Transform, With<terminal::player::PlayerCamera>>()
         .single_mut(app.world_mut())
         .expect("one player camera should spawn");
     camera_transform.rotation = Quat::from_euler(EulerRot::YXZ, 0.0, pitch, 0.0);
@@ -114,7 +114,7 @@ pub fn shoot_and_assert_kick_speed(app: &mut App, target: Entity, minimum_kick_s
         let connected_body_kicks: Vec<_> = find_joint_connected_bodies(app, target)
             .into_iter()
             .filter_map(|connected_body| {
-                let body_part = app.world().get::<cathedral::ragdoll::RagdollBodyPart>(connected_body)?;
+                let body_part = app.world().get::<terminal::ragdoll::RagdollBodyPart>(connected_body)?;
                 let velocity = app.world().get::<LinearVelocity>(connected_body)?;
                 Some((*body_part, velocity.length()))
             })

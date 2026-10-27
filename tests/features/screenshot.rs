@@ -5,11 +5,11 @@ use std::process;
 
 use avian3d::prelude::*;
 use bevy::prelude::*;
-use cathedral::app::{Configuration, build_screenshot_app, request_screenshot, wait_screenshot_capture};
-use cathedral::enemies::{EnemyBehavior, EnemyKind};
-use cathedral::maps::{Map, MapBuilder, build_map01};
-use cathedral::player::PlayerCamera;
-use cathedral::shooting::Gun;
+use terminal::app::{Configuration, build_screenshot_app, request_screenshot, wait_screenshot_capture};
+use terminal::enemies::{EnemyBehavior, EnemyKind};
+use terminal::maps::{Map, MapBuilder, build_map01};
+use terminal::player::PlayerCamera;
+use terminal::shooting::Gun;
 
 const RENDER_WIDTH: u32 = 64;
 const RENDER_HEIGHT: u32 = 64;
@@ -109,7 +109,7 @@ fn screenshot_app_captures_map01_frame() {
 fn screenshot_app_captures_the_intro_dunes_viewpoint_by_name() {
     let screenshot_dir = create_temp_screenshot_dir("intro-dunes");
     let mut app = build_screenshot_app(
-        cathedral::maps::build_intro(),
+        terminal::maps::build_intro(),
         Configuration {
             viewpoint: Some("dunes".to_owned()),
             ..default()
@@ -236,8 +236,7 @@ fn screenshot_app_with_colliders_hides_weapons_and_enables_gizmos() {
 }
 
 fn create_temp_screenshot_dir(test_name: &str) -> PathBuf {
-    let screenshot_dir =
-        std::env::temp_dir().join(format!("cathedral-screenshot-test-{}-{}", process::id(), test_name));
+    let screenshot_dir = std::env::temp_dir().join(format!("terminal-screenshot-test-{}-{}", process::id(), test_name));
     fs::remove_dir_all(&screenshot_dir).ok();
     fs::create_dir_all(&screenshot_dir).unwrap();
     screenshot_dir

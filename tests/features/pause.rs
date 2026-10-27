@@ -1,10 +1,10 @@
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::maps::{Map, MapBuilder};
-use cathedral::state::GameState;
-use cathedral::ui::setup_pause_menu;
+use terminal::app::build_test_app;
+use terminal::maps::{Map, MapBuilder};
+use terminal::state::GameState;
+use terminal::ui::setup_pause_menu;
 
 fn create_test_app() -> App {
     let mut app = build_test_app(pause_map());

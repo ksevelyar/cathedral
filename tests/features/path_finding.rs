@@ -1,11 +1,11 @@
 use bevy::input::ButtonState;
 use bevy::input::keyboard::{Key, KeyboardInput, NativeKey};
 use bevy::prelude::*;
-use cathedral::app::build_test_app;
-use cathedral::enemies::{AnimationState, Enemy, EnemyActivity, EnemyBehavior, EnemyKind};
-use cathedral::maps::{Map, MapBuilder};
-use cathedral::player::{CameraState, Player};
 use std::time::Duration;
+use terminal::app::build_test_app;
+use terminal::enemies::{AnimationState, Enemy, EnemyActivity, EnemyBehavior, EnemyKind};
+use terminal::maps::{Map, MapBuilder};
+use terminal::player::{CameraState, Player};
 
 const FIXED_TIMESTEP_SECONDS: f64 = 1.0 / 64.0;
 const PATH_FINDING_UPDATES: usize = 2048;

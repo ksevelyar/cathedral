@@ -1,14 +1,14 @@
 [package]
-name = "cathedral"
+name = "terminal"
 version = "0.8.0"
 edition = "2024"
-default-run = "cathedral"
+default-run = "terminal"
 
 [lib]
 test = false
 
 [[bin]]
-name = "cathedral"
+name = "terminal"
 path = "src/main.rs"
 test = false
 
