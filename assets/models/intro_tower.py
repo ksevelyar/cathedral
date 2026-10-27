@@ -36,6 +36,7 @@ LIGHT_SPHERE_RADIUS = 0.55
 LIGHT_ROD_RADIUS = 0.075
 LIGHT_ROD_LENGTH = 1.8
 LIGHT_ENERGY = 150.0
+LOWER_ENTRANCE_HEIGHT = 4.0
 
 
 def clear_scene():
@@ -97,10 +98,11 @@ def build_tower_shell_mesh():
 def build_stair_clipping_volume_mesh():
     inner_base_width = TOWER_BASE_WIDTH - WALL_THICKNESS * 2.0
     inner_top_width = TOWER_TOP_WIDTH - WALL_THICKNESS * 2.0
-    inner_base_corner_cut = TOWER_BASE_CORNER_CUT * inner_base_width / TOWER_BASE_WIDTH
+    inner_base_corner_cut = TOWER_BASE_CORNER_CUT - WALL_THICKNESS * (2.0 - math.sqrt(2.0))
     inner_top_corner_cut = TOWER_BASE_CORNER_CUT * inner_top_width / TOWER_BASE_WIDTH
+    stair_clipping_volume_bottom_height = -STAIRCASE_TOTAL_HEIGHT - STAIR_SLAB_THICKNESS * 2.0
     profiles = [
-        build_beveled_square_profile(inner_base_width, inner_base_corner_cut, -STAIRCASE_TOTAL_HEIGHT),
+        build_beveled_square_profile(inner_base_width, inner_base_corner_cut, stair_clipping_volume_bottom_height),
         build_beveled_square_profile(inner_base_width, inner_base_corner_cut, 0.0),
         build_beveled_square_profile(inner_top_width, inner_top_corner_cut, TOWER_HEIGHT),
     ]
@@ -135,6 +137,16 @@ def clip_stair_geometry_to_tower_walls(stair_collection, construction_collection
         clipping_modifier.operation = "INTERSECT"
         clipping_modifier.solver = "EXACT"
         clipping_modifier.object = clipping_volume
+        landing_extension_name = stair_object.get("lower_entrance_landing_extension")
+        if landing_extension_name is not None:
+            landing_extension = construction_collection.objects[landing_extension_name]
+            landing_extension_modifier = stair_object.modifiers.new(
+                "Join bottom landing to beveled-face passage",
+                "BOOLEAN",
+            )
+            landing_extension_modifier.operation = "UNION"
+            landing_extension_modifier.solver = "EXACT"
+            landing_extension_modifier.object = landing_extension
 
 
 def append_box_mesh_geometry(vertices, faces, minimum_corner, maximum_corner):
@@ -406,8 +418,8 @@ def create_corner_parapet(stair_collection, unit_cube_mesh, concrete_material, l
     return corner_parapet
 
 
-def create_corner_landing(stair_collection, unit_cube_mesh, concrete_material, landing_number, landing_height, landing_x_direction, landing_y_direction):
-    tower_inner_half_width = calculate_tower_inner_half_width(landing_height) - WALL_CLEARANCE
+def create_corner_landing(stair_collection, unit_cube_mesh, concrete_material, landing_number, landing_height, landing_x_direction, landing_y_direction, landing_wall_clearance):
+    tower_inner_half_width = calculate_tower_inner_half_width(landing_height) - landing_wall_clearance
     well_half_width = STAIR_WELL_WIDTH * 0.5
     landing_span = tower_inner_half_width - well_half_width
     corner_landing = create_box_object(
@@ -424,6 +436,154 @@ def create_corner_landing(stair_collection, unit_cube_mesh, concrete_material, l
     )
     corner_landing["architectural_role"] = "stair_corner_landing"
     return corner_landing
+
+
+def calculate_lower_entrance_beveled_edge_endpoints(landing_height, landing_x_direction, landing_y_direction):
+    tower_height_at_landing = max(landing_height, 0.0)
+    tower_width_at_landing = TOWER_BASE_WIDTH + (TOWER_TOP_WIDTH - TOWER_BASE_WIDTH) * tower_height_at_landing / TOWER_HEIGHT
+    tower_half_width_at_landing = tower_width_at_landing * 0.5
+    tower_corner_cut_at_landing = TOWER_BASE_CORNER_CUT * tower_width_at_landing / TOWER_BASE_WIDTH
+    inner_beveled_endpoint_inset = WALL_THICKNESS * (math.sqrt(2.0) - 1.0)
+    outer_beveled_edge_endpoints = (
+        Vector((
+            landing_x_direction * (tower_half_width_at_landing - tower_corner_cut_at_landing),
+            landing_y_direction * tower_half_width_at_landing,
+            landing_height,
+        )),
+        Vector((
+            landing_x_direction * tower_half_width_at_landing,
+            landing_y_direction * (tower_half_width_at_landing - tower_corner_cut_at_landing),
+            landing_height,
+        )),
+    )
+    inner_beveled_edge_endpoints = (
+        Vector((
+            landing_x_direction * (tower_half_width_at_landing - tower_corner_cut_at_landing - inner_beveled_endpoint_inset),
+            landing_y_direction * (tower_half_width_at_landing - WALL_THICKNESS),
+            landing_height,
+        )),
+        Vector((
+            landing_x_direction * (tower_half_width_at_landing - WALL_THICKNESS),
+            landing_y_direction * (tower_half_width_at_landing - tower_corner_cut_at_landing - inner_beveled_endpoint_inset),
+            landing_height,
+        )),
+    )
+    lower_entrance_cutout_inward_overshoot = 0.01
+    lower_entrance_cutout_inward_offset = (
+        Vector((-landing_x_direction, -landing_y_direction, 0.0)).normalized()
+        * lower_entrance_cutout_inward_overshoot
+    )
+    inner_beveled_edge_endpoints = tuple(
+        inner_beveled_edge_endpoint + lower_entrance_cutout_inward_offset
+        for inner_beveled_edge_endpoint in inner_beveled_edge_endpoints
+    )
+    return outer_beveled_edge_endpoints, inner_beveled_edge_endpoints
+
+
+def calculate_lower_entrance_interface_center(landing_height, landing_x_direction, landing_y_direction):
+    outer_beveled_edge_endpoints, _ = calculate_lower_entrance_beveled_edge_endpoints(
+        landing_height,
+        landing_x_direction,
+        landing_y_direction,
+    )
+    beveled_edge_midpoint = (outer_beveled_edge_endpoints[0] + outer_beveled_edge_endpoints[1]) * 0.5
+    beveled_edge_midpoint.z += LOWER_ENTRANCE_HEIGHT * 0.5
+    return beveled_edge_midpoint
+
+
+def build_beveled_face_prism_mesh(mesh_name, lower_height, upper_height, outer_beveled_edge_endpoints, inner_beveled_edge_endpoints):
+    outer_beveled_edge_endpoint_a, outer_beveled_edge_endpoint_b = outer_beveled_edge_endpoints
+    inner_beveled_edge_endpoint_a, inner_beveled_edge_endpoint_b = inner_beveled_edge_endpoints
+    beveled_face_prism_vertices = [
+        (outer_beveled_edge_endpoint_a.x, outer_beveled_edge_endpoint_a.y, lower_height),
+        (outer_beveled_edge_endpoint_b.x, outer_beveled_edge_endpoint_b.y, lower_height),
+        (inner_beveled_edge_endpoint_b.x, inner_beveled_edge_endpoint_b.y, lower_height),
+        (inner_beveled_edge_endpoint_a.x, inner_beveled_edge_endpoint_a.y, lower_height),
+        (outer_beveled_edge_endpoint_a.x, outer_beveled_edge_endpoint_a.y, upper_height),
+        (outer_beveled_edge_endpoint_b.x, outer_beveled_edge_endpoint_b.y, upper_height),
+        (inner_beveled_edge_endpoint_b.x, inner_beveled_edge_endpoint_b.y, upper_height),
+        (inner_beveled_edge_endpoint_a.x, inner_beveled_edge_endpoint_a.y, upper_height),
+    ]
+    beveled_face_prism_faces = [
+        (0, 1, 2, 3),
+        (4, 7, 6, 5),
+        (0, 4, 5, 1),
+        (3, 2, 6, 7),
+        (0, 3, 7, 4),
+        (1, 5, 6, 2),
+    ]
+    beveled_face_prism_cross_section_signed_area = sum(
+        beveled_face_prism_vertices[vertex_index][0] * beveled_face_prism_vertices[(vertex_index + 1) % 4][1]
+        - beveled_face_prism_vertices[(vertex_index + 1) % 4][0] * beveled_face_prism_vertices[vertex_index][1]
+        for vertex_index in range(4)
+    ) * 0.5
+    if beveled_face_prism_cross_section_signed_area > 0.0:
+        beveled_face_prism_faces = [
+            tuple(reversed(beveled_face_prism_face)) for beveled_face_prism_face in beveled_face_prism_faces
+        ]
+    beveled_face_prism_mesh = bpy.data.meshes.new(mesh_name)
+    beveled_face_prism_mesh.from_pydata(beveled_face_prism_vertices, [], beveled_face_prism_faces)
+    beveled_face_prism_mesh.update()
+    return beveled_face_prism_mesh
+
+
+def create_lower_entrance_landing_floor_extension(construction_collection, level_number, landing_height, landing_x_direction, landing_y_direction):
+    outer_beveled_edge_endpoints, inner_beveled_edge_endpoints = calculate_lower_entrance_beveled_edge_endpoints(
+        landing_height,
+        landing_x_direction,
+        landing_y_direction,
+    )
+    landing_extension_mesh = build_beveled_face_prism_mesh(
+        f"Level -{level_number} landing extension mesh",
+        landing_height - STAIR_SLAB_THICKNESS,
+        landing_height,
+        outer_beveled_edge_endpoints,
+        inner_beveled_edge_endpoints,
+    )
+    landing_extension = bpy.data.objects.new(f"Level -{level_number} landing extension", landing_extension_mesh)
+    construction_collection.objects.link(landing_extension)
+    landing_extension.display_type = "WIRE"
+    landing_extension.hide_render = True
+    landing_extension["architectural_role"] = "lower_entrance_landing_extension"
+    return landing_extension
+
+
+def create_lower_entrance_interface(tower_collection, construction_collection, tower_shell, level_number, landing_height, landing_x_direction, landing_y_direction):
+    outer_beveled_edge_endpoints, inner_beveled_edge_endpoints = calculate_lower_entrance_beveled_edge_endpoints(
+        landing_height,
+        landing_x_direction,
+        landing_y_direction,
+    )
+    entrance_center = calculate_lower_entrance_interface_center(
+        landing_height,
+        landing_x_direction,
+        landing_y_direction,
+    )
+    entrance_wall_normal = Vector((landing_x_direction, landing_y_direction, 0.0)).normalized()
+    entrance_rotation = math.atan2(entrance_wall_normal.x, -entrance_wall_normal.y)
+
+    level_marker = bpy.data.objects.new(f"Level -{level_number}", None)
+    tower_collection.objects.link(level_marker)
+    level_marker.empty_display_type = "PLAIN_AXES"
+    level_marker.empty_display_size = 0.5
+    level_marker.location = entrance_center
+    level_marker.rotation_euler[2] = entrance_rotation
+
+    entrance_cutout = bpy.data.objects.new(
+        f"Level -{level_number} corridor cutout",
+        build_beveled_face_prism_mesh(
+            f"Level -{level_number} beveled-face cutout mesh",
+            landing_height,
+            landing_height + LOWER_ENTRANCE_HEIGHT,
+            outer_beveled_edge_endpoints,
+            inner_beveled_edge_endpoints,
+        ),
+    )
+    construction_collection.objects.link(entrance_cutout)
+    entrance_cutout.display_type = "WIRE"
+    entrance_cutout.hide_render = True
+    entrance_cutout["architectural_role"] = "lower_entrance_cutout"
+    add_opening_modifier(tower_shell, f"Level -{level_number} corridor cutout", entrance_cutout)
 
 
 def build_tower_floor_mesh(floor_height, mesh_name):
@@ -485,7 +645,7 @@ def add_stair_openings(floor, floor_name, stair_openings):
         add_opening_modifier(floor, f"{floor_name} stair opening {opening_number}", stair_opening)
 
 
-def create_stair_core(stair_collection, construction_collection, concrete_material):
+def create_stair_core(tower_collection, stair_collection, construction_collection, tower_shell, concrete_material):
     stair_rise = STAIR_RISER_COUNT_PER_FLIGHT * STAIR_RISER_HEIGHT
     stair_railing_mesh = build_stair_railing_mesh(STAIR_FLIGHT_LENGTH, stair_rise, STAIR_WELL_WIDTH, STAIR_RAILING_THICKNESS, -STAIR_SLAB_THICKNESS, STAIR_RAILING_HEIGHT)
     lower_stair_railing_mesh = build_stair_railing_mesh(STAIR_FLIGHT_LENGTH, -stair_rise, STAIR_WELL_WIDTH, STAIR_RAILING_THICKNESS, -STAIR_SLAB_THICKNESS, STAIR_RAILING_HEIGHT)
@@ -502,7 +662,16 @@ def create_stair_core(stair_collection, construction_collection, concrete_materi
     for flight_number, flight_base_height, flight_length, flight_location, flight_rotation, landing_height, landing_x_direction, landing_y_direction in upper_flight_specifications:
         flight_name = f"Flight {flight_number}"
         create_stair_flight(stair_collection, stair_railing_mesh, concrete_material, flight_name, flight_base_height, flight_length, flight_location, flight_rotation, False)
-        create_corner_landing(stair_collection, unit_cube_mesh, concrete_material, flight_name, landing_height, landing_x_direction, landing_y_direction)
+        create_corner_landing(
+            stair_collection,
+            unit_cube_mesh,
+            concrete_material,
+            flight_name,
+            landing_height,
+            landing_x_direction,
+            landing_y_direction,
+            WALL_CLEARANCE,
+        )
         if flight_number < 4:
             create_corner_parapet(stair_collection, unit_cube_mesh, concrete_material, f"Corner landing {flight_name}", landing_height, landing_x_direction, landing_y_direction)
     clip_stair_railing_at_floor(construction_collection, unit_cube_mesh, stair_collection, "Flight 4", top_floor_height)
@@ -525,8 +694,35 @@ def create_stair_core(stair_collection, construction_collection, concrete_materi
     for flight_number, flight_base_height, flight_location, flight_rotation, landing_height, landing_x_direction, landing_y_direction in lower_flight_specifications:
         flight_name = f"Lower flight {flight_number}"
         create_stair_flight(stair_collection, lower_stair_railing_mesh, concrete_material, flight_name, flight_base_height, STAIR_FLIGHT_LENGTH, flight_location, flight_rotation, True)
-        create_corner_landing(stair_collection, unit_cube_mesh, concrete_material, flight_name, landing_height, landing_x_direction, landing_y_direction)
+        corner_landing = create_corner_landing(
+            stair_collection,
+            unit_cube_mesh,
+            concrete_material,
+            flight_name,
+            landing_height,
+            landing_x_direction,
+            landing_y_direction,
+            0.0,
+        )
+        if flight_number == 4:
+            landing_extension = create_lower_entrance_landing_floor_extension(
+                construction_collection,
+                flight_number,
+                landing_height,
+                landing_x_direction,
+                landing_y_direction,
+            )
+            corner_landing["lower_entrance_landing_extension"] = landing_extension.name
         create_corner_parapet(stair_collection, unit_cube_mesh, concrete_material, f"Corner landing {flight_name}", landing_height, landing_x_direction, landing_y_direction)
+        create_lower_entrance_interface(
+            tower_collection,
+            construction_collection,
+            tower_shell,
+            flight_number,
+            landing_height,
+            landing_x_direction,
+            landing_y_direction,
+        )
     clip_stair_railing_at_floor(construction_collection, unit_cube_mesh, stair_collection, "Lower flight 1", 0.0)
 
     entrance_floor = bpy.data.objects.new("Entrance floor", build_tower_floor_mesh(0.0, "Entrance floor mesh"))
@@ -629,7 +825,7 @@ def main():
     create_terrain_cutout_markers(tower_collection)
     entrance_opening = create_entrance_opening(construction_collection)
     add_opening_modifier(tower_shell, "Tower entrance opening", entrance_opening)
-    create_stair_core(stair_collection, construction_collection, concrete_material)
+    create_stair_core(tower_collection, stair_collection, construction_collection, tower_shell, concrete_material)
     create_stair_lights(lighting_collection, light_material, metal_material)
     save_scene_and_export_tower(tower_collection, stair_collection, lighting_collection)
 

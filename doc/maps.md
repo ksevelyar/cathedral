@@ -20,5 +20,14 @@ Examples: tower, laptop.
 
 Examples: sandfield, hanging lamp.
 
+### Modular
+1. Put a named marker at the center of every connectable open face.
+2. Orient compatible markers identically, with local `-Y` facing outward and local `+Z` upward.
+3. Give both faces matching width, height, and boundary geometry.
+4. Do not put mesh geometry on or across the marker plane.
+5. Align matching markers in game code.
+
+Examples: tower cutout, underground entrance.
+
 ## Levels
 * [Intro](maps/intro.md)

@@ -22,3 +22,14 @@
 * The top floor is a hangar beneath a closed roof with 8 m of clear height.
 * No parapet rises above the hangar floor at the stair opening.
 * Cold lights stand on stair parapets.
+
+## Underground entrances
+* Four lower stair landings have corridor-shaped tower cutouts named `Level -1`, `Level -2`, `Level -3`, and `Level -4`.
+* Each cutout spans exactly the beveled-edge segment and is 4 m high.
+* Each `Level -N` marker defines the beveled face, with corridor structure only outside the tower.
+* The passage floor meets each landing and corridor floor continuously without an extra connector slab.
+* `assets/models/entrance_to_underground_level.py` generates the reusable underground entrance asset.
+* The entrance asset has a 5 m corridor with 4 m clear height and clear width matching a beveled tower edge, leading to a concrete room with a 15 m by 15 m clear interior.
+* Its `Entrance connector` marker is at the center of the corridor start.
+* Entrances join tower cutouts through matching open-face markers without mesh overlap at the interface.
+* Each level can later select a distinct entrance asset that provides the same centered connector marker.
