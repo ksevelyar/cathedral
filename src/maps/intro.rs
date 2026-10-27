@@ -3,6 +3,7 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
+use super::entrance::UndergroundEntrance;
 use super::moon::Moon;
 use super::{
     Map, MapLoadingDependency, MapObject, ObjectSpawn, PlayerPosition, SandField, SpawnContext, TerrainCutout,
@@ -53,6 +54,11 @@ pub(super) fn build_map() -> Map {
             label: "stairwell",
             position: Vec3::new(18.937, 13.396, -73.338),
             look_at: Vec3::new(18.052, 13.757, -73.631),
+        },
+        PlayerPosition {
+            label: "underground-entrance-1",
+            position: Vec3::new(-15.223, -9.604, -69.282),
+            look_at: Vec3::new(-15.970, -9.624, -68.617),
         },
     ];
 
@@ -138,6 +144,24 @@ fn spawn_sand_field_from_terrain_cutout(mut context: SpawnSandFieldFromTerrainCu
             &context.names,
             &context.global_transforms,
         );
+        let entrance_asset_mapping = [
+            ("Level -1", "models/entrance-to-underground-level.glb"),
+            ("Level -2", "models/entrance-to-underground-level.glb"),
+            ("Level -3", "models/entrance-to-underground-level.glb"),
+            ("Level -4", "models/entrance-to-underground-level.glb"),
+        ];
+        for (level_marker_name, entrance_asset_path) in entrance_asset_mapping {
+            let level_marker =
+                find_named_tower_descendant(tower_root, &context.descendants, &context.names, level_marker_name);
+            let level_marker_transform = *context
+                .global_transforms
+                .get(level_marker)
+                .expect("tower level marker should have a global transform");
+            let entrance_root_name = format!("Entrance to {level_marker_name}");
+            let entrance = UndergroundEntrance::new(entrance_root_name, entrance_asset_path);
+            entrance.spawn(&mut spawn_context, level_marker_transform.compute_transform());
+        }
+
         let sand_field =
             SandField::create(sand_field_spawn.radius).with_cutout(TerrainCutout::new(terrain_cutout_vertices));
         sand_field.spawn(&mut spawn_context, Transform::IDENTITY);
@@ -148,6 +172,29 @@ fn spawn_sand_field_from_terrain_cutout(mut context: SpawnSandFieldFromTerrainCu
             .remove::<MapLoadingDependency>()
             .remove::<TerrainCutoutSceneReady>();
     }
+}
+
+fn find_named_tower_descendant(
+    tower_root: Entity,
+    descendants: &Query<&Children>,
+    names: &Query<&Name>,
+    expected_name: &str,
+) -> Entity {
+    let mut entities_to_visit = descendants
+        .get(tower_root)
+        .map_or_default(|child_entities| child_entities.iter().collect::<Vec<_>>());
+    while let Some(entity) = entities_to_visit.pop() {
+        if let Ok(child_entities) = descendants.get(entity) {
+            entities_to_visit.extend(child_entities.iter());
+        }
+        if names
+            .get(entity)
+            .is_ok_and(|entity_name| entity_name.as_str() == expected_name)
+        {
+            return entity;
+        }
+    }
+    panic!("intro tower scene should contain a {expected_name} marker");
 }
 
 fn collect_terrain_cutout_vertices(
