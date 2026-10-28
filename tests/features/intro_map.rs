@@ -118,8 +118,8 @@ fn underground_passage_width_and_height_match_each_beveled_edge() {
             "{entrance_root_name} clear width should equal its measured bevel segment: passage={passage_width}, bevel={measured_beveled_edge_length}"
         );
         assert!(
-            (passage_height - 4.0).abs() <= ENTRANCE_ALIGNMENT_TOLERANCE,
-            "{entrance_root_name} clear height should be 4 m: passage={passage_height}"
+            (passage_height - 6.0).abs() <= ENTRANCE_ALIGNMENT_TOLERANCE,
+            "{entrance_root_name} clear height should be 6 m: passage={passage_height}"
         );
         assert!(
             connector_matches_beveled_face && level_marker_faces_outward,
