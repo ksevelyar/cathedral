@@ -1,6 +1,7 @@
 mod support;
 
 mod bloodmarks;
+mod door;
 mod enemies;
 mod enemy_behavior;
 mod hanging_lamps;

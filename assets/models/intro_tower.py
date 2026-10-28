@@ -7,17 +7,21 @@ from mathutils import Matrix, Vector
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from box_mesh import build_box_mesh
 from stairwell import build_stair_railing_mesh, create_stair_railing_segment
+from doorway_architecture import (
+    APERTURE_DEPTH,
+    create_aperture_cutter,
+    create_door_mount,
+    create_pocket_cutters,
+)
+from tower_dimensions import ENTRANCE_CLEAR_HEIGHT, TOWER_BASE_CORNER_CUT, calculate_beveled_edge_width
 
 TOWER_HEIGHT = 54.0
 TOWER_BASE_WIDTH = 36.0
 TOWER_TOP_WIDTH = 28.0
-TOWER_BASE_CORNER_CUT = 3.6
 WALL_THICKNESS = 0.5
-ENTRANCE_RADIUS = 2.0
-ENTRANCE_CENTER_HEIGHT = 2.0
-ENTRANCE_OPENING_DEPTH = 4.0
-ENTRANCE_SEGMENT_COUNT = 32
+ENTRANCE_CENTER_HEIGHT = ENTRANCE_CLEAR_HEIGHT * 0.5
 TOP_FLOOR_CLEARANCE = 8.0
 TOP_FLOOR_OPENING_SIZE = 7.0
 STAIRCASE_TOTAL_HEIGHT = TOWER_HEIGHT - TOP_FLOOR_CLEARANCE
@@ -36,7 +40,6 @@ LIGHT_SPHERE_RADIUS = 0.55
 LIGHT_ROD_RADIUS = 0.075
 LIGHT_ROD_LENGTH = 1.8
 LIGHT_ENERGY = 150.0
-LOWER_ENTRANCE_HEIGHT = 4.0
 
 
 def clear_scene():
@@ -149,30 +152,6 @@ def clip_stair_geometry_to_tower_walls(stair_collection, construction_collection
             landing_extension_modifier.object = landing_extension
 
 
-def append_box_mesh_geometry(vertices, faces, minimum_corner, maximum_corner):
-    start_vertex_index = len(vertices)
-    minimum_x, minimum_y, minimum_z = minimum_corner
-    maximum_x, maximum_y, maximum_z = maximum_corner
-    vertices.extend([
-        (minimum_x, minimum_y, minimum_z),
-        (maximum_x, minimum_y, minimum_z),
-        (maximum_x, maximum_y, minimum_z),
-        (minimum_x, maximum_y, minimum_z),
-        (minimum_x, minimum_y, maximum_z),
-        (maximum_x, minimum_y, maximum_z),
-        (maximum_x, maximum_y, maximum_z),
-        (minimum_x, maximum_y, maximum_z),
-    ])
-    faces.extend([
-        (start_vertex_index, start_vertex_index + 3, start_vertex_index + 2, start_vertex_index + 1),
-        (start_vertex_index + 4, start_vertex_index + 5, start_vertex_index + 6, start_vertex_index + 7),
-        (start_vertex_index, start_vertex_index + 1, start_vertex_index + 5, start_vertex_index + 4),
-        (start_vertex_index + 1, start_vertex_index + 2, start_vertex_index + 6, start_vertex_index + 5),
-        (start_vertex_index + 2, start_vertex_index + 3, start_vertex_index + 7, start_vertex_index + 6),
-        (start_vertex_index + 3, start_vertex_index, start_vertex_index + 4, start_vertex_index + 7),
-    ])
-
-
 def calculate_tower_inner_half_width(height):
     tower_height = max(height, 0.0)
     tower_width = TOWER_BASE_WIDTH + (TOWER_TOP_WIDTH - TOWER_BASE_WIDTH) * tower_height / TOWER_HEIGHT
@@ -232,22 +211,6 @@ def build_stair_flight_mesh(flight_base_height, flight_length, descends):
     stair_flight_mesh.from_pydata(vertices, [], faces)
     stair_flight_mesh.update()
     return stair_flight_mesh
-
-
-def build_unit_cube_mesh(mesh_name):
-    vertices = []
-    faces = []
-    half_unit_length = 0.5
-    append_box_mesh_geometry(
-        vertices,
-        faces,
-        (-half_unit_length, -half_unit_length, -half_unit_length),
-        (half_unit_length, half_unit_length, half_unit_length),
-    )
-    unit_cube_mesh = bpy.data.meshes.new(mesh_name)
-    unit_cube_mesh.from_pydata(vertices, [], faces)
-    unit_cube_mesh.update()
-    return unit_cube_mesh
 
 
 def create_concrete_material():
@@ -329,28 +292,35 @@ def calculate_entrance_wall_normal():
     return Vector((0.0, -1.0, tower_taper_per_height)).normalized()
 
 
-def create_entrance_opening(construction_collection):
+def create_entrance_opening(construction_collection, tower_collection):
     entrance_wall_normal = calculate_entrance_wall_normal()
     entrance_center_y = -TOWER_BASE_WIDTH * 0.5 + (TOWER_BASE_WIDTH - TOWER_TOP_WIDTH) * 0.5 * ENTRANCE_CENTER_HEIGHT / TOWER_HEIGHT
     entrance_center = Vector((0.0, entrance_center_y, ENTRANCE_CENTER_HEIGHT))
-    opening_center = entrance_center - entrance_wall_normal * (ENTRANCE_OPENING_DEPTH * 0.5 - WALL_THICKNESS)
-    bpy.ops.mesh.primitive_cylinder_add(
-        vertices=ENTRANCE_SEGMENT_COUNT,
-        radius=ENTRANCE_RADIUS,
-        depth=ENTRANCE_OPENING_DEPTH,
-        location=opening_center,
+    wall_center = entrance_center - entrance_wall_normal * WALL_THICKNESS * 0.5
+    opening_center = entrance_center - entrance_wall_normal * (APERTURE_DEPTH * 0.5 - WALL_THICKNESS)
+    doorway_rotation = Vector((0.0, -1.0, 0.0)).rotation_difference(entrance_wall_normal)
+    clear_width = calculate_beveled_edge_width()
+    entrance_opening = create_aperture_cutter(
+        construction_collection,
+        "Tower entrance opening",
+        clear_width,
+        ENTRANCE_CLEAR_HEIGHT,
+        APERTURE_DEPTH,
+        opening_center,
+        doorway_rotation,
+        "tower_entrance_opening",
     )
-    entrance_opening = bpy.context.active_object
-    entrance_opening.name = "Tower entrance opening"
-    for collection in tuple(entrance_opening.users_collection):
-        collection.objects.unlink(entrance_opening)
-    construction_collection.objects.link(entrance_opening)
-    entrance_opening.rotation_mode = "QUATERNION"
-    entrance_opening.rotation_quaternion = Vector((0.0, 0.0, 1.0)).rotation_difference(entrance_wall_normal)
-    entrance_opening.display_type = "WIRE"
-    entrance_opening.hide_render = True
-    entrance_opening["architectural_role"] = "tower_entrance_opening"
-    return entrance_opening
+    pocket_cutters = create_pocket_cutters(
+        construction_collection,
+        "Tower",
+        clear_width,
+        ENTRANCE_CLEAR_HEIGHT,
+        wall_center,
+        doorway_rotation,
+        "tower_door_pocket",
+    )
+    create_door_mount(tower_collection, wall_center, doorway_rotation)
+    return entrance_opening, pocket_cutters
 
 
 def add_opening_modifier(tower_shell, modifier_name, opening_object):
@@ -487,7 +457,7 @@ def calculate_lower_entrance_interface_center(landing_height, landing_x_directio
         landing_y_direction,
     )
     beveled_edge_midpoint = (outer_beveled_edge_endpoints[0] + outer_beveled_edge_endpoints[1]) * 0.5
-    beveled_edge_midpoint.z += LOWER_ENTRANCE_HEIGHT * 0.5
+    beveled_edge_midpoint.z += ENTRANCE_CLEAR_HEIGHT * 0.5
     return beveled_edge_midpoint
 
 
@@ -574,7 +544,7 @@ def create_lower_entrance_interface(tower_collection, construction_collection, t
         build_beveled_face_prism_mesh(
             f"Level -{level_number} beveled-face cutout mesh",
             landing_height,
-            landing_height + LOWER_ENTRANCE_HEIGHT,
+            landing_height + ENTRANCE_CLEAR_HEIGHT,
             outer_beveled_edge_endpoints,
             inner_beveled_edge_endpoints,
         ),
@@ -649,7 +619,7 @@ def create_stair_core(tower_collection, stair_collection, construction_collectio
     stair_rise = STAIR_RISER_COUNT_PER_FLIGHT * STAIR_RISER_HEIGHT
     stair_railing_mesh = build_stair_railing_mesh(STAIR_FLIGHT_LENGTH, stair_rise, STAIR_WELL_WIDTH, STAIR_RAILING_THICKNESS, -STAIR_SLAB_THICKNESS, STAIR_RAILING_HEIGHT)
     lower_stair_railing_mesh = build_stair_railing_mesh(STAIR_FLIGHT_LENGTH, -stair_rise, STAIR_WELL_WIDTH, STAIR_RAILING_THICKNESS, -STAIR_SLAB_THICKNESS, STAIR_RAILING_HEIGHT)
-    unit_cube_mesh = build_unit_cube_mesh("Reusable architectural cube mesh")
+    unit_cube_mesh = build_box_mesh("Reusable architectural cube mesh")
     stair_half_length = STAIR_FLIGHT_LENGTH * 0.5
     flight_rise = STAIR_STOREY_HEIGHT * 0.5
     top_floor_height = STAIRCASE_TOTAL_HEIGHT
@@ -823,9 +793,11 @@ def main():
     metal_material = create_metal_material()
     tower_shell = create_tower_shell(tower_collection, concrete_material)
     create_terrain_cutout_markers(tower_collection)
-    entrance_opening = create_entrance_opening(construction_collection)
-    add_opening_modifier(tower_shell, "Tower entrance opening", entrance_opening)
+    entrance_opening, door_pocket_cutters = create_entrance_opening(construction_collection, tower_collection)
     create_stair_core(tower_collection, stair_collection, construction_collection, tower_shell, concrete_material)
+    add_opening_modifier(tower_shell, "Tower entrance opening", entrance_opening)
+    for door_pocket_cutter in door_pocket_cutters:
+        add_opening_modifier(tower_shell, door_pocket_cutter.name, door_pocket_cutter)
     create_stair_lights(lighting_collection, light_material, metal_material)
     save_scene_and_export_tower(tower_collection, stair_collection, lighting_collection)
 

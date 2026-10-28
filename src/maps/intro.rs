@@ -42,8 +42,8 @@ pub(super) fn build_map() -> Map {
         },
         PlayerPosition {
             label: "tower-entrance",
-            position: Vec3::new(-9.987, 3.315, -50.426),
-            look_at: Vec3::new(-9.708, 3.166, -51.374),
+            position: Vec3::new(-13.069, 3.365, -47.221),
+            look_at: Vec3::new(-12.610, 3.443, -48.106),
         },
         PlayerPosition {
             label: "dunes",

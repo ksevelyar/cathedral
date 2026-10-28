@@ -1,3 +1,4 @@
+mod door;
 mod entrance;
 mod gltf;
 mod hanging_lamp;
@@ -28,6 +29,7 @@ pub struct MapsPlugin;
 impl Plugin for MapsPlugin {
     fn build(&self, app: &mut App) {
         entrance::register_systems(app);
+        door::register_systems(app);
         intro::register_systems(app);
         app.add_systems(Startup, spawn_map.before(player::setup_player))
             .add_systems(

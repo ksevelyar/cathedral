@@ -1,14 +1,25 @@
-import math
+import sys
 from pathlib import Path
 
 import bpy
+from mathutils import Quaternion
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from box_mesh import build_box_mesh
+from doorway_architecture import (
+    APERTURE_DEPTH,
+    create_aperture_cutter,
+    create_door_mount,
+    create_pocket_cutters,
+)
+from tower_dimensions import ENTRANCE_CLEAR_HEIGHT, calculate_beveled_edge_width
 
 CONCRETE_COLOR = (0.30, 0.30, 0.28, 1.0)
 FLOOR_AND_CEILING_THICKNESS = 0.3
 WALL_THICKNESS = 0.3
-CORRIDOR_WIDTH = 3.6 * math.sqrt(2.0)
+CORRIDOR_WIDTH = calculate_beveled_edge_width()
 CORRIDOR_LENGTH = 5.0
-CLEAR_HEIGHT = 4.0
 ROOM_CLEAR_WIDTH = 15.0
 ROOM_CLEAR_LENGTH = 15.0
 CORRIDOR_EXTERIOR_WIDTH = CORRIDOR_WIDTH + WALL_THICKNESS * 2.0
@@ -29,32 +40,6 @@ def create_collection(collection_name):
     collection = bpy.data.collections.new(collection_name)
     bpy.context.scene.collection.children.link(collection)
     return collection
-
-
-def build_box_mesh(mesh_name, dimensions):
-    half_width, half_length, half_height = (dimension * 0.5 for dimension in dimensions)
-    vertices = [
-        (-half_width, -half_length, -half_height),
-        (half_width, -half_length, -half_height),
-        (half_width, half_length, -half_height),
-        (-half_width, half_length, -half_height),
-        (-half_width, -half_length, half_height),
-        (half_width, -half_length, half_height),
-        (half_width, half_length, half_height),
-        (-half_width, half_length, half_height),
-    ]
-    faces = [
-        (0, 3, 2, 1),
-        (4, 5, 6, 7),
-        (0, 1, 5, 4),
-        (1, 2, 6, 5),
-        (2, 3, 7, 6),
-        (3, 0, 4, 7),
-    ]
-    box_mesh = bpy.data.meshes.new(mesh_name)
-    box_mesh.from_pydata(vertices, [], faces)
-    box_mesh.update()
-    return box_mesh
 
 
 def create_concrete_material():
@@ -85,11 +70,52 @@ def create_connector(entrance_collection):
     return connector
 
 
+def create_corridor_entrance_wall(entrance_collection, construction_collection, concrete_material):
+    doorway_wall_center = (0.0, -WALL_THICKNESS * 0.5, 0.0)
+    doorway_rotation = Quaternion()
+    corridor_entrance_wall = create_concrete_box(
+        entrance_collection,
+        concrete_material,
+        "Corridor entrance wall",
+        doorway_wall_center,
+        (
+            CORRIDOR_EXTERIOR_WIDTH,
+            WALL_THICKNESS,
+            ENTRANCE_CLEAR_HEIGHT + FLOOR_AND_CEILING_THICKNESS * 2.0,
+        ),
+    )
+    aperture_cutter = create_aperture_cutter(
+        construction_collection,
+        "Corridor entrance opening",
+        CORRIDOR_WIDTH,
+        ENTRANCE_CLEAR_HEIGHT,
+        APERTURE_DEPTH,
+        doorway_wall_center,
+        doorway_rotation,
+        "underground_entrance_opening",
+    )
+    pocket_cutters = create_pocket_cutters(
+        construction_collection,
+        "Corridor",
+        CORRIDOR_WIDTH,
+        ENTRANCE_CLEAR_HEIGHT,
+        doorway_wall_center,
+        doorway_rotation,
+        "underground_entrance_door_pocket",
+    )
+    create_door_mount(entrance_collection, doorway_wall_center, doorway_rotation)
+    for opening_cutter in [aperture_cutter, *pocket_cutters]:
+        opening_modifier = corridor_entrance_wall.modifiers.new(opening_cutter.name, "BOOLEAN")
+        opening_modifier.operation = "DIFFERENCE"
+        opening_modifier.solver = "EXACT"
+        opening_modifier.object = opening_cutter
+
+
 def create_corridor(entrance_collection, concrete_material):
     corridor_half_width = CORRIDOR_WIDTH * 0.5
     corridor_center_y = -CORRIDOR_LENGTH * 0.5
-    corridor_floor_center_z = -CLEAR_HEIGHT * 0.5 - FLOOR_AND_CEILING_THICKNESS * 0.5
-    corridor_ceiling_center_z = CLEAR_HEIGHT * 0.5 + FLOOR_AND_CEILING_THICKNESS * 0.5
+    corridor_floor_center_z = -ENTRANCE_CLEAR_HEIGHT * 0.5 - FLOOR_AND_CEILING_THICKNESS * 0.5
+    corridor_ceiling_center_z = ENTRANCE_CLEAR_HEIGHT * 0.5 + FLOOR_AND_CEILING_THICKNESS * 0.5
     corridor_wall_center_x = corridor_half_width + WALL_THICKNESS * 0.5
     corridor_wall_center_z = 0.0
 
@@ -113,7 +139,7 @@ def create_corridor(entrance_collection, concrete_material):
             concrete_material,
             wall_name,
             (wall_direction * corridor_wall_center_x, corridor_center_y, corridor_wall_center_z),
-            (WALL_THICKNESS, CORRIDOR_LENGTH, CLEAR_HEIGHT),
+            (WALL_THICKNESS, CORRIDOR_LENGTH, ENTRANCE_CLEAR_HEIGHT),
         )
 
 
@@ -122,8 +148,8 @@ def create_room(entrance_collection, concrete_material):
     room_center_y = room_front_y - ROOM_CLEAR_LENGTH * 0.5
     room_half_width = ROOM_CLEAR_WIDTH * 0.5
     room_wall_center_x = room_half_width + WALL_THICKNESS * 0.5
-    room_floor_center_z = -CLEAR_HEIGHT * 0.5 - FLOOR_AND_CEILING_THICKNESS * 0.5
-    room_ceiling_center_z = CLEAR_HEIGHT * 0.5 + FLOOR_AND_CEILING_THICKNESS * 0.5
+    room_floor_center_z = -ENTRANCE_CLEAR_HEIGHT * 0.5 - FLOOR_AND_CEILING_THICKNESS * 0.5
+    room_ceiling_center_z = ENTRANCE_CLEAR_HEIGHT * 0.5 + FLOOR_AND_CEILING_THICKNESS * 0.5
     room_side_wall_center_z = 0.0
     room_end_wall_center_y = room_front_y - WALL_THICKNESS * 0.5
     room_back_wall_center_y = room_front_y - ROOM_CLEAR_LENGTH - WALL_THICKNESS * 0.5
@@ -151,14 +177,14 @@ def create_room(entrance_collection, concrete_material):
             concrete_material,
             wall_name,
             (wall_direction * room_wall_center_x, room_center_y, room_side_wall_center_z),
-            (WALL_THICKNESS, ROOM_CLEAR_LENGTH, CLEAR_HEIGHT),
+            (WALL_THICKNESS, ROOM_CLEAR_LENGTH, ENTRANCE_CLEAR_HEIGHT),
         )
     create_concrete_box(
         entrance_collection,
         concrete_material,
         "Room back wall",
         (0.0, room_back_wall_center_y, room_side_wall_center_z),
-        (ROOM_CLEAR_WIDTH, WALL_THICKNESS, CLEAR_HEIGHT),
+        (ROOM_CLEAR_WIDTH, WALL_THICKNESS, ENTRANCE_CLEAR_HEIGHT),
     )
     for wall_name, wall_direction in (("Room front wall left", -1.0), ("Room front wall right", 1.0)):
         create_concrete_box(
@@ -166,7 +192,7 @@ def create_room(entrance_collection, concrete_material):
             concrete_material,
             wall_name,
             (wall_direction * passage_side_wall_center_x, room_end_wall_center_y, room_side_wall_center_z),
-            (passage_side_wall_width, WALL_THICKNESS, CLEAR_HEIGHT),
+            (passage_side_wall_width, WALL_THICKNESS, ENTRANCE_CLEAR_HEIGHT),
         )
 
 
@@ -192,9 +218,11 @@ def save_scene_and_export_entrance(entrance_collection):
 def main():
     clear_scene()
     entrance_collection = create_collection("Underground entrance")
+    construction_collection = create_collection("Underground entrance construction")
     concrete_material = create_concrete_material()
     create_connector(entrance_collection)
     create_corridor(entrance_collection, concrete_material)
+    create_corridor_entrance_wall(entrance_collection, construction_collection, concrete_material)
     create_room(entrance_collection, concrete_material)
     save_scene_and_export_entrance(entrance_collection)
 
