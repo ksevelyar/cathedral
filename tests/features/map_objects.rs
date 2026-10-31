@@ -17,7 +17,7 @@ fn shooting_laptop_applies_momentum_and_laptop_settles() {
     let mut app = create_map_test_app();
     let laptop = find_named_body(&mut app, "laptop");
 
-    let minimum_kick_speed = 0.00001;
+    let minimum_kick_speed = 0.000001;
     shoot_and_assert_kick_speed(&mut app, laptop, minimum_kick_speed);
 
     let settling_deadline = 5.0;

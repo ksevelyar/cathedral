@@ -1,4 +1,4 @@
-use avian3d::dynamics::solver::joint_graph::JointGraph;
+use avian3d::dynamics::joints::joint_graph::JointGraph;
 use avian3d::prelude::*;
 use bevy::input::ButtonState;
 use bevy::input::mouse::MouseButtonInput;

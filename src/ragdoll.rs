@@ -1,6 +1,6 @@
 use crate::enemies::{Dying, EnemyHit};
 use crate::player::Player;
-use avian3d::math::AsF32;
+use avian3d::math::ToF32Precision;
 use avian3d::prelude::*;
 use bevy::ecs::system::SystemParam;
 use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
@@ -272,7 +272,7 @@ fn create_gltf_hull_collider(
         .iter()
         .map(|vertex_in_world| body_rotation_inverse * (*vertex_in_world - body_transform.translation))
         .collect::<Vec<_>>();
-    Collider::convex_hull(hull_vertices)
+    Collider::convex_hull(&hull_vertices)
 }
 
 fn list_joint_subtree(joint_entity: Entity, source: &HullColliderSource) -> HashSet<Entity> {
